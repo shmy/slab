@@ -1,6 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
+use audit_contract::AuditEvent;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator_context::OperatorContext;
 use identity_contract::entity::account::Account;
 use identity_contract::events::AccountCreatedEvent;
 use identity_contract::value_object::hashed_password::HashedPassword;
@@ -44,9 +46,10 @@ pub(crate) struct CreateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateAccountRequest>,
 ) -> JsonResponseType<CreateAccountResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -54,6 +57,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateAccountRequest,
 ) -> rootcause::Result<CreateAccountResponse> {
     let id = ID::new();
@@ -70,6 +74,20 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
+    audit_contract::record(
+        txn.as_mut(),
+        &AuditEvent {
+            operator_id: ctx.operator_id,
+            action: "account.create".to_string(),
+            entity: "account".to_string(),
+            entity_id: id,
+            before: None,
+            after: Some(serde_json::to_value(&account)?),
+            ip: ctx.ip,
+            user_agent: ctx.user_agent,
+        },
+    )
+    .await?;
     enqueue_event(txn.as_mut(), &AccountCreatedEvent { id }).await?;
     txn.commit().await?;
     Ok(CreateAccountResponse {
@@ -80,6 +98,7 @@ async fn execute(
 
 #[cfg(test)]
 mod tests {
+    use crate::tests;
     use identity_contract::{events::AccountCreatedEvent, value_object::password::Password};
     use shared_contract::event::Event as _;
 
@@ -97,7 +116,9 @@ mod tests {
             phone: PhoneNumber::try_new("13900001201").unwrap(),
             password: Password::new_unchecked("admin123!".to_string()),
         };
-        let response = execute(&state.pg_pool, request).await.unwrap();
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
         assert!(i64::from(response.id) > 0);
 
         let mut conn = state.pg_pool.acquire().await.unwrap();
@@ -115,5 +136,20 @@ mod tests {
             payload["id"],
             serde_json::Value::String(response.id.to_string())
         );
+
+        // 变更历史：create 类型，快照排除敏感字段
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, "account.create");
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "Tom");
+        assert!(after.get("password").is_none());
+        assert!(after.get("version").is_none());
     }
 }

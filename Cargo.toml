@@ -3,6 +3,8 @@ resolver = "3"
 members = [
     "bin/migrator",
     "bin/server",
+    "features/audit",
+    "features/audit_contract",
     "features/customer",
     "features/customer_contract",
     "features/file",
@@ -68,6 +70,8 @@ askama_web = { version = "0.16", default-features = false, features = [
     "default",
     "axum-0.8",
 ] }
+audit = { path = "features/audit" }
+audit_contract = { path = "features/audit_contract" }
 authn_kit = { path = "libs/authn_kit" }
 axum = { version = "0.8", default-features = false, features = [
     "http1",
@@ -123,6 +127,7 @@ identity_contract = { path = "features/identity_contract" }
 image_kit = { path = "libs/image_kit" }
 imageformat = { version = "0.3", default-features = false }
 inventory_ledger = { path = "infrastructure/inventory_ledger" }
+ipnetwork = { version = "0.21", default-features = false }
 item = { path = "features/item" }
 item_contract = { path = "features/item_contract" }
 jsonwebtoken = { version = "11", default-features = false, features = [
@@ -196,6 +201,7 @@ sqlx = { version = "0.9", default-features = false, features = [
     "macros",
     "sqlx-toml",
     "bigdecimal",
+    "ipnetwork",
 ] }
 supplier = { path = "features/supplier" }
 supplier_contract = { path = "features/supplier_contract" }

@@ -17,6 +17,7 @@ static BUNDLES: LazyLock<HashMap<String, Bundle>> = LazyLock::new(|| {
         &[
             include_str!("locales/en-US/shared.ftl"),
             include_str!("locales/en-US/account.ftl"),
+            include_str!("locales/en-US/audit.ftl"),
             include_str!("locales/en-US/file.ftl"),
             include_str!("locales/en-US/item.ftl"),
             include_str!("locales/en-US/customer.ftl"),
@@ -36,6 +37,7 @@ static BUNDLES: LazyLock<HashMap<String, Bundle>> = LazyLock::new(|| {
         &[
             include_str!("locales/zh-CN/shared.ftl"),
             include_str!("locales/zh-CN/account.ftl"),
+            include_str!("locales/zh-CN/audit.ftl"),
             include_str!("locales/zh-CN/file.ftl"),
             include_str!("locales/zh-CN/item.ftl"),
             include_str!("locales/zh-CN/customer.ftl"),

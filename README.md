@@ -23,6 +23,8 @@ impl Module for identity::Module {
 
 ```
 features/
+├── audit_contract/       ← 变更历史公共表面：AuditEvent + record（跨域写 Port）
+├── audit/                ← 变更历史查询切片：GET /api/v1/audit-logs（读时算 diff）
 ├── identity_contract/     ← 公共表面：实体、事件、端口、错误
 ├── identity/              ← 垂直切片：端点、仓储、订阅
 ├── file_contract/

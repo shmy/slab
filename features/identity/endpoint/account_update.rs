@@ -1,6 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
+use audit_contract::AuditEvent;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator_context::OperatorContext;
 use identity_contract::port::AccountPort;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -46,10 +48,11 @@ pub(crate) struct UpdateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<UpdateAccountPath>,
     ValidJson(request): ValidJson<UpdateAccountRequest>,
 ) -> JsonResponseType<UpdateAccountResponse> {
-    let response = execute(&pg_pool, path, request).await?;
+    let response = execute(&pg_pool, ctx, path, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -57,14 +60,30 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     path: UpdateAccountPath,
     request: UpdateAccountRequest,
 ) -> rootcause::Result<UpdateAccountResponse> {
     let mut txn = pg_pool.begin().await?;
-    let mut account = AccountPort::by_id(&mut txn, &path.id).await?;
+    let before = AccountPort::by_id(&mut txn, &path.id).await?;
+    let mut account = before.clone();
     account.name = request.name;
     account.phone = request.phone;
     let account = AccountRepository::update(&mut txn, &account).await?;
+    audit_contract::record(
+        txn.as_mut(),
+        &AuditEvent {
+            operator_id: ctx.operator_id,
+            action: "account.update".to_string(),
+            entity: "account".to_string(),
+            entity_id: path.id,
+            before: Some(serde_json::to_value(&before)?),
+            after: Some(serde_json::to_value(&account)?),
+            ip: ctx.ip,
+            user_agent: ctx.user_agent,
+        },
+    )
+    .await?;
     txn.commit().await?;
     Ok(UpdateAccountResponse {
         id: account.id,
@@ -89,6 +108,7 @@ mod tests {
         let account_id = tests::insert_test_account(&state.pg_pool, "13900002101").await;
         let response = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             UpdateAccountPath { id: account_id },
             UpdateAccountRequest {
                 name: "UpdatedName".to_string(),
@@ -100,6 +120,23 @@ mod tests {
         assert_eq!(response.id, account_id);
         assert_eq!(response.name, "UpdatedName");
         assert_eq!(&*response.phone, "13900002102");
+
+        // 变更历史：update 类型，before/after 快照均不含敏感字段
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, "account.update");
+        let before: serde_json::Value = audit_row.before.unwrap();
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(before["name"], "test-13900002101");
+        assert_eq!(after["name"], "UpdatedName");
+        assert!(before.get("password").is_none());
+        assert!(after.get("password").is_none());
     }
 
     #[sqlx::test]
@@ -136,6 +173,7 @@ mod tests {
         let state = testing::build(pool).await;
         let err = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             UpdateAccountPath {
                 id: ID::from(999_i64),
             },

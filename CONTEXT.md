@@ -83,8 +83,9 @@ _Avoid_: 收款单、付款单
 
 **变更历史（Change History）**：
 按资源维度记录的所有字段级变更，按时间倒序可查。
-_Avoid_: 审计日志、操作日志、audit log——本系统不记录请求审计，只记录资源变更
+_Avoid_: 审计日志、操作日志、audit log——本系统不记录请求审计，只记录资源变更。
+代码命名沿用 `audit`（`features/audit`、`audit_logs` 表），与展示语言不同步是有意的。
 
 **变更记录（Change Record）**：
-一次原子变更：操作人 + 时间 + 变更类型（创建 / 更新 / 删除）+ 变更明细（字段的变更前值 → 变更后值）。
+一次原子变更：操作人 + 操作动作（`action`，如 `account.create` / `purchase_order.approve`）+ 时间 + 变更明细（字段的变更前值 → 变更后值）。变更类型（创建 / 更新 / 删除）由前后快照推断，不单独存储。
 _Avoid_: 审计条目、流水、changeset——代码内可用 changeset，领域语言用变更记录

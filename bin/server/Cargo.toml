@@ -30,6 +30,7 @@ rootcause = { workspace = true }
 sched_kit = { workspace = true }
 secrecy = { workspace = true }
 appctx = { workspace = true }
+audit = { workspace = true }
 customer = { workspace = true }
 finance = { workspace = true }
 identity = { workspace = true }

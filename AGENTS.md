@@ -1,7 +1,7 @@
 # Slab — AI 协作上下文
 
 DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
-三个跨域通道：只读 Port、Outbox/Inbox 事件、模块内领域事件。
+跨域通道：只读 Port、Outbox/Inbox 事件、模块内领域事件；**例外**——跨域同事务写 Port（`audit_contract::record` 先例，动词命名，与只读 Port 名词方法区分）。
 
 ## 代码导航
 
@@ -86,6 +86,7 @@ features/{domain} (切片)
 ├── 已有域加端点 → 复制 docs/templates/endpoint_template.rs → 改 DTO/execute/SQL → 注册 mod
 ├── 新建域 → contract（实体/Port/事件/错误）→ runtime（端点/仓储/lib.rs）→ workspace + modules.rs
 ├── 跨域读 → import {other}_contract::port::{Domain}Port（禁止 import features/{other}/*）
+├── 写端点接入变更历史 → 同事务调 `audit_contract::record`（漏接不报编译错，端点测试断言 `audit_logs` 兜底；identity 三端点作示范）
 ├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + enqueue_event
 ├── 加流程 → infrastructure/flow 定义 `#[task]` + `workflow!`，AppCtx.flow.run/resume（见 [docs/FLOW.md](docs/FLOW.md)）
 ├── 改 DB → infrastructure/migration/versions/ 新 .sql

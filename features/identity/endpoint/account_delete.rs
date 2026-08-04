@@ -1,6 +1,10 @@
 use crate::repository::account_repository::AccountRepository;
+use audit_contract::AuditEvent;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator_context::OperatorContext;
+use identity_contract::port::AccountPort;
+use sqlx::Acquire;
 use web::extract::valid_path::ValidPath;
 use web::response::json_response::{JsonResponse, JsonResponseType};
 
@@ -34,9 +38,10 @@ pub(crate) struct DeleteAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<DeleteAccountPath>,
 ) -> JsonResponseType<DeleteAccountResponse> {
-    let response = execute(&pg_pool, path).await?;
+    let response = execute(&pg_pool, ctx, path).await?;
     JsonResponse::ok(response)
 }
 
@@ -44,10 +49,37 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     path: DeleteAccountPath,
 ) -> rootcause::Result<DeleteAccountResponse> {
     let mut conn = pg_pool.acquire().await?;
-    AccountRepository::delete(&mut conn, &path.id).await?;
+    let mut txn = conn.begin().await?;
+
+    // 删除前读旧值用于变更历史；账户不存在时幂等删除，不产生记录
+    let before = match AccountPort::by_id(&mut txn, &path.id).await {
+        Ok(account) => Some(account),
+        Err(err) if err.to_string().contains("account_not_found") => None,
+        Err(err) => return Err(err),
+    };
+    AccountRepository::delete(&mut txn, &path.id).await?;
+    if let Some(before) = before {
+        audit_contract::record(
+            txn.as_mut(),
+            &AuditEvent {
+                operator_id: ctx.operator_id,
+                action: "account.delete".to_string(),
+                entity: "account".to_string(),
+                entity_id: path.id,
+                before: Some(serde_json::to_value(&before)?),
+                after: None,
+                ip: ctx.ip,
+                user_agent: ctx.user_agent,
+            },
+        )
+        .await?;
+    }
+    txn.commit().await?;
+
     Ok(DeleteAccountResponse {
         id: path.id,
         deleted: true,
@@ -67,9 +99,13 @@ mod tests {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
         let account_id = tests::insert_test_account(&state.pg_pool, "13900001801").await;
-        let response = execute(&state.pg_pool, DeleteAccountPath { id: account_id })
-            .await
-            .unwrap();
+        let response = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            DeleteAccountPath { id: account_id },
+        )
+        .await
+        .unwrap();
         assert_eq!(response.id, account_id);
         assert!(response.deleted);
 
@@ -79,6 +115,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("account_not_found"));
+
+        // 变更历史：delete 类型，after 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *account_id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, "account.delete");
+        let before: serde_json::Value = audit_row.before.unwrap();
+        assert_eq!(before["name"], "test-13900001801");
+        assert!(before.get("password").is_none());
+        assert!(audit_row.after.is_none());
     }
 
     #[sqlx::test]
@@ -87,24 +137,44 @@ mod tests {
         let state = testing::build(pool).await;
         let account_id = tests::insert_test_account(&state.pg_pool, "13900001802").await;
         // 第一次删除成功
-        execute(&state.pg_pool, DeleteAccountPath { id: account_id })
-            .await
-            .unwrap();
+        execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            DeleteAccountPath { id: account_id },
+        )
+        .await
+        .unwrap();
         // 第二次也成功（幂等）
-        let response = execute(&state.pg_pool, DeleteAccountPath { id: account_id })
-            .await
-            .unwrap();
+        let response = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            DeleteAccountPath { id: account_id },
+        )
+        .await
+        .unwrap();
         assert_eq!(response.id, account_id);
         assert!(response.deleted);
+
+        // 幂等删除：只有第一条产生变更记录
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let count = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!" FROM audit_logs WHERE entity_id = $1"#,
+            *account_id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(count.count, 1);
     }
 
     #[sqlx::test]
     async fn test_delete_nonexistent_ok(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        // 删除不存在的 ID 也返回成功（幂等语义）
+        // 删除不存在的 ID 也返回成功（幂等语义），且不产生变更记录
         let response = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             DeleteAccountPath {
                 id: ID::from(999_i64),
             },
@@ -113,5 +183,15 @@ mod tests {
         .unwrap();
         assert_eq!(response.id, ID::from(999_i64));
         assert!(response.deleted);
+
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let count = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!" FROM audit_logs WHERE entity_id = $1"#,
+            999i64
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(count.count, 0);
     }
 }
