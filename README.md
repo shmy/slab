@@ -31,11 +31,16 @@ features/
 └── health/                ← 基础设施，无需 contract
 
 infrastructure/
-├── app_state/
-├── adapters/              ← postgresql, pg_queue, pg_cache, s3, jwt, http_client
-├── http/                  ← 提取器、响应封装
+├── db/                    ← PgPool
+├── queue/                 ← Outbox/Inbox 队列（pg_queue）
+├── cache/                 ← UNLOGGED KV + TTL（pg_cache）
+├── flow/                  ← sayiir 持久化工作流引擎
+├── web/                   ← 提取器、响应封装、Problem Details
 ├── http_auth/             ← JWT 鉴权中间件
-└── l10n/                  ← Fluent 本地化
+├── locale/                ← Fluent 本地化
+├── migration/             ← SQL 版本迁移
+├── appctx/                ← 应用上下文（AppCtx 组装）
+└── ...                    ← approval / blob / jwt / costing 等领域基础设施
 
 bin/server/                ← 组装点：路由、中间件、任务编排
 ```
@@ -48,7 +53,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 
 **单文件端点。** 一个动作一个文件：DTO + `#[utoipa::path]` + `handler` + `execute` + 测试。复制 `account_create.rs` 就是新端点模板。
 
-**Outbox 模式。** 领域事件和业务写在同一个事务里入队。消费通过 `pg_queue` dispatcher，将来拆微服务可以无缝切到 Kafka/Debezium。
+**Outbox 模式。** 领域事件和业务写在同一个事务里入队。消费通过 `infrastructure/queue` dispatcher，将来拆微服务可以无缝切到 Kafka/Debezium。
 
 ## 技术栈
 
@@ -57,8 +62,9 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 运行时 | Tokio multi-thread |
 | HTTP | Axum 0.8 |
 | 数据库 | PostgreSQL + sqlx 0.9 |
-| 消息队列 | PostgreSQL Outbox（`pg_queue`） |
-| 缓存 | UNLOGGED 表 KV + TTL（`pg_cache`） |
+| 消息队列 | PostgreSQL Outbox（`infrastructure/queue`） |
+| 流程编排 | sayiir 持久化工作流（`infrastructure/flow`） |
+| 缓存 | UNLOGGED 表 KV + TTL（`infrastructure/cache`） |
 | 鉴权 | JWT（access + refresh，双 realm） |
 | 定时任务 | tokio-cron-scheduler（`sched_kit`） |
 | 对象存储 | S3 兼容（opendal） |
@@ -108,6 +114,7 @@ cargo test -p server arch_test
 ## 文档
 
 - `docs/ARCHITECTURE.md` — 完整架构说明
+- `docs/FLOW.md` — 流程引擎（sayiir 工作流）设计
 - `docs/PG_QUEUE.md` — 队列设计
 - `docs/PG_CACHE.md` — 缓存设计
 - `docs/E2E_HURL.md` — E2E 测试约定

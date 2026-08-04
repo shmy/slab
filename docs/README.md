@@ -15,6 +15,7 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 依赖方向、Port/Repository、endpoint 模式、开发约定 | 写复杂跨域逻辑前、新建业务域前 |
 | [PG_QUEUE.md](PG_QUEUE.md) | Outbox/Inbox 队列设计、at-least-once 语义、重试策略 | 加新事件/订阅者前 |
 | [PG_CACHE.md](PG_CACHE.md) | UNLOGGED KV + TTL 缓存设计、Token 吊销实现 | 操作 token 吊销/缓存状态时 |
+| [FLOW.md](FLOW.md) | sayiir 持久化工作流（信号/超时/分流编排）、适用场景与陷阱 | 加长流程/跨单据联动/审批超时升级前 |
 
 ## 测试
 
@@ -32,6 +33,7 @@
 
 ## 外部参考
 
+- [sayiir](https://docs.sayiir.dev) — 持久化工作流引擎（`infrastructure/flow` 底层）
 - [fullstackhero Modular Monolith](https://fullstackhero.net/) — 架构参考
 - [Axum](https://docs.rs/axum) — HTTP 框架
 - [sqlx](https://docs.rs/sqlx) — 数据库驱动
