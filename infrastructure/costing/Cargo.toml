@@ -1,0 +1,21 @@
+[package]
+name = "costing"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+item_contract = { workspace = true }
+rootcause = { workspace = true }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+migration = { workspace = true }

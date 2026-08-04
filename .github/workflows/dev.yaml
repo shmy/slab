@@ -1,0 +1,133 @@
+# name: CI
+
+# on:
+#   push:
+#     branches:
+#       - main
+#   pull_request:
+#     branches:
+#       - main
+
+# jobs:
+#   # ── 零依赖检查（无需数据库） ──
+#   static_checks:
+#     name: Static checks
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Clone code
+#         uses: actions/checkout@v4
+#       - name: Install rust
+#         uses: actions-rust-lang/setup-rust-toolchain@v1
+#         with:
+#           components: rustfmt, clippy
+#       - name: Run sccache-cache
+#         uses: mozilla-actions/sccache-action@v0.0.9
+#         with:
+#           version: "v0.10.0"
+#       - name: Install just
+#         uses: extractions/setup-just@v3
+#       - name: Install cargo-machete
+#         run: cargo install cargo-machete
+#       - name: Install cargo-sort
+#         run: cargo install cargo-sort
+#       - name: Architecture tests
+#         run: cargo test -p server arch_test
+#       - name: Cross-domain repository check
+#         run: bash scripts/check_cross_domain_repository.sh
+#       - name: Check unused dependencies
+#         run: cargo machete
+#       - name: Check dependency ordering
+#         run: cargo sort features/** && cargo sort
+#       - name: Format check
+#         run: cargo fmt --all -- --check
+#       - name: Clippy
+#         run: cargo clippy --workspace -- -D warnings
+
+#   # ── 集成测试（需要数据库） ──
+#   integration_tests:
+#     name: Integration tests
+#     runs-on: ubuntu-latest
+#     services:
+#       postgis:
+#         image: postgis/postgis:18-3.6-alpine
+#         ports:
+#           - 5432:5432
+#         env:
+#           POSTGRES_USER: postgres
+#           POSTGRES_PASSWORD: postgres
+#           POSTGRES_DB: postgres
+#         options: >-
+#           --health-cmd pg_isready
+#           --health-interval 10s
+#           --health-timeout 5s
+#           --health-retries 5
+#     env:
+#       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+#     steps:
+#       - name: Clone code
+#         uses: actions/checkout@v4
+#       - name: Install rust
+#         uses: actions-rust-lang/setup-rust-toolchain@v1
+#       - name: Run sccache-cache
+#         uses: mozilla-actions/sccache-action@v0.0.9
+#         with:
+#           version: "v0.10.0"
+#       - name: Run migrations
+#         run: cargo run --package migrator
+#       - name: Test identity
+#         run: cargo test -p identity
+#       - name: Test file
+#         run: cargo test -p file
+#       - name: Test pg_queue
+#         run: cargo test -p pg_queue
+#       - name: Test pg_cache
+#         run: cargo test -p pg_cache
+
+#   # ── 编译（release-ci 优化） ──
+#   build:
+#     name: Build
+#     runs-on: ubuntu-latest
+#     services:
+#       postgis:
+#         image: postgis/postgis:18-3.6-alpine
+#         ports:
+#           - 5432:5432
+#         env:
+#           POSTGRES_USER: postgres
+#           POSTGRES_PASSWORD: postgres
+#           POSTGRES_DB: postgres
+#         options: >-
+#           --health-cmd pg_isready
+#           --health-interval 10s
+#           --health-timeout 5s
+#           --health-retries 5
+#     env:
+#       DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+#     steps:
+#       - name: Clone code
+#         uses: actions/checkout@v4
+#       - name: Install rust
+#         uses: actions-rust-lang/setup-rust-toolchain@v1
+#       - name: Run sccache-cache
+#         uses: mozilla-actions/sccache-action@v0.0.9
+#         with:
+#           version: "v0.10.0"
+#       - name: Install just
+#         uses: extractions/setup-just@v3
+#       - name: Setup database
+#         run: cargo run --package migrator
+#       - name: Build server
+#         run: just build_linux_x86_64_gnu_ci
+
+#   # ── 部署（占位） ──
+#   deploy_dev:
+#     name: Deploy DEV
+#     runs-on: ubuntu-latest
+#     needs:
+#       - static_checks
+#       - integration_tests
+#       - build
+#     steps:
+#       - name: Deploy DEV
+#         run: |
+#           echo "Deploy DEV"

@@ -1,0 +1,288 @@
+[workspace]
+resolver = "3"
+members = [
+    "bin/migrator",
+    "bin/server",
+    "features/customer",
+    "features/customer_contract",
+    "features/file",
+    "features/file_contract",
+    "features/finance",
+    "features/finance_contract",
+    "features/health",
+    "features/identity",
+    "features/identity_contract",
+    "features/item",
+    "features/item_contract",
+    "features/planning",
+    "features/planning_contract",
+    "features/product",
+    "features/product_contract",
+    "features/production",
+    "features/production_contract",
+    "features/purchase",
+    "features/purchase_contract",
+    "features/quality",
+    "features/quality_contract",
+    "features/sales",
+    "features/sales_contract",
+    "features/shared_contract",
+    "features/supplier",
+    "features/supplier_contract",
+    "features/warehouse",
+    "features/warehouse_contract",
+    "infrastructure/appctx",
+    "infrastructure/approval",
+    "infrastructure/blob",
+    "infrastructure/cache",
+    "infrastructure/code_gen",
+    "infrastructure/costing",
+    "infrastructure/db",
+    "infrastructure/feature",
+    "infrastructure/flow",
+    "infrastructure/http_auth",
+    "infrastructure/http_client",
+    "infrastructure/inventory_ledger",
+    "infrastructure/jwt",
+    "infrastructure/locale",
+    "infrastructure/migration",
+    "infrastructure/queue",
+    "infrastructure/web",
+    "libs/authn_kit",
+    "libs/authz_kit",
+    "libs/image_kit",
+    "libs/sched_kit",
+    "libs/trace_kit",
+]
+
+[workspace.dependencies]
+accept-language = { version = "3.1", default-features = false }
+appctx = { path = "infrastructure/appctx" }
+approval = { path = "infrastructure/approval" }
+argon2 = { version = "0.5", default-features = false, features = ["std"] }
+askama = { version = "0.16", default-features = false, features = [
+    "std",
+    "derive",
+] }
+askama_web = { version = "0.16", default-features = false, features = [
+    "default",
+    "axum-0.8",
+] }
+authn_kit = { path = "libs/authn_kit" }
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "query",
+    "form",
+    "macros",
+    "tokio",
+] }
+axum-embed = { version = "0.1", default-features = false }
+axum-extra = { version = "0.12", default-features = false, features = [
+    "cookie",
+] }
+axum-governor = { version = "2.0", default-features = false }
+axum-messages = { version = "0.8", default-features = false }
+axum-tracing-opentelemetry = { version = "0.38", default-features = false }
+axum_typed_multipart = { version = "0.16", default-features = false, features = [
+    "tempfile_3",
+    "chrono_0_4",
+] }
+blake3 = { version = "1.8", default-features = false }
+blob = { path = "infrastructure/blob" }
+bytes = { version = "1", default-features = false }
+cache = { path = "infrastructure/cache" }
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+clap = { version = "4.6", default-features = false, features = [
+    "std",
+    "help",
+    "env",
+    "derive",
+    "error-context",
+] }
+code_gen = { path = "infrastructure/code_gen" }
+costing = { path = "infrastructure/costing" }
+customer = { path = "features/customer" }
+customer_contract = { path = "features/customer_contract" }
+db = { path = "infrastructure/db" }
+dotenvy = { version = "0.15", default-features = false }
+feature = { path = "infrastructure/feature" }
+file = { path = "features/file" }
+file_contract = { path = "features/file_contract" }
+finance = { path = "features/finance" }
+finance_contract = { path = "features/finance_contract" }
+flow = { path = "infrastructure/flow" }
+fluent-bundle = { version = "0.16", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+health = { path = "features/health" }
+http_auth = { path = "infrastructure/http_auth" }
+http_client = { path = "infrastructure/http_client" }
+humantime = { version = "2.3", default-features = false }
+identity = { path = "features/identity" }
+identity_contract = { path = "features/identity_contract" }
+image_kit = { path = "libs/image_kit" }
+imageformat = { version = "0.3", default-features = false }
+inventory_ledger = { path = "infrastructure/inventory_ledger" }
+item = { path = "features/item" }
+item_contract = { path = "features/item_contract" }
+jsonwebtoken = { version = "11", default-features = false, features = [
+    "rust_crypto",
+] }
+jwt = { path = "infrastructure/jwt" }
+lazy-limit = { version = "1.0", default-features = false }
+locale = { path = "infrastructure/locale" }
+migration = { path = "infrastructure/migration" }
+mimalloc = { version = "0.1", default-features = false }
+mockall = { version = "0.15", default-features = false }
+opendal = { version = "0.58", default-features = false, features = [
+    "default",
+    "services-cos",
+] }
+planning = { path = "features/planning" }
+planning_contract = { path = "features/planning_contract" }
+postgis = { version = "0.9", default-features = false }
+product = { path = "features/product" }
+product_contract = { path = "features/product_contract" }
+production = { path = "features/production" }
+production_contract = { path = "features/production_contract" }
+purchase = { path = "features/purchase" }
+purchase_contract = { path = "features/purchase_contract" }
+quality = { path = "features/quality" }
+quality_contract = { path = "features/quality_contract" }
+queue = { path = "infrastructure/queue" }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "query",
+    "http2",
+    "rustls",
+    "form",
+    "gzip",
+] }
+reqwest-middleware = { version = "0.5", default-features = false }
+reqwest-retry = { version = "0.9", default-features = false }
+rootcause = { version = "0.13", default-features = false }
+rootcause-tracing = { version = "0.13", default-features = false }
+rust-embed = { version = "8.12", default-features = false }
+sales = { path = "features/sales" }
+sales_contract = { path = "features/sales_contract" }
+sayiir-core = { version = "1.0" }
+sayiir-persistence = { version = "1.0" }
+sayiir-postgres = { version = "1.0" }
+sayiir-runtime = { version = "1.0" }
+sched_kit = { path = "libs/sched_kit" }
+sea-query = { version = "1.0", default-features = false, features = [
+    "backend-postgres",
+] }
+sea-query-sqlx = { version = "0.9", default-features = false, features = [
+    "sqlx-postgres",
+] }
+secrecy = { version = "0.10", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+serde_qs = { version = "1.1", default-features = false }
+serde_repr = { version = "0.1", default-features = false }
+serde_with = { version = "3.21", default-features = false, features = [
+    "alloc",
+    "macros",
+    "chrono_0_4",
+] }
+shared_contract = { path = "features/shared_contract" }
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "chrono",
+    "json",
+    "migrate",
+    "macros",
+    "sqlx-toml",
+    "bigdecimal",
+] }
+supplier = { path = "features/supplier" }
+supplier_contract = { path = "features/supplier_contract" }
+
+tempfile = { version = "3.26", default-features = false }
+tempoid = { version = "0.1", default-features = false }
+
+thiserror = { version = "2", default-features = false }
+tokio = { version = "1", default-features = false, features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }
+tokio-cron-scheduler = { version = "0.15", default-features = false, features = [
+    "english",
+] }
+tokio-util = { version = "0.7", default-features = false }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.7", default-features = false, features = [
+    "timeout",
+] }
+trace_kit = { path = "libs/trace_kit" }
+tracing = { version = "0.1", default-features = false, features = [
+    "std",
+    "attributes",
+] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "ansi",
+] }
+tsid = { version = "0.3", default-features = false }
+unic-langid = { version = "0.9", default-features = false }
+utoipa = { version = "5.5", default-features = false, features = [
+    "macros",
+    "chrono",
+    "axum_extras",
+] }
+utoipa-axum = { version = "0.2", default-features = false }
+utoipa-scalar = { version = "0.3", default-features = false, features = [
+    "axum",
+] }
+validify = { version = "2.0", default-features = false }
+warehouse = { path = "features/warehouse" }
+warehouse_contract = { path = "features/warehouse_contract" }
+web = { path = "infrastructure/web" }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+dbg_macro = "deny"
+todo = "warn"
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+opt-level = 0
+incremental = true
+overflow-checks = true
+panic = "abort"
+codegen-units = 256
+lto = "off"
+strip = false
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = 0
+rpath = false
+incremental = false
+overflow-checks = false
+panic = "abort"
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true
+
+[profile.release-ci]
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = "off"
+opt-level = 1
+debug = 1
+strip = false

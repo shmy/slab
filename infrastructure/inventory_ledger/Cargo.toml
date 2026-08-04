@@ -1,0 +1,16 @@
+[package]
+name = "inventory_ledger"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rootcause = { workspace = true }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }

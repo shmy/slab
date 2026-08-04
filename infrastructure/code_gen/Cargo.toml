@@ -1,0 +1,19 @@
+[package]
+name = "code_gen"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+rootcause = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+sqlx = { workspace = true }

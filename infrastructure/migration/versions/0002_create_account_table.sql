@@ -1,0 +1,15 @@
+CREATE TABLE accounts (
+    id BIGINT PRIMARY KEY NOT NULL,
+    name VARCHAR(16) NOT NULL, -- 姓名
+    phone VARCHAR(11) UNIQUE NOT NULL, -- 手机号11位
+    password VARCHAR(255) NOT NULL, -- 密码
+    privileged BOOLEAN NOT NULL DEFAULT FALSE, -- 是否特权账户
+    remark VARCHAR(255), -- 备注
+
+    version BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER set_updated_at_accounts BEFORE
+UPDATE ON accounts FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();

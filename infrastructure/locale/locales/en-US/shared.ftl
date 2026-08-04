@@ -1,0 +1,12 @@
+ok = OK
+internal_server_error = Internal server error
+access_token_missing = Authorization token is required
+access_token_invalid = Access token is invalid
+access_token_revoked = Access token has been revoked
+phone_number_too_long = Phone number is too long
+phone_number_too_short = Phone number is too short
+phone_number_invalid_cn_mobile = Must be a valid 11-digit mainland China mobile number
+authed_account_not_found = Authenticated account not found
+invalid_request = Invalid request
+insufficient_inventory = Insufficient inventory
+invalid_status_transition = Invalid status transition

@@ -1,0 +1,14 @@
+account_not_found = User not found
+account_duplicated = Account already exists
+account_version_conflict = This record was modified by someone else. Refresh and try again.
+account_account_too_long = Account is too long
+account_account_too_short = Account is too short
+account_account_invalid_cn_mobile = Must be a valid 11-digit mainland China mobile number
+account_account_length_invalid = Account length is invalid
+account_password_too_short = Password is too short
+account_password_too_long = Password is too long
+account_password_encode_failed = Failed to encode password
+account_password_decode_failed = Failed to decode password
+account_password_incorrect = Incorrect password
+account_invalid_credentials = Invalid account or password
+refresh_token_invalid = Refresh token is invalid or expired

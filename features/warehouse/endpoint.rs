@@ -1,0 +1,13 @@
+pub(crate) mod inventory_check_approve;
+pub(crate) mod inventory_check_create;
+pub(crate) mod inventory_check_submit;
+pub(crate) mod inventory_initial;
+pub(crate) mod inventory_search;
+pub(crate) mod inventory_transaction_search;
+pub(crate) mod stock_transfer_approve;
+pub(crate) mod stock_transfer_create;
+pub(crate) mod stock_transfer_submit;
+pub(crate) mod warehouse_create;
+pub(crate) mod warehouse_delete;
+pub(crate) mod warehouse_list;
+pub(crate) mod warehouse_update;

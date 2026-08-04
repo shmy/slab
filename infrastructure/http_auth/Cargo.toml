@@ -1,0 +1,19 @@
+[package]
+name = "http_auth"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+jwt = { workspace = true }
+authn_kit = { workspace = true }
+axum = { workspace = true }
+cache = { workspace = true }
+db = { workspace = true }
+shared_contract = { workspace = true }
+web = { workspace = true }

@@ -1,0 +1,55 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "server"
+path = "main.rs"
+
+[dependencies]
+cache = { workspace = true }
+db = { workspace = true }
+blob = { workspace = true }
+queue = { workspace = true }
+axum = { workspace = true }
+axum-governor = { workspace = true }
+axum-tracing-opentelemetry = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+file = { workspace = true }
+health = { workspace = true }
+http_auth = { workspace = true }
+humantime = { workspace = true }
+locale = { workspace = true }
+lazy-limit = { workspace = true }
+migration = { workspace = true }
+feature = { workspace = true }
+mimalloc = { workspace = true }
+rootcause = { workspace = true }
+sched_kit = { workspace = true }
+secrecy = { workspace = true }
+appctx = { workspace = true }
+customer = { workspace = true }
+finance = { workspace = true }
+identity = { workspace = true }
+item = { workspace = true }
+supplier = { workspace = true }
+warehouse = { workspace = true }
+purchase = { workspace = true }
+quality = { workspace = true }
+sales = { workspace = true }
+planning = { workspace = true }
+product = { workspace = true }
+production = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+trace_kit = { workspace = true, features = ["console", "otlp"] }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-scalar = { workspace = true }
+
+[dev-dependencies]
+toml = "0.8"

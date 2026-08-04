@@ -1,0 +1,10 @@
+/target
+/dist
+.DS_Store
+.idea
+.env
+/containers
+node_modules
+.worktrees/
+.mcp.json
+.pi-subagents

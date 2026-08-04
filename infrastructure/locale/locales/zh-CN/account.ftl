@@ -1,0 +1,14 @@
+account_not_found = 用户不存在
+account_duplicated = 账号已存在
+account_version_conflict = 记录已被他人修改，请刷新后重试
+account_account_too_long = 账号过长
+account_account_invalid_cn_mobile = 请输入有效的11位中国大陆手机号
+account_account_too_short = 账号过短
+account_account_length_invalid = 账号长度不符合要求
+account_password_too_short = 密码过短
+account_password_too_long = 密码过长
+account_password_encode_failed = 密码编码失败
+account_password_decode_failed = 密码解码失败
+account_password_incorrect = 密码错误
+account_invalid_credentials = 账号或密码错误
+refresh_token_invalid = 刷新令牌无效或已过期

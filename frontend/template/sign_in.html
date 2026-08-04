@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>
+        登录-<%= import.meta.brandName %>
+    </title>
+    <link rel="icon" type="image/webp" href="<%= assetPrefix %>/static/image/logo.webp" />
+    <link rel="prefetch" href="<%= assetPrefix %>/static/lib/jssdk/antd.css" />
+    <link rel="prefetch" href="<%= assetPrefix %>/static/lib/jssdk/iconfont.css" />
+    <link rel="prefetch" href="<%= assetPrefix %>/static/lib/jssdk/sdk.js" />
+    <link rel="prefetch" href="<%= assetPrefix %>/static/lib/jssdk/rest.js" />
+</head>
+
+<body>
+    <div id="<%= mountId %>" class="h-screen w-screen flex flex-col justify-center items-center">
+        <form v-scope @submit.prevent="handleSubmit" @vue:mounted="mounted" @vue:unmounted="unmonuted"
+            class="w-[360px] flex flex-col gap-4 bg-white p-6 rounded-lg shadow-lg" v-cloak>
+            <div>
+                <label for="account" class="block mb-2 text-sm font-medium text-gray-900">
+                    账号
+                </label>
+                <input type="text" id="account" v-model="formData.account" autofocus
+                    class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full py-2.5 px-3"
+                    placeholder="请输入账号" required />
+            </div>
+            <div>
+                <label for="password" class="block mb-2 text-sm font-medium text-gray-900">
+                    密码
+                </label>
+                <input type="password" id="password" v-model="formData.password"
+                    class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 px-3"
+                    placeholder="请输入密码" required />
+            </div>
+            <div>
+                <label for="captcha" class="block mb-2 text-sm font-medium text-gray-900">
+                    验证码
+                </label>
+                <div class="flex gap-2">
+                    <input type="text" id="captcha" name="captcha" v-model="formData.captcha_value"
+                        class="flex-1 w-0 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 px-3"
+                        placeholder="请输入验证码" required />
+                    <div @click="refreshCaptcha"
+                        class="flex-1 w-0 rounded-lg cursor-pointer flex items-center justify-center">
+                        <img v-if="captchaImageUrl" class="rounded-lg shadow-sm h-full" :src="captchaImageUrl"
+                            alt="验证码">
+                        <div v-if="captchaRefreshing" v-if="switchLocaleing" v-scope="Loading"></div>
+
+                        <svg v-if="captchaError" xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24"
+                            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-photo-off">
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                            <path d="M15 8h.01" />
+                            <path
+                                d="M7 3h11a3 3 0 0 1 3 3v11m-.856 3.099a2.991 2.991 0 0 1 -2.144 .901h-12a3 3 0 0 1 -3 -3v-12c0 -.845 .349 -1.608 .91 -2.153" />
+                            <path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5" />
+                            <path d="M16.33 12.338c.574 -.054 1.155 .166 1.67 .662l3 3" />
+                            <path d="M3 3l18 18" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            <div class="text-red-500 text-sm text-center">
+                <div>{{signInError}}</div>
+                <div>{{captchaError}}</div>
+            </div>
+            <div>
+                <button v-if="!signInSucced" type="submit" :disabled="submitting"
+                    class="w-full text-white bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm py-3 me-2 mb-2 focus:outline-none">
+                    {{ submitting ? '登录中...' : '立即登录' }}
+                </button>
+                <div v-if="signInSucced" class="text-blue-500 text-base text-center">
+                    登录成功，正在重定向...
+                </div>
+            </div>
+        </form>
+    </div>
+    <template id="loading">
+        <svg class="size-5" fill="hsl(228, 97%, 42%)" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25" />
+            <path
+                d="M12,4a8,8,0,0,1,7.89,6.7A1.53,1.53,0,0,0,21.38,12h0a1.5,1.5,0,0,0,1.48-1.75,11,11,0,0,0-21.72,0A1.5,1.5,0,0,0,2.62,12h0a1.53,1.53,0,0,0,1.49-1.3A8,8,0,0,1,12,4Z">
+                <animateTransform attributeName="transform" type="rotate" dur="0.75s" values="0 12 12;360 12 12"
+                    repeatCount="indefinite" />
+            </path>
+        </svg>
+    </template>
+    <script src="<%= assetPrefix %>/static/lib/petite-vue.umd.min.js"></script>
+
+</body>
+
+</html>

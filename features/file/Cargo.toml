@@ -1,0 +1,32 @@
+[package]
+name = "file"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+appctx = { workspace = true }
+axum = { workspace = true }
+axum_typed_multipart = { workspace = true }
+feature = { workspace = true }
+file_contract = { workspace = true }
+image_kit = { workspace = true }
+rootcause = { workspace = true }
+serde = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+web = { workspace = true }
+
+[dev-dependencies]
+appctx = { workspace = true, features = ["test-utils"] }
+blob = { workspace = true, features = ["test-utils"] }
+migration = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

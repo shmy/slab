@@ -1,0 +1,25 @@
+[package]
+name = "queue"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+db = { workspace = true }
+futures-util = { workspace = true }
+rootcause = { workspace = true }
+serde_json = { workspace = true }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+
+[dev-dependencies]
+chrono = { workspace = true }
+migration = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[lints]
+workspace = true

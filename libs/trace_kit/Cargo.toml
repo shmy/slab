@@ -1,0 +1,59 @@
+[package]
+name = "trace_kit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+trace_id = ["dep:opentelemetry", "dep:tracing", "dep:tracing-opentelemetry"]
+init = ["dep:tracing-subscriber"]
+console = ["init"]
+otlp = [
+    "init",
+    "dep:tonic",
+    "dep:tracing",
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry",
+    "dep:opentelemetry-appender-tracing",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:serde_json",
+]
+otlp_tls = ["otlp", "opentelemetry-otlp/tls-roots"]
+
+[dependencies]
+http_1 = { package = "http", version = "1", default-features = false, features = [
+    "std",
+] }
+opentelemetry = { version = "0.32", default-features = false, features = [
+    "trace",
+], optional = true }
+opentelemetry-appender-tracing = { version = "0.32", default-features = false, optional = true }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "logs",
+    "metrics",
+    "trace",
+    "grpc-tonic",
+], optional = true }
+
+opentelemetry-semantic-conventions = { version = "0.32", default-features = false, optional = true }
+opentelemetry_sdk = { version = "0.32", default-features = false, optional = true }
+serde_json = { workspace = true, optional = true }
+tonic = { version = "0.14", default-features = false, optional = true }
+tracing = { workspace = true, optional = true }
+rootcause = { workspace = true }
+rootcause-tracing = { workspace = true }
+tracing-opentelemetry = { version = "0.33", default-features = false, features = [
+    "metrics",
+], optional = true }
+tracing-subscriber = { workspace = true, optional = true, features = [
+    "fmt",
+    "ansi",
+    "env-filter",
+] }

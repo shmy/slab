@@ -1,0 +1,28 @@
+[package]
+name = "shared_contract"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["openapi"]
+openapi = ["dep:utoipa"]
+
+[dependencies]
+chrono = { workspace = true }
+rootcause = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+sqlx = { workspace = true }
+tsid = { workspace = true }
+utoipa = { workspace = true, optional = true }
+validify = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

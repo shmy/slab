@@ -1,0 +1,28 @@
+[package]
+name = "production"
+version = "0.1.0"
+edition = "2024"
+[lib]
+path = "lib.rs"
+[dependencies]
+appctx = { workspace = true, features = ["test-utils"] }
+axum = { workspace = true }
+chrono = { workspace = true }
+code_gen = { workspace = true }
+db = { workspace = true }
+feature = { workspace = true }
+inventory_ledger = { workspace = true }
+migration = { workspace = true }
+production_contract = { workspace = true }
+rootcause = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+validify = { workspace = true }
+web = { workspace = true }
+
+[lints]
+workspace = true

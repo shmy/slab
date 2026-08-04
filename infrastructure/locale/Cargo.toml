@@ -1,0 +1,22 @@
+[package]
+name = "locale"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+accept-language = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+fluent-bundle = { workspace = true }
+web = { workspace = true }
+trace_kit = { workspace = true, features = ["trace_id"] }
+unic-langid = { workspace = true }
+
+[dev-dependencies]
+regex = "1"

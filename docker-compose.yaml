@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgis/postgis:18-3.6-alpine
+    platform: linux/amd64
+    restart: always
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_PASSWORD: 123123
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - $PWD/containers/postgresql-data:/var/lib/postgresql/data

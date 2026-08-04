@@ -1,0 +1,20 @@
+[package]
+name = "image_kit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "webp",
+] }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
+webp = { version = "0.3", default-features = false }

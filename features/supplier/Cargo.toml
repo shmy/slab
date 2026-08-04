@@ -1,0 +1,34 @@
+[package]
+name = "supplier"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+appctx = { workspace = true }
+axum = { workspace = true }
+code_gen = { workspace = true }
+db = { workspace = true }
+feature = { workspace = true }
+rootcause = { workspace = true }
+sea-query = { workspace = true }
+sea-query-sqlx = { workspace = true }
+serde = { workspace = true }
+serde_with = { workspace = true }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+supplier_contract = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+validify = { workspace = true }
+web = { workspace = true }
+
+[dev-dependencies]
+appctx = { workspace = true, features = ["test-utils"] }
+migration = { workspace = true }
+
+[lints]
+workspace = true

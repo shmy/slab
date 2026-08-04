@@ -1,0 +1,12 @@
+ok = 操作成功
+internal_server_error = 服务器内部错误
+access_token_missing = 需要授权令牌
+access_token_invalid = 访问令牌无效
+access_token_revoked = 访问令牌已被撤销
+phone_number_too_long = 手机号过长
+phone_number_too_short = 手机号过短
+phone_number_invalid_cn_mobile = 请输入有效的11位中国大陆手机号
+authed_account_not_found = 当前认证账号不存在
+invalid_request = 无效请求
+insufficient_inventory = 库存不足
+invalid_status_transition = 非法的状态迁移

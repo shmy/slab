@@ -1,0 +1,18 @@
+[package]
+name = "supplier_contract"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+rootcause = { workspace = true }
+serde = { workspace = true }
+shared_contract = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+utoipa = { workspace = true }
+
+[lints]
+workspace = true

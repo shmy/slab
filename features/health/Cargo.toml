@@ -1,0 +1,21 @@
+[package]
+name = "health"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+appctx = { workspace = true }
+axum = { workspace = true }
+db = { workspace = true }
+feature = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+
+[lints]
+workspace = true

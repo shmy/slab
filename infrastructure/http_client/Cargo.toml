@@ -1,0 +1,19 @@
+[package]
+name = "http_client"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+reqwest-retry = { workspace = true }
+rootcause = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

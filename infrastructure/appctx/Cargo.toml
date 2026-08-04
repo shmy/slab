@@ -1,0 +1,22 @@
+[package]
+name = "appctx"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+test-utils = ["jwt/test-utils", "blob/test-utils", "flow/test-utils"]
+
+[dependencies]
+axum = { workspace = true }
+http_client = { workspace = true }
+jwt = { workspace = true }
+db = { workspace = true }
+blob = { workspace = true }
+tracing = { workspace = true }
+flow = { workspace = true }

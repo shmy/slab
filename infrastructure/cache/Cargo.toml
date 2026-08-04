@@ -1,0 +1,17 @@
+[package]
+name = "cache"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = ["clock", "std"] }
+rootcause = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }

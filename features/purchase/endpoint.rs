@@ -1,0 +1,14 @@
+pub(crate) mod purchase_invoice_create;
+pub(crate) mod purchase_invoice_get;
+pub(crate) mod purchase_order_approve;
+pub(crate) mod purchase_order_create;
+pub(crate) mod purchase_order_delete;
+pub(crate) mod purchase_order_get;
+pub(crate) mod purchase_order_reject;
+pub(crate) mod purchase_order_search;
+pub(crate) mod purchase_order_submit;
+pub(crate) mod purchase_receipt_create;
+pub(crate) mod purchase_receipt_get;
+pub(crate) mod purchase_return_approve;
+pub(crate) mod purchase_return_create;
+pub(crate) mod purchase_return_get;

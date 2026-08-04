@@ -1,0 +1,23 @@
+[package]
+name = "flow"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[features]
+test-utils = ["dep:sayiir-persistence"]
+
+[dependencies]
+rootcause = { workspace = true }
+sayiir-core = { workspace = true }
+sayiir-persistence = { workspace = true, optional = true }
+sayiir-postgres = { workspace = true }
+sayiir-runtime = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

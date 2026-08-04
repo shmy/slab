@@ -1,0 +1,7 @@
+base_url=http://127.0.0.1:8080
+e2e_admin_phone=13888888888
+e2e_admin_password=admin123!
+e2e_account_phone=13900008765
+e2e_account_password=admin123!
+e2e_customer_phone=13611112222
+e2e_customer_phone_b=13611112233

@@ -1,0 +1,15 @@
+[package]
+name = "authz_kit"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+cedar-policy = { version = "4.11", default-features = false }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

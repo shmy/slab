@@ -1,0 +1,18 @@
+[package]
+name = "feature"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+appctx = { workspace = true }
+futures-util = { workspace = true }
+queue = { workspace = true }
+rootcause = { workspace = true }
+sched_kit = { workspace = true }
+utoipa-axum = { workspace = true }

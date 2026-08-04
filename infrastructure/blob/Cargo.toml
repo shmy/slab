@@ -1,0 +1,25 @@
+[package]
+name = "blob"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-utils = ["opendal/services-memory"]
+
+[dependencies]
+futures-util = { workspace = true }
+opendal = { workspace = true }
+rootcause = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+dotenvy = { workspace = true }
