@@ -78,8 +78,8 @@ async fn execute(
         txn.as_mut(),
         &AuditEvent {
             operator_id: ctx.operator_id,
-            action: "account.create".to_string(),
-            entity: "account".to_string(),
+            action: "account.create",
+            entity: "account",
             entity_id: id,
             before: None,
             after: Some(serde_json::to_value(&account)?),

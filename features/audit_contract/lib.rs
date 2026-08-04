@@ -21,9 +21,9 @@ pub struct AuditEvent {
     /// 操作人（当前登录账户）
     pub operator_id: ID,
     /// 业务动作，`{entity}.{动词}`，如 `account.create` / `purchase_order.approve`
-    pub action: String,
+    pub action: &'static str,
     /// 资源类型（snake_case，如 `account` / `purchase_order`）
-    pub entity: String,
+    pub entity: &'static str,
     /// 资源 ID
     pub entity_id: ID,
     /// 变更前快照（创建时为 `None`）
@@ -49,8 +49,8 @@ where
         "#,
         *ID::new(),
         *event.operator_id,
-        event.action.as_str(),
-        event.entity.as_str(),
+        event.action,
+        event.entity,
         *event.entity_id,
         event.before.as_ref(),
         event.after.as_ref(),

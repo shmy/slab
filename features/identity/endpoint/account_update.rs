@@ -74,8 +74,8 @@ async fn execute(
         txn.as_mut(),
         &AuditEvent {
             operator_id: ctx.operator_id,
-            action: "account.update".to_string(),
-            entity: "account".to_string(),
+            action: "account.update",
+            entity: "account",
             entity_id: path.id,
             before: Some(serde_json::to_value(&before)?),
             after: Some(serde_json::to_value(&account)?),

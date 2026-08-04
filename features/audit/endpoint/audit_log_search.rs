@@ -29,6 +29,17 @@ pub(crate) struct SearchAuditLogQuery {
     pub entity_id: ID,
 }
 
+/// `audit_logs` × `accounts` LEFT JOIN 的查询行（中间形态，映射为 [`AuditLogItem`]）。
+type AuditLogRow = (
+    i64,
+    String,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+    i64,
+    Option<String>,
+    DateTime<Utc>,
+);
+
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AuditLogItem {
     pub id: ID,
@@ -111,15 +122,7 @@ async fn execute(
         .build_sqlx(PostgresQueryBuilder);
 
     let mut conn = pg_pool.acquire().await?;
-    let rows: Vec<(
-        i64,
-        String,
-        Option<serde_json::Value>,
-        Option<serde_json::Value>,
-        i64,
-        Option<String>,
-        DateTime<Utc>,
-    )> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
+    let rows: Vec<AuditLogRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
         .fetch_all(&mut *conn)
         .await?;
 
