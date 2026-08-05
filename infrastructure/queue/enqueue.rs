@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use crate::event::Event;
-use sqlx::{Executor, PgConnection, Postgres};
+use sqlx::PgConnection;
 pub async fn enqueue_event<T: Event>(
     executor: &mut PgConnection,
     event: &T,
@@ -21,14 +21,11 @@ pub async fn enqueue_event<T: Event>(
     Ok(())
 }
 
-pub async fn enqueue_event_with_delay<'e, E, T: Event>(
-    executor: E,
+pub async fn enqueue_event_with_delay<T: Event>(
+    executor: &mut PgConnection,
     event: &T,
     delay: Duration,
-) -> rootcause::Result<()>
-where
-    E: Executor<'e, Database = Postgres>,
-{
+) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
     sqlx::query!(
         r#"

@@ -18,7 +18,7 @@ use web::response::json_response::{JsonResponse, JsonResponseType};
 
 #[derive(Debug, Deserialize, Validify, IntoParams)]
 #[into_params(parameter_in = Query)]
-pub(crate) struct SearchAuditLogQuery {
+pub(crate) struct SearchAuditQuery {
     #[serde(flatten)]
     #[param(inline)]
     pub paging: CursorPagingQuery,
@@ -31,7 +31,6 @@ pub(crate) struct SearchAuditLogQuery {
 /// `audit_logs` × `accounts` LEFT JOIN 的查询行（中间形态，映射为 [`AuditLogItem`]）。
 type AuditLogRow = (
     i64,
-    String,
     Option<serde_json::Value>,
     Option<serde_json::Value>,
     i64,
@@ -42,9 +41,7 @@ type AuditLogRow = (
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AuditLogItem {
     pub id: ID,
-    /// 业务动作，如 account.create / account.update
-    pub action: String,
-    /// 变更类型（由快照推断）：create / update / delete
+    /// 变更类型（由 before/after 快照推断）：create / update / delete
     pub change_type: String,
     /// 字段级变更明细（读时计算，git diff 风格展示的输入）
     pub diff: Vec<ChangeField>,
@@ -58,16 +55,16 @@ pub(crate) struct AuditLogItem {
 #[utoipa::path(
     get,
     path = "/api/v1/audit-logs",
-    operation_id = "audit_log_search",
+    operation_id = "audit_search",
     tag = "audit",
-    params(SearchAuditLogQuery),
+    params(SearchAuditQuery),
     responses((status = 200, body = JsonResponse<CursorPagingResult<AuditLogItem>>)),
     security(("bearerAuth" = []))
 )]
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    ValidQuery(query): ValidQuery<SearchAuditLogQuery>,
+    ValidQuery(query): ValidQuery<SearchAuditQuery>,
 ) -> JsonResponseType<CursorPagingResult<AuditLogItem>> {
     let response = execute(&pg_pool, query).await?;
     JsonResponse::ok(response)
@@ -77,14 +74,13 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    query: SearchAuditLogQuery,
+    query: SearchAuditQuery,
 ) -> rootcause::Result<CursorPagingResult<AuditLogItem>> {
     let page_limit = query.paging.limit();
     let fetch_limit = page_limit + 1;
 
     let (sql, values) = Query::select()
         .column(("audit_logs", "id"))
-        .column(("audit_logs", "action"))
         .column(("audit_logs", "before"))
         .column(("audit_logs", "after"))
         .column(("audit_logs", "operator_id"))
@@ -116,10 +112,9 @@ async fn execute(
     let items = rows
         .into_iter()
         .map(
-            |(id, action, before, after, operator_id, operator_name, created_at)| {
+            |(id, before, after, operator_id, operator_name, created_at)| {
                 rootcause::Result::<AuditLogItem>::Ok(AuditLogItem {
                     id: ID::from(id),
-                    action,
                     change_type: match (&before, &after) {
                         (None, Some(_)) => "create",
                         (Some(_), None) => "delete",
@@ -169,7 +164,7 @@ mod tests {
         pool: &sqlx::PgPool,
         id: i64,
         operator_id: i64,
-        action: &str,
+        action: i16,
         entity: &str,
         entity_id: i64,
         before: Option<serde_json::Value>,
@@ -194,7 +189,7 @@ mod tests {
         .unwrap();
     }
 
-    fn search_query(entity: &str, entity_id: i64) -> SearchAuditLogQuery {
+    fn search_query(entity: &str, entity_id: i64) -> SearchAuditQuery {
         serde_json::from_value(json!({
             "entity": entity,
             "entity_id": entity_id.to_string()
@@ -224,7 +219,7 @@ mod tests {
             &state.pg_pool,
             1001,
             actor_id,
-            "account.create",
+            1, // Created
             "account",
             9001,
             None,
@@ -236,7 +231,7 @@ mod tests {
             &state.pg_pool,
             1002,
             actor_id,
-            "account.update",
+            2, // Updated
             "account",
             9001,
             Some(json!({"name": "Tom", "phone": "13900000001"})),
@@ -248,7 +243,7 @@ mod tests {
             &state.pg_pool,
             1003,
             actor_id,
-            "account.update",
+            2, // Updated
             "account",
             7001,
             Some(json!({"name": "Tom"})),
@@ -264,7 +259,6 @@ mod tests {
 
         // 时间倒序：1002 在前
         assert_eq!(result.items[0].id, ID::from(1002));
-        assert_eq!(result.items[0].action, "account.update");
         assert_eq!(result.items[0].change_type, "update");
         assert_eq!(result.items[0].diff.len(), 1);
         assert_eq!(result.items[0].diff[0].field, "phone");
@@ -291,7 +285,7 @@ mod tests {
                 &state.pg_pool,
                 2000 + i,
                 actor_id,
-                "account.update",
+                2, // Updated
                 "account",
                 9002,
                 Some(json!({"name": "Tom"})),
@@ -300,7 +294,7 @@ mod tests {
             .await;
         }
 
-        let query: SearchAuditLogQuery = serde_json::from_value(json!({
+        let query: SearchAuditQuery = serde_json::from_value(json!({
             "entity": "account",
             "entity_id": "9002",
             "limit": 2
@@ -311,7 +305,7 @@ mod tests {
         assert!(page1.next_cursor.is_some());
 
         let cursor = page1.next_cursor.unwrap();
-        let query: SearchAuditLogQuery = serde_json::from_value(json!({
+        let query: SearchAuditQuery = serde_json::from_value(json!({
             "entity": "account",
             "entity_id": "9002",
             "limit": 2,
@@ -321,13 +315,5 @@ mod tests {
         let page2 = execute(&state.pg_pool, query).await.unwrap();
         assert_eq!(page2.items.len(), 1);
         assert!(page2.next_cursor.is_none());
-    }
-
-    #[sqlx::test]
-    async fn test_search_rejects_invalid_entity(pool: sqlx::PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
-        let state = testing::build(pool).await;
-        let result = execute(&state.pg_pool, search_query("Account!", 9001)).await;
-        assert!(result.is_err());
     }
 }

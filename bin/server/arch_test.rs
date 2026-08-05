@@ -212,4 +212,128 @@ mod arch_test {
             );
         }
     }
+
+    /// 写端点必须接入变更历史（引用 `audit_contract::AuditService`）。
+    /// 按动作词识别写端点文件；`EXEMPT` 为设计豁免（blob / 会话写，无资源变更）；
+    /// `AUDIT_TODO` 为欠账白名单——未接线写端点，接入后从列表移除。
+    #[test]
+    fn write_endpoints_must_wire_audit_service() {
+        const WRITE_VERBS: &[&str] = &[
+            "create",
+            "update",
+            "delete",
+            "submit",
+            "approve",
+            "reject",
+            "release",
+            "complete",
+            "initial",
+            "report",
+            "pick",
+            "update_password",
+            "reset_password",
+        ];
+        // 设计豁免：blob 写无 DB 资源行；会话写按 ADR-0001 不记请求级审计。
+        const EXEMPT: &[&str] = &[
+            "file_upload_image",
+            "account_login",
+            "account_logout",
+            "account_refresh_token",
+        ];
+        // 欠账白名单：写端点尚未接入变更历史。接入 AuditService 后从列表移除。
+        const AUDIT_TODO: &[&str] = &[
+            "customer_create",
+            "customer_update",
+            "customer_delete",
+            "supplier_create",
+            "supplier_update",
+            "supplier_delete",
+            "item_create",
+            "item_update",
+            "item_delete",
+            "item_category_create",
+            "item_category_update",
+            "item_category_delete",
+            "item_unit_create",
+            "item_cost_create",
+            "warehouse_create",
+            "warehouse_update",
+            "warehouse_delete",
+            "stock_transfer_create",
+            "stock_transfer_submit",
+            "stock_transfer_approve",
+            "inventory_check_create",
+            "inventory_check_submit",
+            "inventory_check_approve",
+            "inventory_initial",
+            "purchase_order_create",
+            "purchase_order_delete",
+            "purchase_order_submit",
+            "purchase_order_approve",
+            "purchase_order_reject",
+            "purchase_receipt_create",
+            "purchase_invoice_create",
+            "purchase_return_create",
+            "purchase_return_approve",
+            "sales_order_create",
+            "sales_order_approve",
+            "sales_delivery_create",
+            "sales_invoice_create",
+            "work_order_create",
+            "work_order_release",
+            "work_order_complete",
+            "work_order_material_pick",
+            "work_order_operation_report",
+            "production_receipt_create",
+            "inspection_template_create",
+            "inspection_order_create",
+            "inspection_order_complete",
+            "non_conformance_create",
+            "bom_create",
+            "bom_release",
+            "mold_create",
+            "payment_create",
+            "account_update_password",
+            "account_reset_password",
+        ];
+
+        let features_dir = workspace_root().join("features");
+        for entry in std::fs::read_dir(&features_dir).unwrap() {
+            let entry = entry.unwrap();
+            let domain = entry.file_name().to_string_lossy().to_string();
+            if !entry.file_type().unwrap().is_dir() || domain.ends_with("_contract") {
+                continue;
+            }
+            let endpoint_dir = features_dir.join(&domain).join("endpoint");
+            if !endpoint_dir.exists() {
+                continue;
+            }
+            for file in std::fs::read_dir(&endpoint_dir).unwrap() {
+                let file = file.unwrap();
+                let stem = file.file_name().to_string_lossy().to_string();
+                if !stem.ends_with(".rs") {
+                    continue;
+                }
+                let stem = stem.trim_end_matches(".rs");
+                if !WRITE_VERBS.iter().any(|v| stem.ends_with(v)) || EXEMPT.contains(&stem) {
+                    continue;
+                }
+                let content = std::fs::read_to_string(file.path()).unwrap();
+                if content.contains("AuditService") {
+                    assert!(
+                        !AUDIT_TODO.contains(&stem),
+                        "`{stem}` is wired to AuditService but still listed in AUDIT_TODO — \
+                         remove it from the whitelist"
+                    );
+                } else {
+                    assert!(
+                        AUDIT_TODO.contains(&stem),
+                        "write endpoint `{stem}` does not wire `AuditService` and is not in \
+                         AUDIT_TODO — wire change history (AuditService::record_*) or add it to \
+                         the whitelist"
+                    );
+                }
+            }
+        }
+    }
 }

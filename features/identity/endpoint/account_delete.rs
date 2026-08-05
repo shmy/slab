@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::port::AuditService;
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator::Operator;
+use http_auth::extract::operator::OperatorContext;
 use identity_contract::port::AccountPort;
 use sqlx::Acquire;
 use web::extract::valid_path::ValidPath;
@@ -38,10 +38,10 @@ pub(crate) struct DeleteAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    operator: Operator,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<DeleteAccountPath>,
 ) -> JsonResponseType<DeleteAccountResponse> {
-    let response = execute(&pg_pool, operator, path).await?;
+    let response = execute(&pg_pool, ctx, path).await?;
     JsonResponse::ok(response)
 }
 
@@ -49,7 +49,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    operator: Operator,
+    ctx: OperatorContext,
     path: DeleteAccountPath,
 ) -> rootcause::Result<DeleteAccountResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -63,7 +63,7 @@ async fn execute(
     };
     AccountRepository::delete(&mut txn, &path.id).await?;
     if let Some(before) = before {
-        AuditService::on_deleted(&mut txn, "account", &path.id, &operator, Some(before)).await?;
+        AuditService::record_deleted(&mut txn, "account", &path.id, &ctx, &before).await?;
     }
     txn.commit().await?;
 
@@ -111,7 +111,7 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(audit_row.action, "account.delete");
+        assert_eq!(audit_row.action, 3); // Deleted
         let before: serde_json::Value = audit_row.before.unwrap();
         assert_eq!(before["name"], "test-13900001801");
         assert!(before.get("password").is_none());

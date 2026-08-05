@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::port::AuditService;
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator::Operator;
+use http_auth::extract::operator::OperatorContext;
 use identity_contract::entity::account::Account;
 use identity_contract::events::AccountCreatedEvent;
 use identity_contract::value_object::hashed_password::HashedPassword;
@@ -46,10 +46,10 @@ pub(crate) struct CreateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    operator: Operator,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateAccountRequest>,
 ) -> JsonResponseType<CreateAccountResponse> {
-    let response = execute(&pg_pool, operator, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -57,7 +57,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    operator: Operator,
+    ctx: OperatorContext,
     request: CreateAccountRequest,
 ) -> rootcause::Result<CreateAccountResponse> {
     let id = ID::new();
@@ -74,7 +74,7 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
-    AuditService::on_created(&mut txn, "account", &id, &operator, Some(account.clone())).await?;
+    AuditService::record_create(&mut txn, "account", &id, &ctx, &account).await?;
     enqueue_event(&mut txn, &AccountCreatedEvent { id }).await?;
     txn.commit().await?;
     Ok(CreateAccountResponse {
@@ -132,7 +132,7 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(audit_row.action, "account.create");
+        assert_eq!(audit_row.action, 1); // Created
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
         assert_eq!(after["name"], "Tom");

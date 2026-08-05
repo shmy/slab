@@ -187,6 +187,7 @@
 
 - **Port / Repository** 均采用 **空 struct + `pub async fn` + `&mut sqlx::PgConnection`**（或 `tx.as_mut()`），由 `execute` 传入连接以共事务。
 - **Port 组织**：统一为单文件 **`{domain}_contract/port.rs`**（port 及其专属值对象同文件，如 `finance_contract::port::{InvoicePort, InvoiceType}`）；调用方直接 `use {domain}_contract::port::{Domain}Port`。**不建** `port/` 子目录。
+- **audit 例外（跨域同事务写）**：`audit_contract::AuditService`（动词方法 `record_create` / `record_updated` / `record_deleted`）是唯一的跨域写入口，写 SQL 在 `lib.rs` 而非 `port.rs`——arch_test 规则 5 禁止 port 文件出现写 SQL，`port.rs` 只承载只读 Port。调用方传 `&mut txn` + `&Operator`（`shared_contract::value_object::operator`）+ before/after 实体。
 - **Repository 按需创建**：仅当「同一域内 ≥2 个写端点共用同类 SQL / 变更逻辑」时建 `features/{domain}/repository/{aggregate}_repository.rs` + 根目录 `repository.rs`；**不要**留空占位或为单写端点预建。
 - **勿用 Cargo feature 门控同一 kernel 的读写**：workspace 内多 crate 共用 `{domain}_contract` 时 Cargo 会对 feature **取并集**，**无效**。
 - **CI 兜底**：`bin/server/arch_test.rs`（`cargo test -p server arch_test`）自动验证依赖方向：contract 不得依赖其他 contract / 不得依赖 infrastructure / feature runtime 不得依赖 runtime / infra 不得依赖 feature runtime / port 文件不得出现写 SQL。

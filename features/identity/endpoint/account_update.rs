@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::port::AuditService;
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator::Operator;
+use http_auth::extract::operator::OperatorContext;
 use identity_contract::port::AccountPort;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -48,11 +48,11 @@ pub(crate) struct UpdateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    operator: Operator,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<UpdateAccountPath>,
     ValidJson(request): ValidJson<UpdateAccountRequest>,
 ) -> JsonResponseType<UpdateAccountResponse> {
-    let response = execute(&pg_pool, operator, path, request).await?;
+    let response = execute(&pg_pool, ctx, path, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -60,7 +60,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    operator: Operator,
+    ctx: OperatorContext,
     path: UpdateAccountPath,
     request: UpdateAccountRequest,
 ) -> rootcause::Result<UpdateAccountResponse> {
@@ -70,15 +70,7 @@ async fn execute(
     account.name = request.name;
     account.phone = request.phone;
     let account = AccountRepository::update(&mut txn, &account).await?;
-    AuditService::on_updated(
-        &mut txn,
-        "account",
-        &path.id,
-        &operator,
-        Some(before),
-        Some(account.clone()),
-    )
-    .await?;
+    AuditService::record_updated(&mut txn, "account", &path.id, &ctx, &before, &account).await?;
 
     txn.commit().await?;
     Ok(UpdateAccountResponse {
@@ -126,7 +118,7 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(audit_row.action, "account.update");
+        assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
         assert_eq!(before["name"], "test-13900002101");

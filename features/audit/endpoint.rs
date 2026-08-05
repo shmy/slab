@@ -1,1 +1,1 @@
-pub(crate) mod audit_log_search;
+pub(crate) mod audit_search;

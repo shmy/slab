@@ -1,35 +1,37 @@
-//! 操作人上下文提取器：操作人 + 客户端 IP + User-Agent。
+//! 操作人上下文提取器：从请求解析「操作人 + 客户端 IP + User-Agent」，
+//! 产出跨域共享值对象 `shared_contract::value_object::operator::Operator`。
 
 use axum::{
     extract::{ConnectInfo, FromRequestParts},
     http::{header::USER_AGENT, request::Parts},
 };
-use shared_contract::value_object::id::ID;
-use std::net::{IpAddr, SocketAddr};
+use shared_contract::value_object::operator::Operator;
+use std::net::SocketAddr;
 use web::error::WebError;
 
 use crate::extract::authed_account::AuthedAccount;
 
-/// 操作人上下文：操作人 + 客户端 IP + User-Agent。
+/// 操作人上下文提取器：`Operator` 的 HTTP 适配器。
 ///
-/// 变更历史 `audit_contract::record` 需要这三件套，写端点 handler 里几乎总是成组出现，
-/// 合并为一个提取器，省去每个 handler 重复声明 `AuthedAccount` / `ConnectInfo` / 取头。
+/// 变更历史 `audit_contract::AuditService` 需要「操作人 + IP + UA」三件套，
+/// 写端点 handler 里几乎总是成组出现，合并为一个提取器。
 /// 按内容（谁在操作、从哪来、什么客户端）而非消费方命名：登录历史、安全日志等场景
 /// 同样需要这份上下文。
 ///
-/// 放在 `http_auth` 而非 `audit_contract`：contract 不得依赖 infrastructure
-/// （否则会把鉴权中间件栈拖进所有消费方）；`web` 依赖 `http_auth` 的反向会成环。
+/// `Deref` 到 [`Operator`]：消费方（如 `audit_contract`）只依赖 shared_contract 的值对象，
+/// 不依赖本 crate；调用点 `&ctx` 自动 deref coercion。
 #[derive(Clone, Debug)]
-pub struct Operator {
-    /// 操作人（当前登录账户）
-    pub operator_id: ID,
-    /// 客户端 IP（ConnectInfo 未配置时服务端 500，不静默降级为 None）
-    pub ip: Option<IpAddr>,
-    /// 客户端 User-Agent（未携带时为 None）
-    pub user_agent: Option<String>,
+pub struct OperatorContext(pub Operator);
+
+impl std::ops::Deref for OperatorContext {
+    type Target = Operator;
+
+    fn deref(&self) -> &Operator {
+        &self.0
+    }
 }
 
-impl<S> FromRequestParts<S> for Operator
+impl<S> FromRequestParts<S> for OperatorContext
 where
     S: Send + Sync + 'static,
 {
@@ -47,10 +49,10 @@ where
             .get(USER_AGENT)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        Ok(Self {
+        Ok(OperatorContext(Operator {
             operator_id,
             ip: Some(addr.ip()),
             user_agent,
-        })
+        }))
     }
 }

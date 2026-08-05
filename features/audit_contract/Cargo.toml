@@ -7,7 +7,6 @@ edition = "2024"
 path = "lib.rs"
 
 [dependencies]
-http_auth = { workspace = true }
 ipnetwork = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true }
