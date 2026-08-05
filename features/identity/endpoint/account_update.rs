@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::AuditEvent;
+use audit_contract::port::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator_context::OperatorContext;
+use http_auth::extract::operator::Operator;
 use identity_contract::port::AccountPort;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -48,11 +48,11 @@ pub(crate) struct UpdateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    ctx: OperatorContext,
+    operator: Operator,
     ValidPath(path): ValidPath<UpdateAccountPath>,
     ValidJson(request): ValidJson<UpdateAccountRequest>,
 ) -> JsonResponseType<UpdateAccountResponse> {
-    let response = execute(&pg_pool, ctx, path, request).await?;
+    let response = execute(&pg_pool, operator, path, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -60,7 +60,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    ctx: OperatorContext,
+    operator: Operator,
     path: UpdateAccountPath,
     request: UpdateAccountRequest,
 ) -> rootcause::Result<UpdateAccountResponse> {
@@ -70,20 +70,16 @@ async fn execute(
     account.name = request.name;
     account.phone = request.phone;
     let account = AccountRepository::update(&mut txn, &account).await?;
-    audit_contract::record(
-        txn.as_mut(),
-        &AuditEvent {
-            operator_id: ctx.operator_id,
-            action: "account.update",
-            entity: "account",
-            entity_id: path.id,
-            before: Some(serde_json::to_value(&before)?),
-            after: Some(serde_json::to_value(&account)?),
-            ip: ctx.ip,
-            user_agent: ctx.user_agent,
-        },
+    AuditService::on_updated(
+        &mut txn,
+        "account",
+        &path.id,
+        &operator,
+        Some(before),
+        Some(account.clone()),
     )
     .await?;
+
     txn.commit().await?;
     Ok(UpdateAccountResponse {
         id: account.id,

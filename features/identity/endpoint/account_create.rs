@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::AuditEvent;
+use audit_contract::port::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator_context::OperatorContext;
+use http_auth::extract::operator::Operator;
 use identity_contract::entity::account::Account;
 use identity_contract::events::AccountCreatedEvent;
 use identity_contract::value_object::hashed_password::HashedPassword;
@@ -46,10 +46,10 @@ pub(crate) struct CreateAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    ctx: OperatorContext,
+    operator: Operator,
     ValidJson(request): ValidJson<CreateAccountRequest>,
 ) -> JsonResponseType<CreateAccountResponse> {
-    let response = execute(&pg_pool, ctx, request).await?;
+    let response = execute(&pg_pool, operator, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -57,7 +57,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    ctx: OperatorContext,
+    operator: Operator,
     request: CreateAccountRequest,
 ) -> rootcause::Result<CreateAccountResponse> {
     let id = ID::new();
@@ -74,21 +74,8 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
-    audit_contract::record(
-        txn.as_mut(),
-        &AuditEvent {
-            operator_id: ctx.operator_id,
-            action: "account.create",
-            entity: "account",
-            entity_id: id,
-            before: None,
-            after: Some(serde_json::to_value(&account)?),
-            ip: ctx.ip,
-            user_agent: ctx.user_agent,
-        },
-    )
-    .await?;
-    enqueue_event(txn.as_mut(), &AccountCreatedEvent { id }).await?;
+    AuditService::on_created(&mut txn, "account", &id, &operator, Some(account.clone())).await?;
+    enqueue_event(&mut txn, &AccountCreatedEvent { id }).await?;
     txn.commit().await?;
     Ok(CreateAccountResponse {
         id,

@@ -1,7 +1,6 @@
 //! GET /api/v1/audit-logs — 按资源查询变更历史（时间倒序，游标分页，读时 diff）。
 
 use crate::diff::{ChangeField, json_diff};
-use audit_contract::AuditError;
 use axum::extract::State;
 use chrono::{DateTime, Utc};
 use db::PgPool;
@@ -56,14 +55,6 @@ pub(crate) struct AuditLogItem {
     pub created_at: DateTime<Utc>,
 }
 
-/// entity 必须是 snake_case（小写字母 / 数字 / 下划线）。
-fn is_valid_entity(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-}
-
 #[utoipa::path(
     get,
     path = "/api/v1/audit-logs",
@@ -88,10 +79,6 @@ async fn execute(
     pg_pool: &PgPool,
     query: SearchAuditLogQuery,
 ) -> rootcause::Result<CursorPagingResult<AuditLogItem>> {
-    if !is_valid_entity(&query.entity) {
-        return Err(AuditError::InvalidEntity.into());
-    }
-
     let page_limit = query.paging.limit();
     let fetch_limit = page_limit + 1;
 

@@ -7,14 +7,14 @@ edition = "2024"
 path = "lib.rs"
 
 [dependencies]
+http_auth = { workspace = true }
 ipnetwork = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_repr = { workspace = true }
 shared_contract = { workspace = true }
 sqlx = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true, features = ["attributes"] }
 
 [lints]
 workspace = true

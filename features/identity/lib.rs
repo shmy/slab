@@ -63,12 +63,12 @@ pub(crate) mod tests {
     use std::ops::Deref as _;
 
     use db::PgPool;
-    use http_auth::extract::operator_context::OperatorContext;
+    use http_auth::extract::operator::Operator;
     use shared_contract::value_object::id::ID;
 
     /// 测试用审计上下文（操作人 42，无 IP / UA）。
-    pub fn test_operator_context() -> OperatorContext {
-        OperatorContext {
+    pub fn test_operator_context() -> Operator {
+        Operator {
             operator_id: ID::from(42),
             ip: None,
             user_agent: None,

@@ -1,8 +1,8 @@
 use crate::repository::account_repository::AccountRepository;
-use audit_contract::AuditEvent;
+use audit_contract::port::AuditService;
 use axum::extract::State;
 use db::PgPool;
-use http_auth::extract::operator_context::OperatorContext;
+use http_auth::extract::operator::Operator;
 use identity_contract::port::AccountPort;
 use sqlx::Acquire;
 use web::extract::valid_path::ValidPath;
@@ -38,10 +38,10 @@ pub(crate) struct DeleteAccountResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    ctx: OperatorContext,
+    operator: Operator,
     ValidPath(path): ValidPath<DeleteAccountPath>,
 ) -> JsonResponseType<DeleteAccountResponse> {
-    let response = execute(&pg_pool, ctx, path).await?;
+    let response = execute(&pg_pool, operator, path).await?;
     JsonResponse::ok(response)
 }
 
@@ -49,7 +49,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    ctx: OperatorContext,
+    operator: Operator,
     path: DeleteAccountPath,
 ) -> rootcause::Result<DeleteAccountResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -63,20 +63,7 @@ async fn execute(
     };
     AccountRepository::delete(&mut txn, &path.id).await?;
     if let Some(before) = before {
-        audit_contract::record(
-            txn.as_mut(),
-            &AuditEvent {
-                operator_id: ctx.operator_id,
-                action: "account.delete",
-                entity: "account",
-                entity_id: path.id,
-                before: Some(serde_json::to_value(&before)?),
-                after: None,
-                ip: ctx.ip,
-                user_agent: ctx.user_agent,
-            },
-        )
-        .await?;
+        AuditService::on_deleted(&mut txn, "account", &path.id, &operator, Some(before)).await?;
     }
     txn.commit().await?;
 

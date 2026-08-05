@@ -20,7 +20,7 @@ use crate::extract::authed_account::AuthedAccount;
 /// 放在 `http_auth` 而非 `audit_contract`：contract 不得依赖 infrastructure
 /// （否则会把鉴权中间件栈拖进所有消费方）；`web` 依赖 `http_auth` 的反向会成环。
 #[derive(Clone, Debug)]
-pub struct OperatorContext {
+pub struct Operator {
     /// 操作人（当前登录账户）
     pub operator_id: ID,
     /// 客户端 IP（ConnectInfo 未配置时服务端 500，不静默降级为 None）
@@ -29,7 +29,7 @@ pub struct OperatorContext {
     pub user_agent: Option<String>,
 }
 
-impl<S> FromRequestParts<S> for OperatorContext
+impl<S> FromRequestParts<S> for Operator
 where
     S: Send + Sync + 'static,
 {

@@ -159,7 +159,6 @@ name = "audit"
 version = "0.1.0"
 dependencies = [
  "appctx",
- "audit_contract",
  "axum",
  "chrono",
  "db",
@@ -183,14 +182,14 @@ dependencies = [
 name = "audit_contract"
 version = "0.1.0"
 dependencies = [
+ "http_auth",
  "ipnetwork",
  "rootcause",
  "serde",
  "serde_json",
+ "serde_repr",
  "shared_contract",
  "sqlx 0.9.0",
- "thiserror 2.0.19",
- "tracing",
 ]
 
 [[package]]

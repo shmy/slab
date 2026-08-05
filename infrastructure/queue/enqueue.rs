@@ -2,11 +2,11 @@
 use std::time::Duration;
 
 use crate::event::Event;
-use sqlx::{Executor, Postgres};
-pub async fn enqueue_event<'e, E, T: Event>(executor: E, event: &T) -> rootcause::Result<()>
-where
-    E: Executor<'e, Database = Postgres>,
-{
+use sqlx::{Executor, PgConnection, Postgres};
+pub async fn enqueue_event<T: Event>(
+    executor: &mut PgConnection,
+    event: &T,
+) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
     sqlx::query!(
         r#"

@@ -8,7 +8,6 @@ path = "lib.rs"
 
 [dependencies]
 appctx = { workspace = true }
-audit_contract = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 db = { workspace = true }
