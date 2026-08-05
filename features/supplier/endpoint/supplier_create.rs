@@ -1,6 +1,8 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use shared_contract::value_object::phone_number::PhoneNumber;
@@ -51,9 +53,10 @@ pub(crate) struct CreateSupplierResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateSupplierRequest>,
 ) -> JsonResponseType<CreateSupplierResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -61,6 +64,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateSupplierRequest,
 ) -> rootcause::Result<CreateSupplierResponse> {
     let id = ID::new();
@@ -79,6 +83,7 @@ async fn execute(
         is_active: true,
     };
     SupplierRepository::create(txn.as_mut(), &supplier).await?;
+    AuditService::record_create(&mut txn, "supplier", &id, &ctx, &supplier).await?;
     txn.commit().await?;
     Ok(CreateSupplierResponse { id, code })
 }
@@ -86,6 +91,7 @@ async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
 
@@ -100,8 +106,25 @@ mod tests {
             address: None,
             payment_terms: None,
         };
-        let response = execute(&state.pg_pool, request).await.unwrap();
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
         assert!(i64::from(response.id) > 0);
         assert!(response.code.starts_with("S-"));
+
+        // 变更历史：create 类型，before 为空
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "Test Supplier");
+        assert_eq!(after["is_active"], true);
     }
 }

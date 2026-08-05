@@ -1,5 +1,8 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use quality_contract::entity::InspectionOrder;
 use quality_contract::error::QualityError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -46,10 +49,11 @@ pub(crate) struct CompleteInspectionResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<CompleteInspectionPath>,
     ValidJson(request): ValidJson<CompleteInspectionRequest>,
 ) -> JsonResponseType<CompleteInspectionResponse> {
-    let response = execute(&pg_pool, path, request).await?;
+    let response = execute(&pg_pool, ctx, path, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -57,6 +61,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     path: CompleteInspectionPath,
     request: CompleteInspectionRequest,
 ) -> rootcause::Result<CompleteInspectionResponse> {
@@ -64,14 +69,18 @@ async fn execute(
     let mut txn = conn.begin().await?;
 
     // 锁定读 + 完成态守卫：已完成的检验单不可重复完成（避免重复写入结果行）
-    let order = sqlx::query!(
-        r#"SELECT status FROM inspection_orders WHERE id = $1 FOR UPDATE"#,
-        &*path.id
+    // 锁读整行作为变更历史 before
+    let before = sqlx::query_as!(
+        InspectionOrder,
+        r#"SELECT id AS "id: ID", code, template_id AS "template_id: ID", source_type, source_id AS "source_id: ID", item_id AS "item_id: ID",
+                  lot_qty, sample_qty, inspector, result, status, inspected_at
+           FROM inspection_orders WHERE id = $1 FOR UPDATE"#,
+        &*path.id,
     )
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(QualityError::InspectionNotFound)?;
-    if order.status == 10 {
+    if before.status == 10 {
         return Err(QualityError::InvalidStatus.into());
     }
 
@@ -103,6 +112,26 @@ async fn execute(
         &*path.id,
     )
     .execute(&mut *txn)
+    .await?;
+
+    // 变更历史：同事务回读写后实体，记录 updated（before 为上述锁读整行）
+    let after = sqlx::query_as!(
+        InspectionOrder,
+        r#"SELECT id AS "id: ID", code, template_id AS "template_id: ID", source_type, source_id AS "source_id: ID", item_id AS "item_id: ID",
+                  lot_qty, sample_qty, inspector, result, status, inspected_at
+           FROM inspection_orders WHERE id = $1"#,
+        &*path.id,
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_updated(
+        &mut txn,
+        "inspection_order",
+        &path.id,
+        &ctx,
+        &before,
+        &after,
+    )
     .await?;
 
     txn.commit().await?;
@@ -147,9 +176,14 @@ mod tests {
                 },
             ],
         };
-        let resp = execute(&state.pg_pool, CompleteInspectionPath { id: order_id }, req)
-            .await
-            .unwrap();
+        let resp = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            CompleteInspectionPath { id: order_id },
+            req,
+        )
+        .await
+        .unwrap();
         assert_eq!(resp.result, 1);
 
         let row = sqlx::query!(
@@ -161,6 +195,21 @@ mod tests {
         .unwrap();
         assert_eq!(row.result.unwrap_or(0), 1);
         assert_eq!(row.status, 10);
+
+        // 变更历史：updated 类型，before=待检(0)，after=已完成(10)
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *order_id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 2); // Updated
+        let before: serde_json::Value = audit_row.before.unwrap();
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(before["status"], 0);
+        assert_eq!(after["status"], 10);
+        assert_eq!(after["result"], 1);
     }
 
     #[sqlx::test]
@@ -177,9 +226,14 @@ mod tests {
                 remark: None,
             }],
         };
-        let resp = execute(&state.pg_pool, CompleteInspectionPath { id: order_id }, req)
-            .await
-            .unwrap();
+        let resp = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            CompleteInspectionPath { id: order_id },
+            req,
+        )
+        .await
+        .unwrap();
         assert_eq!(resp.result, 2);
 
         let row = sqlx::query!(
@@ -215,10 +269,25 @@ mod tests {
                 remark: None,
             }],
         };
-        let err = execute(&state.pg_pool, CompleteInspectionPath { id: order_id }, req)
-            .await
-            .unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            CompleteInspectionPath { id: order_id },
+            req,
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("invalid_status_transition"));
+
+        // 被拒绝的状态流转不产生变更记录
+        let count = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!" FROM audit_logs WHERE entity_id = $1"#,
+            *order_id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(count.count, 0);
     }
 
     #[sqlx::test]
@@ -228,6 +297,7 @@ mod tests {
 
         let err = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             CompleteInspectionPath { id: ID::new() },
             CompleteInspectionRequest { results: vec![] },
         )

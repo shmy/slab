@@ -1,5 +1,7 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use item_contract::entity::{Item, ItemType};
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -41,9 +43,10 @@ pub(crate) struct CreateItemResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateItemRequest>,
 ) -> JsonResponseType<CreateItemResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -51,6 +54,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateItemRequest,
 ) -> rootcause::Result<CreateItemResponse> {
     let id = ID::new();
@@ -73,12 +77,15 @@ async fn execute(
         version: 1,
     };
     ItemRepository::create(&mut txn, &item).await?;
+    AuditService::record_create(&mut txn, "item", &id, &ctx, &item).await?;
     txn.commit().await?;
     Ok(CreateItemResponse { id, code })
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::tests;
+
     use super::*;
     use appctx::testing;
     use migration::run_migrations;
@@ -108,8 +115,25 @@ mod tests {
             parent_item_id: None,
             spec: None,
         };
-        let response = execute(&state.pg_pool, request).await.unwrap();
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
         assert!(i64::from(response.id) > 0);
         assert!(response.code.starts_with("RAW-"));
+
+        // 变更历史：create 类型
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "ABS 塑料米");
+        assert_eq!(after["code"], response.code);
     }
 }

@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use quality_contract::entity::NonConformance;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use utoipa::ToSchema;
@@ -36,9 +39,10 @@ pub(crate) struct CreateNCResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateNCRequest>,
 ) -> JsonResponseType<CreateNCResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -46,6 +50,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateNCRequest,
 ) -> rootcause::Result<CreateNCResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -67,6 +72,18 @@ async fn execute(
     )
     .execute(&mut *conn)
     .await?;
+
+    // 变更历史：该端点无显式事务（单条 INSERT 自提交），审计写入与业务写共用同一连接
+    let nc = sqlx::query_as!(
+        NonConformance,
+        r#"SELECT id AS "id: ID", code, inspection_id AS "inspection_id: ID", item_id AS "item_id: ID", quantity, severity,
+                  disposition, status, remark
+           FROM non_conformances WHERE id = $1"#,
+        &*id,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    AuditService::record_create(&mut conn, "non_conformance", &id, &ctx, &nc).await?;
 
     Ok(CreateNCResponse { id, code })
 }
@@ -92,7 +109,9 @@ mod tests {
             disposition: Some(2), // rework
             remark: Some("尺寸超差".into()),
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("NC-"));
 
         let row = sqlx::query!(
@@ -104,5 +123,20 @@ mod tests {
         .unwrap();
         assert_eq!(row.status, 0);
         assert_eq!(row.severity, 2);
+
+        // 变更历史：create 类型
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], resp.code);
+        assert_eq!(after["status"], 0);
+        assert_eq!(after["severity"], 2);
     }
 }

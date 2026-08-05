@@ -1,6 +1,8 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -33,9 +35,10 @@ pub(crate) struct CreateWarehouseResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateWarehouseRequest>,
 ) -> JsonResponseType<CreateWarehouseResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -43,6 +46,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateWarehouseRequest,
 ) -> rootcause::Result<CreateWarehouseResponse> {
     let id = ID::new();
@@ -58,6 +62,7 @@ async fn execute(
         is_active: true,
     };
     WarehouseRepository::create(txn.as_mut(), &warehouse).await?;
+    AuditService::record_create(&mut txn, "warehouse", &id, &ctx, &warehouse).await?;
     txn.commit().await?;
     Ok(CreateWarehouseResponse { id, code })
 }
@@ -65,6 +70,7 @@ async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
 
@@ -76,8 +82,25 @@ mod tests {
             name: "Raw Material Warehouse".into(),
             r#type: WarehouseType::RawMaterial,
         };
-        let response = execute(&state.pg_pool, request).await.unwrap();
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
         assert!(i64::from(response.id) > 0);
         assert!(response.code.starts_with("WH-"));
+
+        // 变更历史：create 类型，before 为空，快照含名称 / 类型
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "Raw Material Warehouse");
+        assert_eq!(after["type"], 1);
     }
 }

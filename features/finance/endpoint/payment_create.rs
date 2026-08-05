@@ -1,8 +1,11 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use finance_contract::entity::Payment;
 use finance_contract::error::FinanceError;
 use finance_contract::port::{InvoicePort, InvoiceType};
+use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Connection;
@@ -40,9 +43,10 @@ pub(crate) struct CreatePaymentResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreatePaymentRequest>,
 ) -> JsonResponseType<CreatePaymentResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -50,6 +54,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreatePaymentRequest,
 ) -> rootcause::Result<CreatePaymentResponse> {
     if request.amount <= 0 {
@@ -85,6 +90,27 @@ async fn execute(
         request.payment_method, request.remark,
     ).execute(&mut *txn).await?;
 
+    // 变更历史：创建付款记录（同事务写，回滚即消失）
+    let payment = sqlx::query_as!(
+        Payment,
+        r#"SELECT
+               id as "id: ID",
+               code,
+               payment_type,
+               invoice_type,
+               invoice_id as "invoice_id: ID",
+               amount,
+               payment_date,
+               payment_method,
+               remark
+           FROM payments
+           WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_create(&mut txn, "payment", &id, &ctx, &payment).await?;
+
     // Update invoice paid_amount
     match invoice_type {
         InvoiceType::Sales => {
@@ -114,6 +140,7 @@ async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
 
@@ -150,7 +177,9 @@ mod tests {
             remark: None,
         };
 
-        let resp = execute(&pool, req).await.unwrap();
+        let resp = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("PAY-"));
         assert!(resp.id.to_string().len() > 10);
 
@@ -163,6 +192,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.paid_amount, 5000);
+
+        // 变更历史：create 类型，快照含付款记录字段
+        let audit_row = sqlx::query!(
+            r#"SELECT entity, action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.entity, "payment");
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], serde_json::Value::String(resp.code));
+        assert_eq!(after["amount"], 5000);
+        assert_eq!(after["invoice_type"], "sales_invoice");
     }
 
     #[sqlx::test]
@@ -197,7 +242,9 @@ mod tests {
             remark: Some("full payment".into()),
         };
 
-        let resp = execute(&pool, req).await.unwrap();
+        let resp = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("PAY-"));
 
         let row = sqlx::query!(
@@ -208,6 +255,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.paid_amount, 20000);
+
+        // 变更历史：create 类型，快照含付款记录字段
+        let audit_row = sqlx::query!(
+            r#"SELECT entity, action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.entity, "payment");
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], serde_json::Value::String(resp.code));
+        assert_eq!(after["amount"], 20000);
+        assert_eq!(after["invoice_type"], "purchase_invoice");
     }
 
     #[sqlx::test]
@@ -242,7 +305,9 @@ mod tests {
             remark: None,
         };
 
-        let err = execute(&pool, req).await.unwrap_err();
+        let err = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("invoice_already_fully_paid"));
     }
 
@@ -261,7 +326,9 @@ mod tests {
             remark: None,
         };
 
-        let err = execute(&pool, req).await.unwrap_err();
+        let err = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("invalid_invoice_type"));
     }
 
@@ -280,7 +347,9 @@ mod tests {
             remark: None,
         };
 
-        let err = execute(&pool, req).await.unwrap_err();
+        let err = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("invalid_payment_amount"));
     }
 
@@ -299,7 +368,9 @@ mod tests {
             remark: None,
         };
 
-        let err = execute(&pool, req).await.unwrap_err();
+        let err = execute(&pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("invalid_payment_amount"));
     }
 }

@@ -5,11 +5,13 @@ edition = "2024"
 [lib]
 path = "lib.rs"
 [dependencies]
+audit_contract = { workspace = true }
 appctx = { workspace = true }
 axum = { workspace = true }
 code_gen = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
+http_auth = { workspace = true }
 product_contract = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

@@ -9,12 +9,14 @@ path = "lib.rs"
 [dependencies]
 appctx = { workspace = true }
 approval = { workspace = true }
+audit_contract = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 code_gen = { workspace = true }
 costing = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
+http_auth = { workspace = true }
 inventory_ledger = { workspace = true }
 purchase_contract = { workspace = true }
 rootcause = { workspace = true }

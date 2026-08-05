@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use sales_contract::entity::SalesInvoice;
 use sales_contract::error::SalesError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -35,9 +38,10 @@ pub(crate) struct CreateInvoiceResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateInvoiceRequest>,
 ) -> JsonResponseType<CreateInvoiceResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -45,6 +49,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateInvoiceRequest,
 ) -> rootcause::Result<CreateInvoiceResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -72,6 +77,30 @@ async fn execute(
         request.tax_amount.unwrap_or(0), total, request.remark,
     ).execute(&mut *conn).await?;
 
+    // 变更历史：本端点无事务（acquire 直连写），同一连接上回读整行并记录创建快照
+    let row = sqlx::query!(
+        r#"SELECT id, code, order_id, customer_id, invoice_number, invoice_date, amount,
+                  tax_amount, total_amount, status, remark
+           FROM sales_invoices WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let invoice = SalesInvoice {
+        id: ID::new_unchecked(row.id),
+        code: row.code,
+        order_id: ID::new_unchecked(row.order_id),
+        customer_id: ID::new_unchecked(row.customer_id),
+        invoice_number: row.invoice_number,
+        invoice_date: row.invoice_date,
+        amount: row.amount,
+        tax_amount: row.tax_amount,
+        total_amount: row.total_amount,
+        status: row.status,
+        remark: row.remark,
+    };
+    AuditService::record_create(&mut conn, "sales_invoice", &id, &ctx, &invoice).await?;
+
     Ok(CreateInvoiceResponse { id, code })
 }
 
@@ -98,7 +127,9 @@ mod tests {
             tax_amount: Some(100),
             remark: None,
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("SINV-"));
 
         let row = sqlx::query!(
@@ -116,6 +147,22 @@ mod tests {
                 .expect("invoice_date should default to today"),
             shared_contract::value_object::today::today_naive()
         );
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, entity, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert_eq!(audit_row.entity, "sales_invoice");
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], resp.code);
+        assert_eq!(after["total_amount"], 1100);
+        assert_eq!(after["status"], 0);
     }
 
     #[sqlx::test]
@@ -131,7 +178,9 @@ mod tests {
             tax_amount: None,
             remark: None,
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("sales_document_not_found"));
     }
 }

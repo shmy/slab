@@ -1,5 +1,7 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use item_contract::entity::ItemCategory;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -35,9 +37,10 @@ pub(crate) struct CreateCategoryResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateCategoryRequest>,
 ) -> JsonResponseType<CreateCategoryResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -45,6 +48,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateCategoryRequest,
 ) -> rootcause::Result<CreateCategoryResponse> {
     let id = ID::new();
@@ -58,6 +62,46 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
     ItemCategoryRepository::create(&mut txn, &category).await?;
+    AuditService::record_create(&mut txn, "item_category", &id, &ctx, &category).await?;
     txn.commit().await?;
     Ok(CreateCategoryResponse { id })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tests;
+
+    use super::*;
+    use appctx::testing;
+    use migration::run_migrations;
+
+    #[sqlx::test]
+    async fn test_create_success(pool: sqlx::PgPool) {
+        run_migrations(&pool).await.expect("run migrations");
+        let state = testing::build(pool).await;
+
+        let request = CreateCategoryRequest {
+            name: "塑料".into(),
+            parent_id: None,
+            sort_order: Some(1),
+        };
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
+        assert!(i64::from(response.id) > 0);
+
+        // 变更历史：create 类型
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "塑料");
+    }
 }

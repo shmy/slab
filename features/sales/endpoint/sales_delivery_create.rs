@@ -1,7 +1,10 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
+use sales_contract::entity::SalesDelivery;
 use sales_contract::error::SalesError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -41,9 +44,10 @@ pub(crate) struct CreateDeliveryResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateDeliveryRequest>,
 ) -> JsonResponseType<CreateDeliveryResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -51,6 +55,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateDeliveryRequest,
 ) -> rootcause::Result<CreateDeliveryResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -81,6 +86,25 @@ async fn execute(
     )
     .execute(&mut *txn)
     .await?;
+
+    // 变更历史：同事务回读整行作为创建快照
+    let row = sqlx::query!(
+        r#"SELECT id, code, order_id, customer_id, delivery_date, status, remark
+           FROM sales_deliveries WHERE id = $1"#,
+        &*delivery_id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    let delivery = SalesDelivery {
+        id: ID::new_unchecked(row.id),
+        code: row.code,
+        order_id: ID::new_unchecked(row.order_id),
+        customer_id: ID::new_unchecked(row.customer_id),
+        delivery_date: row.delivery_date,
+        status: row.status,
+        remark: row.remark,
+    };
+    AuditService::record_create(&mut txn, "sales_delivery", &delivery_id, &ctx, &delivery).await?;
 
     for line in &request.lines {
         let line_id = ID::new();
@@ -161,7 +185,9 @@ mod tests {
                 batch_number: None,
             }],
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("DLV-"));
 
         // 订单行累计发货量 + 库存扣减
@@ -184,6 +210,21 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(inv.quantity, 970);
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, entity, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert_eq!(audit_row.entity, "sales_delivery");
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], resp.code);
+        assert_eq!(after["status"], 1);
     }
 
     #[sqlx::test]
@@ -199,7 +240,9 @@ mod tests {
             remark: None,
             lines: vec![],
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("sales_order_not_approved"));
     }
 
@@ -221,7 +264,9 @@ mod tests {
                 batch_number: None,
             }],
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("sales_over_delivery"));
     }
 
@@ -249,7 +294,9 @@ mod tests {
                 batch_number: None,
             }],
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("insufficient_inventory"));
     }
 
@@ -263,7 +310,9 @@ mod tests {
             remark: None,
             lines: vec![],
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("sales_document_not_found"));
     }
 }

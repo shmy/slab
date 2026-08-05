@@ -1,7 +1,10 @@
 //! 完成工单。
 
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use production_contract::entity::WorkOrder;
 use production_contract::error::ProductionError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -30,34 +33,75 @@ pub(crate) struct WOResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<WOPath>,
 ) -> JsonResponseType<WOResponse> {
-    let response = execute(&pg_pool, path).await?;
+    let response = execute(&pg_pool, ctx, path).await?;
     JsonResponse::ok(response)
 }
 
 #[tracing::instrument(skip_all)]
 #[inline]
-async fn execute(pg_pool: &PgPool, path: WOPath) -> rootcause::Result<WOResponse> {
+async fn execute(
+    pg_pool: &PgPool,
+    ctx: OperatorContext,
+    path: WOPath,
+) -> rootcause::Result<WOResponse> {
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
 
     // 锁定读 + 状态机校验：只有 released(1) / in_progress(2) 可完成；
     // 草稿不可完成，已完成/已关闭不可重复完成
-    let row = sqlx::query!(
-        "SELECT status FROM work_orders WHERE id = $1 FOR UPDATE",
+    let before = sqlx::query_as!(
+        WorkOrder,
+        r#"SELECT
+               id as "id: ID",
+               code,
+               bom_id as "bom_id: ID",
+               item_id as "item_id: ID",
+               planned_qty,
+               completed_qty as "completed_qty!",
+               scrap_qty as "scrap_qty!",
+               status,
+               due_date,
+               remark
+           FROM work_orders
+           WHERE id = $1
+           FOR UPDATE"#,
         &*path.id
     )
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(ProductionError::NotFound)?;
-    if row.status < 1 || row.status >= 3 {
+    if before.status < 1 || before.status >= 3 {
         return Err(ProductionError::InvalidStatus.into());
     }
 
     sqlx::query!("UPDATE work_orders SET status = 3 WHERE id = $1", &*path.id)
         .execute(&mut *txn)
         .await?;
+
+    // 变更历史：写后重读全行作为 after（同事务，可见自身未提交写入）
+    let after = sqlx::query_as!(
+        WorkOrder,
+        r#"SELECT
+               id as "id: ID",
+               code,
+               bom_id as "bom_id: ID",
+               item_id as "item_id: ID",
+               planned_qty,
+               completed_qty as "completed_qty!",
+               scrap_qty as "scrap_qty!",
+               status,
+               due_date,
+               remark
+           FROM work_orders
+           WHERE id = $1"#,
+        &*path.id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_updated(&mut txn, "work_order", &path.id, &ctx, &before, &after).await?;
 
     txn.commit().await?;
     Ok(WOResponse { success: true })
@@ -67,6 +111,7 @@ async fn execute(pg_pool: &PgPool, path: WOPath) -> rootcause::Result<WOResponse
 mod tests {
     use super::*;
     use crate::tests;
+    use appctx::testing;
     use migration::run_migrations;
 
     async fn seed_work_order(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
@@ -91,47 +136,99 @@ mod tests {
     #[sqlx::test]
     async fn test_complete_released_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_work_order(&pool, "MO-CMP-1", 1).await;
+        let state = testing::build(pool).await;
+        let id = seed_work_order(&state.pg_pool, "MO-CMP-1", 1).await;
 
-        let resp = execute(&pool, WOPath { id }).await.unwrap();
+        let resp = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            WOPath { id },
+        )
+        .await
+        .unwrap();
         assert!(resp.success);
 
         let status = sqlx::query_scalar!("SELECT status FROM work_orders WHERE id = $1", &*id)
-            .fetch_one(&mut *pool.acquire().await.unwrap())
+            .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
             .await
             .unwrap();
         assert_eq!(status, 3);
+
+        // 变更历史：update 类型，status 1 → 3
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT entity, action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.entity, "work_order");
+        assert_eq!(audit_row.action, 2); // Updated
+        let before: serde_json::Value = audit_row.before.unwrap();
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(before["status"], 1);
+        assert_eq!(after["status"], 3);
     }
 
     #[sqlx::test]
     async fn test_complete_draft_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_work_order(&pool, "MO-CMP-2", 0).await;
+        let state = testing::build(pool).await;
+        let id = seed_work_order(&state.pg_pool, "MO-CMP-2", 0).await;
 
-        let err = execute(&pool, WOPath { id }).await.unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            WOPath { id },
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("invalid_status_transition"));
 
         let status = sqlx::query_scalar!("SELECT status FROM work_orders WHERE id = $1", &*id)
-            .fetch_one(&mut *pool.acquire().await.unwrap())
+            .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
             .await
             .unwrap();
         assert_eq!(status, 0);
+
+        // 状态机拒绝，不产生变更历史
+        let count =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM audit_logs WHERE entity_id = $1", *id)
+                .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+                .await
+                .unwrap();
+        assert_eq!(count, Some(0));
     }
 
     #[sqlx::test]
     async fn test_complete_already_completed_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_work_order(&pool, "MO-CMP-3", 3).await;
+        let state = testing::build(pool).await;
+        let id = seed_work_order(&state.pg_pool, "MO-CMP-3", 3).await;
 
-        let err = execute(&pool, WOPath { id }).await.unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            WOPath { id },
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("invalid_status_transition"));
     }
 
     #[sqlx::test]
     async fn test_complete_not_found(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
+        let state = testing::build(pool).await;
 
-        let err = execute(&pool, WOPath { id: ID::new() }).await.unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            tests::test_operator_context(),
+            WOPath { id: ID::new() },
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("work_order_not_found"));
     }
 }

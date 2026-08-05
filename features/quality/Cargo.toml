@@ -8,10 +8,12 @@ path = "lib.rs"
 
 [dependencies]
 appctx = { workspace = true }
+audit_contract = { workspace = true }
 axum = { workspace = true }
 code_gen = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
+http_auth = { workspace = true }
 quality_contract = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

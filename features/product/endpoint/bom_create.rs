@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use product_contract::entity::Bom;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -40,9 +43,10 @@ pub(crate) struct CreateBomResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateBomRequest>,
 ) -> JsonResponseType<CreateBomResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -50,6 +54,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateBomRequest,
 ) -> rootcause::Result<CreateBomResponse> {
     let id = ID::new();
@@ -87,6 +92,14 @@ async fn execute(
         .execute(&mut *txn)
         .await?;
     }
+    let bom: Bom = sqlx::query_as!(
+        Bom,
+        r#"SELECT id, code, name, item_id, version, status, total_qty, remark FROM boms WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_create(&mut txn, "bom", &id, &ctx, &bom).await?;
     txn.commit().await?;
     Ok(CreateBomResponse { id, code })
 }
@@ -124,7 +137,9 @@ mod tests {
                 },
             ],
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("BOM-"));
 
         let row = sqlx::query!(
@@ -145,5 +160,19 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(n.unwrap_or(0), 2);
+
+        // 变更历史：create 类型
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "玩具车 BOM");
+        assert_eq!(after["status"], 0);
     }
 }

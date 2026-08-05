@@ -1,6 +1,9 @@
 use crate::repository::account_repository::AccountRepository;
 use appctx::PgPool;
+use audit_contract::AuditService;
 use axum::extract::State;
+use http_auth::extract::operator::OperatorContext;
+use identity_contract::port::AccountPort;
 use identity_contract::value_object::hashed_password::HashedPassword;
 use identity_contract::value_object::password::Password;
 use serde::{Deserialize, Serialize};
@@ -42,10 +45,11 @@ pub struct ResetPasswordResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<ResetPasswordPath>,
     ValidJson(request): ValidJson<ResetPasswordRequest>,
 ) -> JsonResponseType<ResetPasswordResponse> {
-    let response = execute(&pg_pool, path, request).await?;
+    let response = execute(&pg_pool, ctx, path, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -53,12 +57,17 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     path: ResetPasswordPath,
     request: ResetPasswordRequest,
 ) -> rootcause::Result<ResetPasswordResponse> {
     let new_hashed = HashedPassword::try_new(&request.new_password)?;
     let mut conn = pg_pool.acquire().await?;
+    // 端点无显式事务：before/after 读取与审计写入共用同一连接（各自隐式事务）
+    let before = AccountPort::by_id(&mut conn, &path.id).await?;
     AccountRepository::update_password(&mut conn, &path.id, &new_hashed).await?;
+    let after = AccountPort::by_id(&mut conn, &path.id).await?;
+    AuditService::record_updated(&mut conn, "account", &path.id, &ctx, &before, &after).await?;
     Ok(ResetPasswordResponse { updated: true })
 }
 
@@ -76,6 +85,7 @@ mod tests {
         let account_id = tests::insert_test_account(&state.pg_pool, "13900001711").await;
         let response = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             ResetPasswordPath { id: account_id },
             ResetPasswordRequest {
                 new_password: Password::new_unchecked("reset1234".to_string()),
@@ -96,6 +106,24 @@ mod tests {
         let hashed = HashedPassword::new_unchecked(row.password);
         assert!(hashed.verify("reset1234").is_ok());
         assert!(hashed.verify("test1234").is_err());
+
+        // 变更历史：update 类型，快照不含敏感字段
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *account_id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 2); // Updated
+        let before: serde_json::Value = audit_row.before.unwrap();
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(before["name"], "test-13900001711");
+        assert_eq!(before["name"], after["name"]);
+        assert!(before.get("password").is_none());
+        assert!(after.get("password").is_none());
+        assert!(before.get("version").is_none());
+        assert!(after.get("version").is_none());
     }
 
     #[sqlx::test]
@@ -104,6 +132,7 @@ mod tests {
         let state = testing::build(pool).await;
         let err = execute(
             &state.pg_pool,
+            tests::test_operator_context(),
             ResetPasswordPath {
                 id: ID::from(999_i64),
             },
@@ -114,5 +143,16 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("account_not_found"));
+
+        // 账户不存在：更新未发生，不产生变更记录
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let count = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!" FROM audit_logs WHERE entity_id = $1"#,
+            999i64
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(count.count, 0);
     }
 }

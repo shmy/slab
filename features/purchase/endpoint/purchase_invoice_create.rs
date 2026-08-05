@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use purchase_contract::entity::PurchaseInvoice;
 use purchase_contract::error::PurchaseError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -38,9 +41,10 @@ pub(crate) struct CreateInvoiceResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateInvoiceRequest>,
 ) -> JsonResponseType<CreateInvoiceResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -48,6 +52,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateInvoiceRequest,
 ) -> rootcause::Result<CreateInvoiceResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -89,6 +94,18 @@ async fn execute(
     .execute(&mut *txn)
     .await?;
 
+    // 变更历史：同事务读回写入后的发票作为快照
+    let invoice = sqlx::query_as!(
+        PurchaseInvoice,
+        r#"SELECT id, code, order_id, supplier_id, invoice_number, invoice_date,
+                  amount, tax_amount, total_amount, status, remark
+           FROM purchase_invoices WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_create(&mut txn, "purchase_invoice", &id, &ctx, &invoice).await?;
+
     txn.commit().await?;
     Ok(CreateInvoiceResponse { id, code })
 }
@@ -125,6 +142,7 @@ mod tests {
 
         let resp = execute(
             &pool,
+            crate::tests::test_operator_context(),
             CreateInvoiceRequest {
                 order_id: po_id,
                 invoice_number: Some("INV-D1".into()),
@@ -137,11 +155,12 @@ mod tests {
         .await
         .unwrap();
 
+        let mut conn = pool.acquire().await.unwrap();
         let row = sqlx::query!(
             "SELECT invoice_date FROM purchase_invoices WHERE id = $1",
             &*resp.id
         )
-        .fetch_one(&mut *pool.acquire().await.unwrap())
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
         assert_eq!(
@@ -149,5 +168,18 @@ mod tests {
                 .expect("invoice_date should default to today"),
             shared_contract::value_object::today::today_naive()
         );
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["total_amount"], 100);
     }
 }

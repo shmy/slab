@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use product_contract::entity::Mold;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use utoipa::ToSchema;
@@ -32,9 +35,10 @@ pub(crate) struct CreateMoldResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateMoldRequest>,
 ) -> JsonResponseType<CreateMoldResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -42,6 +46,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateMoldRequest,
 ) -> rootcause::Result<CreateMoldResponse> {
     let id = ID::new();
@@ -55,6 +60,15 @@ async fn execute(
         request.cavity_count.unwrap_or(1), request.life_expectancy,
         request.maintenance_cycle, request.remark,
     ).execute(&mut *conn).await?;
+    let mold: Mold = sqlx::query_as!(
+        Mold,
+        r#"SELECT id, code, name, item_id, cavity_count, life_expectancy, life_used, status, maintenance_cycle, remark
+           FROM molds WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    AuditService::record_create(&mut conn, "mold", &id, &ctx, &mold).await?;
     Ok(CreateMoldResponse { id, code })
 }
 
@@ -79,7 +93,9 @@ mod tests {
             maintenance_cycle: Some(5000),
             remark: None,
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("MOLD-"));
 
         let row = sqlx::query!(
@@ -92,5 +108,20 @@ mod tests {
         assert_eq!(row.cavity_count, 1);
         assert_eq!(row.status, 0);
         assert_eq!(row.life_used.unwrap_or(-1), 0);
+
+        // 变更历史：create 类型
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["name"], "外壳模具");
+        assert_eq!(after["cavity_count"], 1);
+        assert_eq!(after["status"], 0);
     }
 }

@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use sales_contract::entity::SalesOrder;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -41,9 +44,10 @@ pub(crate) struct CreateSalesOrderResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateSalesOrderRequest>,
 ) -> JsonResponseType<CreateSalesOrderResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -51,6 +55,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateSalesOrderRequest,
 ) -> rootcause::Result<CreateSalesOrderResponse> {
     if request.lines.is_empty() {
@@ -101,6 +106,27 @@ async fn execute(
         .await?;
     }
 
+    // 变更历史：同事务回读整行作为创建快照
+    let row = sqlx::query!(
+        r#"SELECT id, code, customer_id, status, order_date, currency, total_amount, remark, created_by
+           FROM sales_orders WHERE id = $1"#,
+        &*id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    let order = SalesOrder {
+        id: ID::new_unchecked(row.id),
+        code: row.code,
+        customer_id: ID::new_unchecked(row.customer_id),
+        status: row.status,
+        order_date: row.order_date,
+        currency: row.currency,
+        total_amount: row.total_amount,
+        remark: row.remark,
+        created_by: row.created_by.map(ID::new_unchecked),
+    };
+    AuditService::record_create(&mut txn, "sales_order", &id, &ctx, &order).await?;
+
     txn.commit().await?;
     Ok(CreateSalesOrderResponse { id, code })
 }
@@ -140,7 +166,9 @@ mod tests {
             ],
         };
 
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("SO-"));
 
         let row = sqlx::query!(
@@ -153,6 +181,22 @@ mod tests {
         assert_eq!(row.status, 0);
         // 10*100 + 5*200 = 2000
         assert_eq!(row.total_amount, 2000);
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, entity, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert_eq!(audit_row.entity, "sales_order");
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], resp.code);
+        assert_eq!(after["total_amount"], 2000);
+        assert_eq!(after["status"], 0);
     }
 
     #[sqlx::test]
@@ -166,7 +210,9 @@ mod tests {
             remark: None,
             lines: vec![],
         };
-        let err = execute(&state.pg_pool, req).await.unwrap_err();
+        let err = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("sales_order_empty"));
     }
 }

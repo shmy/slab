@@ -1,8 +1,11 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use costing::CostCalculator;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
+use purchase_contract::entity::PurchaseReceipt;
 use purchase_contract::error::PurchaseError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -48,9 +51,10 @@ pub(crate) struct CreateReceiptResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateReceiptRequest>,
 ) -> JsonResponseType<CreateReceiptResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -58,6 +62,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateReceiptRequest,
 ) -> rootcause::Result<CreateReceiptResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -169,6 +174,17 @@ async fn execute(
         .await?;
     }
 
+    // 变更历史：同事务读回写入后的收货单作为快照
+    let receipt = sqlx::query_as!(
+        PurchaseReceipt,
+        r#"SELECT id, code, order_id, supplier_id, receipt_date, status, remark
+           FROM purchase_receipts WHERE id = $1"#,
+        &*receipt_id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_create(&mut txn, "purchase_receipt", &receipt_id, &ctx, &receipt).await?;
+
     txn.commit().await?;
     Ok(CreateReceiptResponse {
         id: receipt_id,
@@ -231,6 +247,7 @@ mod tests {
 
         let resp = execute(
             &pool,
+            crate::tests::test_operator_context(),
             CreateReceiptRequest {
                 order_id: po_id,
                 receipt_date: None,
@@ -249,16 +266,30 @@ mod tests {
         .unwrap();
         assert_ne!(resp.id, ID::new());
 
+        let mut conn = pool.acquire().await.unwrap();
         let row = sqlx::query!(
             "SELECT receipt_date FROM purchase_receipts WHERE id = $1",
             &*resp.id
         )
-        .fetch_one(&mut *pool.acquire().await.unwrap())
+        .fetch_one(&mut *conn)
         .await
         .unwrap();
         assert_eq!(
             row.receipt_date,
             shared_contract::value_object::today::today_naive()
         );
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["status"], 1);
     }
 }

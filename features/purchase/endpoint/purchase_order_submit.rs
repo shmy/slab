@@ -1,6 +1,10 @@
 use crate::repository::purchase_order_repository::PurchaseOrderRepository;
+use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use purchase_contract::entity::PurchaseOrder;
+use purchase_contract::error::PurchaseError;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -32,9 +36,10 @@ pub(crate) struct SubmitPurchaseOrderResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidPath(path): ValidPath<SubmitPurchaseOrderPath>,
 ) -> JsonResponseType<SubmitPurchaseOrderResponse> {
-    let response = execute(&pg_pool, path).await?;
+    let response = execute(&pg_pool, ctx, path).await?;
     JsonResponse::ok(response)
 }
 
@@ -42,12 +47,39 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     path: SubmitPurchaseOrderPath,
 ) -> rootcause::Result<SubmitPurchaseOrderResponse> {
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
 
+    // 变更历史：状态机前锁读全行作为 before，成功后同事务读回 after
+    let before = sqlx::query_as!(
+        PurchaseOrder,
+        r#"SELECT id AS "id: ID", code, supplier_id, status, order_date,
+                  expected_delivery_date, currency, total_amount,
+                  payment_terms, remark, created_by AS "created_by: ID"
+           FROM purchase_orders WHERE id = $1 FOR UPDATE"#,
+        &*path.id
+    )
+    .fetch_optional(&mut *txn)
+    .await?
+    .ok_or(PurchaseError::NotFound)?;
+
     let _ = PurchaseOrderRepository::submit(&mut txn, &path.id).await?;
+
+    let after = sqlx::query_as!(
+        PurchaseOrder,
+        r#"SELECT id AS "id: ID", code, supplier_id, status, order_date,
+                  expected_delivery_date, currency, total_amount,
+                  payment_terms, remark, created_by AS "created_by: ID"
+           FROM purchase_orders WHERE id = $1"#,
+        &*path.id
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_updated(&mut txn, "purchase_order", &path.id, &ctx, &before, &after)
+        .await?;
 
     txn.commit().await?;
     Ok(SubmitPurchaseOrderResponse { submitted: true })
@@ -66,16 +98,35 @@ mod tests {
         let state = testing::build(pool.clone()).await;
         let id = tests::insert_test_purchase_order(&state.pg_pool, "PO-SUBMIT-1", 0).await;
 
-        let resp = execute(&state.pg_pool, SubmitPurchaseOrderPath { id })
-            .await
-            .unwrap();
+        let resp = execute(
+            &state.pg_pool,
+            crate::tests::test_operator_context(),
+            SubmitPurchaseOrderPath { id },
+        )
+        .await
+        .unwrap();
         assert!(resp.submitted);
 
+        let mut conn = state.pg_pool.acquire().await.unwrap();
         let status = sqlx::query_scalar!("SELECT status FROM purchase_orders WHERE id = $1", &*id)
-            .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+            .fetch_one(&mut *conn)
             .await
             .unwrap();
         assert_eq!(status, 1);
+
+        // 变更历史：update 类型，before/after 快照状态分别为 0 → 1
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 2); // Updated
+        let before: serde_json::Value = audit_row.before.unwrap();
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(before["status"], 0);
+        assert_eq!(after["status"], 1);
     }
 
     #[sqlx::test]
@@ -84,9 +135,13 @@ mod tests {
         let state = testing::build(pool.clone()).await;
         let id = tests::insert_test_purchase_order(&state.pg_pool, "PO-SUBMIT-2", 1).await;
 
-        let err = execute(&state.pg_pool, SubmitPurchaseOrderPath { id })
-            .await
-            .unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            crate::tests::test_operator_context(),
+            SubmitPurchaseOrderPath { id },
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("invalid_status_transition"));
     }
 
@@ -95,9 +150,13 @@ mod tests {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool.clone()).await;
 
-        let err = execute(&state.pg_pool, SubmitPurchaseOrderPath { id: ID::new() })
-            .await
-            .unwrap_err();
+        let err = execute(
+            &state.pg_pool,
+            crate::tests::test_operator_context(),
+            SubmitPurchaseOrderPath { id: ID::new() },
+        )
+        .await
+        .unwrap_err();
         assert!(err.to_string().contains("purchase_order_not_found"));
     }
 }

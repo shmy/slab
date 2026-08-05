@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use quality_contract::entity::InspectionTemplate;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -44,9 +47,10 @@ pub(crate) struct CreateTemplateResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateTemplateRequest>,
 ) -> JsonResponseType<CreateTemplateResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -54,6 +58,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateTemplateRequest,
 ) -> rootcause::Result<CreateTemplateResponse> {
     let id = ID::new();
@@ -101,6 +106,17 @@ async fn execute(
         .await?;
     }
 
+    // 变更历史：同事务回读实体后记录 create
+    let template = sqlx::query_as!(
+        InspectionTemplate,
+        r#"SELECT id, code, name, category, is_active
+           FROM inspection_templates WHERE id = $1"#,
+        &*id,
+    )
+    .fetch_one(&mut *txn)
+    .await?;
+    AuditService::record_create(&mut txn, "inspection_template", &id, &ctx, &template).await?;
+
     txn.commit().await?;
     Ok(CreateTemplateResponse { id, code })
 }
@@ -108,6 +124,7 @@ async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
 
@@ -138,7 +155,9 @@ mod tests {
                 },
             ],
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("IQC-"));
 
         let n = sqlx::query_scalar!(
@@ -149,6 +168,20 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(n.unwrap_or(0), 2);
+
+        // 变更历史：create 类型
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["code"], resp.code);
+        assert_eq!(after["name"], "IQC 来料检验");
     }
 
     #[sqlx::test]
@@ -162,7 +195,9 @@ mod tests {
             category: 2,
             items: vec![],
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("IPQC-"));
 
         let req = CreateTemplateRequest {
@@ -170,7 +205,9 @@ mod tests {
             category: 3,
             items: vec![],
         };
-        let resp = execute(&state.pg_pool, req).await.unwrap();
+        let resp = execute(&state.pg_pool, tests::test_operator_context(), req)
+            .await
+            .unwrap();
         assert!(resp.code.starts_with("OQC-"));
     }
 }

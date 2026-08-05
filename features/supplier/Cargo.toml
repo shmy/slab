@@ -7,11 +7,13 @@ edition = "2024"
 path = "lib.rs"
 
 [dependencies]
+audit_contract = { workspace = true }
 appctx = { workspace = true }
 axum = { workspace = true }
 code_gen = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
+http_auth = { workspace = true }
 rootcause = { workspace = true }
 sea-query = { workspace = true }
 sea-query-sqlx = { workspace = true }
@@ -29,6 +31,7 @@ web = { workspace = true }
 [dev-dependencies]
 appctx = { workspace = true, features = ["test-utils"] }
 migration = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

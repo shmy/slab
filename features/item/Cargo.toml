@@ -8,10 +8,12 @@ path = "lib.rs"
 
 [dependencies]
 appctx = { workspace = true }
+audit_contract = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
+http_auth = { workspace = true }
 item_contract = { workspace = true }
 rootcause = { workspace = true }
 sea-query = { workspace = true }

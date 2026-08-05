@@ -26,7 +26,18 @@ impl FeatureModule for Module {
 #[cfg(test)]
 pub(crate) mod tests {
     use db::PgPool;
+    use http_auth::extract::operator::OperatorContext;
     use shared_contract::value_object::id::ID;
+    use shared_contract::value_object::operator::Operator;
+
+    /// 测试用操作人上下文（操作人 42，无 IP / UA）。
+    pub fn test_operator_context() -> OperatorContext {
+        OperatorContext(Operator {
+            operator_id: ID::from(42),
+            ip: None,
+            user_agent: None,
+        })
+    }
 
     pub async fn insert_test_item(pg_pool: &PgPool, code: &str) -> ID {
         let id = ID::new();

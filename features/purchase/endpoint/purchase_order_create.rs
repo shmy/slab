@@ -1,6 +1,9 @@
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
+use purchase_contract::port::PurchasePort;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -45,9 +48,10 @@ pub(crate) struct CreatePurchaseOrderResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreatePurchaseOrderRequest>,
 ) -> JsonResponseType<CreatePurchaseOrderResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -55,6 +59,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreatePurchaseOrderRequest,
 ) -> rootcause::Result<CreatePurchaseOrderResponse> {
     if request.lines.is_empty() {
@@ -112,6 +117,77 @@ async fn execute(
         .await?;
     }
 
+    // 变更历史：同事务读回写入后的订单作为快照（order_date / currency 为库内默认值）
+    let order = PurchasePort::order_by_id(&mut txn, &id).await?;
+    AuditService::record_create(&mut txn, "purchase_order", &id, &ctx, &order).await?;
+
     txn.commit().await?;
     Ok(CreatePurchaseOrderResponse { id, code })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use appctx::testing;
+    use migration::run_migrations;
+    use shared_contract::value_object::id::ID;
+
+    #[sqlx::test]
+    async fn test_create_success(pool: sqlx::PgPool) {
+        run_migrations(&pool).await.expect("run migrations");
+        let state = testing::build(pool).await;
+        let supplier_id = ID::new();
+        let item_id = ID::new();
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        sqlx::query!(
+            "INSERT INTO suppliers (id, code, name, is_active) VALUES ($1, 'S-POC1', 'Test', true)",
+            &*supplier_id
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO items (id, code, name, item_type, base_unit) VALUES ($1, 'I-POC1', 'T', 1, 'kg')",
+            &*item_id
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
+        let resp = execute(
+            &state.pg_pool,
+            crate::tests::test_operator_context(),
+            CreatePurchaseOrderRequest {
+                supplier_id,
+                expected_delivery_date: None,
+                payment_terms: None,
+                remark: None,
+                lines: vec![CreateOrderLine {
+                    item_id,
+                    quantity: 10,
+                    unit: "kg".to_string(),
+                    unit_price: 100,
+                    remark: None,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(i64::from(resp.id) > 0);
+        assert!(resp.code.starts_with("PO"));
+
+        // 变更历史：create 类型，before 为空
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *resp.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["status"], 0);
+        assert_eq!(after["total_amount"], 1000);
+    }
 }

@@ -1,13 +1,17 @@
 //! 创建盘点单。
 
+use crate::shared::snapshot::InventoryCheckSnapshot;
+use audit_contract::AuditService;
 use axum::extract::State;
 use code_gen::CodeGen;
 use db::PgPool;
+use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
 use utoipa::ToSchema;
 use validify::Validify;
+use warehouse_contract::error::WarehouseError;
 use web::extract::valid_json::ValidJson;
 use web::response::json_response::{JsonResponse, JsonResponseType};
 
@@ -40,9 +44,10 @@ pub(crate) struct CreateCheckResponse {
 #[tracing::instrument(skip(pg_pool))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateCheckRequest>,
 ) -> JsonResponseType<CreateCheckResponse> {
-    let response = execute(&pg_pool, request).await?;
+    let response = execute(&pg_pool, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
@@ -50,6 +55,7 @@ pub(crate) async fn handler(
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    ctx: OperatorContext,
     request: CreateCheckRequest,
 ) -> rootcause::Result<CreateCheckResponse> {
     let mut conn = pg_pool.acquire().await?;
@@ -99,6 +105,53 @@ async fn execute(
         .await?;
     }
 
+    // 写入未返回实体，同事务读回整行作为 after 快照
+    let after = InventoryCheckSnapshot::read(&mut txn, &id)
+        .await?
+        .ok_or(WarehouseError::NotFound)?;
+    AuditService::record_create(&mut txn, "inventory_check", &id, &ctx, &after).await?;
     txn.commit().await?;
     Ok(CreateCheckResponse { id, code })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests;
+    use appctx::testing;
+    use migration::run_migrations;
+
+    #[sqlx::test]
+    async fn test_create_success(pool: sqlx::PgPool) {
+        run_migrations(&pool).await.expect("run migrations");
+        let state = testing::build(pool).await;
+        let wh = tests::insert_test_warehouse(&state.pg_pool, "CHK-C").await;
+        let request = CreateCheckRequest {
+            warehouse_id: wh,
+            plan_date: chrono::Utc::now().date_naive(),
+            remark: Some("test check".into()),
+            items: vec![],
+        };
+        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
+            .await
+            .unwrap();
+        assert!(i64::from(response.id) > 0);
+        assert!(response.code.starts_with("CHK-"));
+
+        // 变更历史：create 类型，before 为空，快照为草稿状态
+        let mut conn = state.pg_pool.acquire().await.unwrap();
+        let audit_row = sqlx::query!(
+            r#"SELECT action, before, after FROM audit_logs WHERE entity_id = $1"#,
+            *response.id
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        assert_eq!(audit_row.action, 1); // Created
+        assert!(audit_row.before.is_none());
+        let after: serde_json::Value = audit_row.after.unwrap();
+        assert_eq!(after["status"], 0);
+        assert_eq!(after["code"], response.code.as_str());
+        assert_eq!(after["remark"], "test check");
+    }
 }
