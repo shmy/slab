@@ -35,7 +35,7 @@ features/
 infrastructure/
 ├── db/                    ← PgPool
 ├── queue/                 ← Outbox/Inbox 队列（pg_queue）
-├── cache/                 ← UNLOGGED KV + TTL（pg_cache）
+├── cache/                 ← 可插拔缓存后端：Pg（默认）/ Redb / Redis
 ├── flow/                  ← sayiir 持久化工作流引擎
 ├── web/                   ← 提取器、响应封装、Problem Details
 ├── http_auth/             ← JWT 鉴权中间件
@@ -66,7 +66,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 数据库 | PostgreSQL + sqlx 0.9 |
 | 消息队列 | PostgreSQL Outbox（`infrastructure/queue`） |
 | 流程编排 | sayiir 持久化工作流（`infrastructure/flow`） |
-| 缓存 | UNLOGGED 表 KV + TTL（`infrastructure/cache`） |
+| 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/cache`） |
 | 鉴权 | JWT（access + refresh，双 realm） |
 | 定时任务 | tokio-cron-scheduler（`sched_kit`） |
 | 对象存储 | S3 兼容（opendal） |
@@ -118,7 +118,7 @@ cargo test -p server arch_test
 - `docs/ARCHITECTURE.md` — 完整架构说明
 - `docs/FLOW.md` — 流程引擎（sayiir 工作流）设计
 - `docs/PG_QUEUE.md` — 队列设计
-- `docs/PG_CACHE.md` — 缓存设计
+- `docs/CACHE.md` — 缓存设计
 - `docs/E2E_HURL.md` — E2E 测试约定
 - `AGENTS.md` — AI 助手上下文
 

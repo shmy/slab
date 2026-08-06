@@ -148,7 +148,7 @@ description: Slab Rust 后端垂直切片实现规范
 
 ## 热点 KV（cache）
 
-速查，详见 `docs/PG_CACHE.md`：
+速查，详见 `docs/CACHE.md`：
 
 - Crate：`infrastructure/cache`；表：`caches`（`UNLOGGED`）
 - 带 TTL 的共享 KV，可走 Transaction

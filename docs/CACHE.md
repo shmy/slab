@@ -1,73 +1,130 @@
-# PostgreSQL 热点 KV（`cache`）
+# 缓存后端（`cache`）
 
-本文描述 `infrastructure/cache` 与表 `caches` 的语义、边界与运维，与当前代码一致。
+本文描述 `infrastructure/cache` 的语义、后端选型、边界与运维，与当前代码一致。
 
 ## 1. 定位
 
 - **用途**：进程/实例间共享的**短期、可丢**键值缓存（TTL + 主键 upsert），典型场景为 **JWT 刷新态、access jti 吊销表** 等安全会话数据。
-- **不是**：持久化业务主数据、跨机房复制、强一致分布式缓存；崩溃后未刷盘的写入可能丢失（见下节）。
+- **不是**：持久化业务主数据、跨机房复制、强一致分布式缓存；崩溃后未落盘的写入可能丢失（见 §6）。
 
-## 2. 数据模型（`caches`）
+## 2. 后端架构与选型
 
-迁移见 `infrastructure/migration/versions/0001_create_foundations.sql`。
+`cache` 提供统一门面 `Backend` 枚举 + 方法 API，后端实现编译期按 feature 装配：
 
-| 设计                              | 说明                                                                                                                         |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **`UNLOGGED`**                    | 表为 `UNLOGGED`：性能更好，但**进程/主机崩溃后可能丢失崩溃前未落盘的写入**。仅适合「丢了可重建」的语义（重新登录即可恢复）。 |
-| `key TEXT PRIMARY KEY`            | 业务自定义 key 字符串（见 `auth_kit` 的 key 构造）。                                                                         |
-| `value TEXT NOT NULL`             | 由 `serde_json::to_string` 写入的 JSON 文本；读时 `from_str` 反序列化。                                                      |
-| `expires_at TIMESTAMPTZ NOT NULL` | 绝对过期时间；`get` / `take` 仅当 `expires_at > now()` 视为命中。                                                            |
+| 后端 | feature | 实现 | 语义 |
+|------|---------|------|------|
+| **Pg**（默认） | `pg` | `PgCache`（PostgreSQL `caches` UNLOGGED 表） | 跨实例共享、可丢、原子 `take` |
+| **Redb** | `redb` | `RedbCache`（redb 4 嵌入式 KV） | 单实例本地文件、`Durability::None` 可丢 |
+| **Redis** | `redis` | `RedisCache`（bb8 连接池） | 跨实例共享、原生 TTL |
 
-**索引**：`idx_caches_expires_at (expires_at)`，供批量清理扫描。
+**选型规则**：
 
-## 3. API（`cache` crate）
+- 默认（无显式选择）→ `PgCache`（零新增组件、与业务库同运维）。
+- 单实例部署想解放 PG 连接池 → `kv-redb`（嵌入式本地文件）。
+- 多实例部署需要共享吊销/会话 → `kv-redis`（或保持 `kv-pg`）。
 
-`cache` 全部 API 使用 `sqlx`，函数统一接受 `&mut sqlx::PgConnection`（既可为池中连接，也可为同一事务 `tx.as_mut()`），便于与 identity 写库同事务提交。
+**feature 切换**（`bin/server`，互斥开启其一；未显式选择时默认 `kv-pg`）：
 
-| 函数                                    | 行为                                                                                                                            |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `set_ex(client, key, value, ttl_secs)`  | `INSERT … ON CONFLICT (key) DO UPDATE`，刷新 `value` 与 `expires_at`（从 `Utc::now()` 起算 TTL）。                              |
-| `get<T>(client, key)`                   | `expires_at > now()` 时返回 `Some(T)`，否则 `None`；反序列化失败时**静默**返回 `None`（`from_str` 失败 → `ok()`）。             |
-| `take<T>(client, key)`                  | **未过期**则 `DELETE … RETURNING value` 并反序列化；用于 refresh token 等「一次性消费」。过期或不存在返回 `None`。              |
-| `del(client, key)`                      | 按 key 删除，不区分是否过期。                                                                                                   |
-| `delete_expired_in_transaction(client)` | 先 `pg_advisory_xact_lock`（专用 key，**勿与 `queue` GC 共用**），再 `DELETE WHERE expires_at < now()`；供后台定时任务调用。 |
+| 命令 | 后端 |
+|------|------|
+| `cargo run -p server`（默认） | `Backend::Pg` |
+| `cargo run -p server --features kv-redb` | `Backend::Redb`（配置 `CACHE_DB_PATH`） |
+| `cargo run -p server --features kv-redis` | `Backend::Redis`（配置 `REDIS_URL`） |
 
-## 4. 运行时与 GC
+`default = ["pg"]`（`cache` crate）保证任何依赖方无 feature 时也可独立编译；`Backend` 变体共存，feature 并集不会冲突（`config.rs` / `testing.rs` 按优先级组装，见 §7）。
 
-- **后台任务**：`bin/server/background/cache_gc_job.rs`，Cron **每 5 分钟** 开事务调用 `delete_expired_in_transaction`，提交后释放 advisory lock。
-- **与 `queue` 并行**：`cache` 使用 advisory key `(884_422, 1)`，`queue` 使用 `(884_423, 1)`，两路 GC 可同库同时跑、互不阻塞。
+## 3. 数据模型
 
-## 5. 当前调用方（代码对齐）
+### 3.1 Pg 后端（`caches` 表）
 
-| 位置                                               | 用途                                                                                                   |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `features/identity/shared/token_ops.rs`            | 签发 token 时写入 refresh / subject↔refresh / access jti；刷新时用 `take` 消费 refresh；吊销时 `del`。 |
-| `infrastructure/http_auth/middleware/authorize.rs` | 校验 access token 时 `get` 存储的 jti，与 JWT claims 比对，不匹配则视为吊销。 |
-| `features/identity/endpoint/account_logout.rs`        | 经 `token_ops::revoke_tokens` 清理缓存（测试中亦直接用 `kv_cache` 断言 key）。                         |
+- 迁移见 `infrastructure/migration/versions/0001_create_foundations.sql`；`PgCache::try_new` 会**幂等自建**（`CREATE UNLOGGED TABLE IF NOT EXISTS` + 索引），不依赖 migration 版本。
+- `UNLOGGED`：性能更好，但进程/主机崩溃后可能丢失崩溃前未落盘的写入——适合「丢了可重建」的会话语义。
+- 列：`key TEXT PRIMARY KEY`、`value TEXT NOT NULL`（JSON 文本）、`expires_at TIMESTAMPTZ NOT NULL`；索引 `idx_caches_expires_at (expires_at)` 供批量清理。
+
+### 3.2 Redb 后端
+
+- 单文件数据库（默认 `data/cache.redb`），`Durability::None`（不 fsync）对齐 UNLOGGED 可丢语义。
+- 值封装 `Entry { value, expires_at }`，TTL 惰性判活 + `delete_expired` 扫表清理。
+- **单进程限制**：redb 数据库文件禁止多进程并行打开；多实例部署时每实例一份文件，跨实例吊销不共享——此场景用 `kv-pg` / `kv-redis`。
+
+### 3.3 Redis 后端
+
+- TTL 由 Redis 原生过期处理，`delete_expired` 返回 0（无需清扫）。
+
+## 4. API（`Backend` 方法门面）
+
+```rust
+pub enum Backend { Pg(PgCache), Redb(RedbCache), Redis(RedisCache) }
+
+impl Backend {
+    pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>;
+    pub async fn set_ex<T: Serialize + Send + Sync>(&self, key: &str, value: &T, period: Duration) -> Result<()>;
+    pub async fn take<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>;
+    pub async fn del(&self, key: &str) -> Result<()>;
+    pub async fn delete_expired(&self) -> Result<u64>;
+}
+```
+
+| 方法 | 行为 |
+|------|------|
+| `get<T>(key)` | 未过期返回 `Some(T)`，否则 `None`；反序列化失败**静默**返回 `None`（不区分「无 key / 已过期 / 坏数据」）。 |
+| `set_ex(key, value, period)` | 写入并刷新 TTL（`Duration`）。Pg：`INSERT … ON CONFLICT DO UPDATE`；Redb：写事务 upsert；Redis：`SET … EX`。 |
+| `take<T>(key)` | **原子消费**：未过期则取出并删除，否则 `None`。Pg：`DELETE … RETURNING`；Redb：写事务内 get+remove；Redis：`GETDEL`。用于 refresh token 防重放。 |
+| `del(key)` | 按 key 删除，不区分是否过期。 |
+| `delete_expired()` | 清理过期条目，返回删除条数（Redis 返回 0）。 |
+
+构造统一走 `Backend::try_new`（各后端同名，签名随 feature 变化：`PgPool` / 路径 / URL）或直接构造变体。
+
+## 5. 运行时与 GC
+
+- **后台任务**：`bin/server/gc_jobs.rs` 的 `CacheGc`，Cron **每 5 分钟**调用 `state.kv.delete_expired()`；Pg 后端为幂等 `DELETE WHERE expires_at < now()`（无 advisory lock，多实例并发无害），Redb 后端扫表清理，Redis 后端空操作。
+- **与 `queue` 并行**：queue 的 GC 独立于 cache，两者互不干扰。
 
 ## 6. 语义与实现注意点
 
-### 6.1 `get` 反序列化失败
+### 6.1 缓存写不参与调用方 PG 事务
 
-`get` 在 `value` 不是合法 JSON 或类型不匹配时返回 `None`，**不区分**「无 key / 已过期 / 坏数据」。若需区分，应改 API 或记录指标（当前未做）。
+`cache` 是**可丢辅助数据**：每次操作独立取连接/事务，**不再**与 identity 写库同事务提交。调用方约定：**先提交业务事务，再写缓存**（如 `token_ops::issue_tokens` 在登录/刷新完成后写入）；缓存写失败不影响业务（吊销延迟到 TTL 过期，可接受）。
 
-### 6.2 TTL 与时钟
+### 6.2 原子 take 与防重放
 
-过期判断依赖 DB `now()` 与应用侧 `Utc::now()` 写入的 `expires_at`；需保证 DB 与应用时钟大致同步（常规 NTP 即可）。
+`take` 在各后端均为原子操作（DELETE RETURNING / 写事务 / GETDEL），refresh token 消费后立即失效，同一 token 二次刷新被拒。
 
-### 6.3 热 key 与连接池
+### 6.3 多实例语义
 
-鉴权中间件对**每个请求**可能 `get` 一次 PG；高 QPS 时 `caches` 与连接池会成为瓶颈。后续若需可引入本地短 TTL 内存缓存或 Redis；当前设计优先「少依赖、同库事务」。
+| 后端 | 多实例 |
+|------|--------|
+| Pg / Redis | 共享：实例 A 登出，实例 B 的 jti 校验立即生效 |
+| Redb | 每实例一份文件，吊销**不跨实例**生效（TTL 过期前失效）——单实例部署专用 |
 
-### 6.4 不要用 `cache` 存不可丢数据
+### 6.4 TTL 与时钟
 
-`UNLOGGED` + 可丢语义：订单、余额等**必须**走正式业务表，不得仅依赖本表。
+过期判断依赖后端时钟（PG `now()` / 应用侧 `Utc::now()` 写入的 `expires_at`）；需保证应用与 DB 时钟大致同步（常规 NTP 即可）。
 
-## 7. 相关路径速查
+### 6.5 不要用 `cache` 存不可丢数据
 
-| 路径                                                           | 职责                 |
-| -------------------------------------------------------------- | -------------------- |
-| `infrastructure/cache/lib.rs`                      | 全部 API 实现        |
-| `infrastructure/migration/versions/0001_create_foundations.sql` | `caches` 表与索引 |
-| `bin/server/background/cache_gc_job.rs`                        | 过期行清理           |
-| `features/identity/shared/token_ops.rs`                        | Token 与缓存协作     |
+可丢语义（UNLOGGED / Durability::None）：订单、余额等**必须**走正式业务表，不得仅依赖本表。
+
+## 7. 调用方与组装
+
+| 位置 | 用途 |
+|------|------|
+| `features/identity/shared/token_ops.rs` | 签发 token 时写入 refresh / subject↔refresh / access jti；刷新时 `take` 消费 refresh；吊销时 `del`。 |
+| `infrastructure/http_auth/middleware/authorize.rs` | 校验 access token 时 `get` 存储的 jti，与 JWT claims 比对，不匹配视为吊销。 |
+| `features/identity/endpoint/account_logout.rs` | 经 `token_ops::revoke_tokens` 清理缓存。 |
+| `bin/server/config.rs` | 按 feature 组装 `Backend`（kv-pg / kv-redb / kv-redis，互斥）。 |
+| `infrastructure/appctx/testing.rs` | 测试组装：kv-redis > kv-redb > pg 兜底（默认 pg，复用测试 PG 池）。 |
+
+端点经 axum `State<Backend>` 提取（`AppCtx` 的 `FromRef`）。
+
+## 8. 相关路径速查
+
+| 路径 | 职责 |
+|------|------|
+| `infrastructure/cache/lib.rs` | `Backend` 枚举 + 方法门面 |
+| `infrastructure/cache/pg.rs` | `PgCache`（UNLOGGED 表） |
+| `infrastructure/cache/redb.rs` | `RedbCache`（redb 4） |
+| `infrastructure/cache/redis.rs` | `RedisCache`（bb8） |
+| `bin/server/gc_jobs.rs` | `CacheGc` 过期清理 |
+| `features/identity/shared/token_ops.rs` | Token 与缓存协作 |
+| `.env.example` | `CACHE_DB_PATH` / `REDIS_URL` |

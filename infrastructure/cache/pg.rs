@@ -1,7 +1,7 @@
 //! PostgreSQL `caches`（UNLOGGED）后端：默认后端，保留原始语义（可丢、TTL 判活、`take` 原子 DELETE）。
 //!
 //! 注意：每次操作从池独立取连接，**不参与调用方 PG 事务**——缓存是可丢辅助数据，
-//! 调用方在业务事务提交后写入（顺序约定见 `docs/PG_CACHE.md`）。
+//! 调用方在业务事务提交后写入（顺序约定见 `docs/CACHE.md`）。
 
 use std::time::Duration;
 

@@ -99,7 +99,7 @@ features/{domain} (切片)
 | `infrastructure/db` | PgPool |
 | `infrastructure/queue` | Outbox + Inbox 幂等 → [docs/PG_QUEUE.md](docs/PG_QUEUE.md) |
 | `infrastructure/flow` | sayiir 持久化工作流（长流程/信号/超时编排）→ [docs/FLOW.md](docs/FLOW.md) |
-| `infrastructure/cache` | UNLOGGED KV + TTL → [docs/PG_CACHE.md](docs/PG_CACHE.md) |
+| `infrastructure/cache` | 可插拔缓存后端（Pg UNLOGGED 默认 / redb / redis，feature 切换）→ [docs/CACHE.md](docs/CACHE.md) |
 | `infrastructure/web` | ValidJson / ValidQuery / ValidPath + Problem Details |
 | `infrastructure/http_auth` | Bearer JWT 鉴权中间件 |
 | `infrastructure/locale` | Fluent 本地化中间件 |

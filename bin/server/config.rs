@@ -13,7 +13,10 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_s3(cli),)?;
 
     // 缓存后端（互斥，开启其一；default=kv-pg 与显式 kv-redb/kv-redis 并集时 pg 分支让位）：
-    #[cfg(feature = "kv-pg")]
+    #[cfg(all(
+        feature = "kv-pg",
+        not(any(feature = "kv-redb", feature = "kv-redis"))
+    ))]
     let kv = Backend::try_new(pg_pool.clone()).await?;
     #[cfg(feature = "kv-redb")]
     let kv = Backend::try_new(&cli.cache.db_path)?;
