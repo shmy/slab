@@ -5,6 +5,7 @@ use std::fmt::Debug;
 
 use axum::extract::FromRef;
 pub use blob::Blob;
+pub use cache::Backend;
 pub use db::PgPool;
 pub use flow::Flow;
 pub use http_client::HttpClient;
@@ -14,6 +15,8 @@ use tracing::info;
 #[derive(Clone, FromRef)]
 pub struct AppCtx {
     pub pg_pool: PgPool,
+    /// 缓存后端（`cache::Backend`，变体由组装处选择：Redb / Redis）。
+    pub kv: Backend,
     pub token_bundle: TokenBundle,
     pub http_client: HttpClient,
     pub blob: Blob,

@@ -32,6 +32,9 @@ pub struct Cli {
     pub s3: S3Cli,
 
     #[command(flatten)]
+    pub cache: CacheCli,
+
+    #[command(flatten)]
     pub otlp: OtlpCli,
 }
 
@@ -140,6 +143,27 @@ impl JwtCli {
     pub fn refresh_ttl_secs(&self) -> u64 {
         self.refresh_ttl.duration().as_secs()
     }
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct CacheCli {
+    /// redb 数据文件路径（kv-redb 后端）
+    #[arg(
+        id = "cache_db_path",
+        long = "cache-db-path",
+        default_value = "data/cache.redb",
+        env = "CACHE_DB_PATH"
+    )]
+    pub db_path: String,
+
+    /// Redis 连接 URL（kv-redis 后端）
+    #[arg(
+        id = "redis_url",
+        long = "redis-url",
+        default_value = "redis://127.0.0.1:6379",
+        env = "REDIS_URL"
+    )]
+    pub url: String,
 }
 
 #[derive(Clone, Debug, clap::Args)]

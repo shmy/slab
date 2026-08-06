@@ -7,8 +7,8 @@ edition = "2024"
 path = "lib.rs"
 
 [dependencies]
-audit_contract = { workspace = true }
 appctx = { workspace = true }
+audit_contract = { workspace = true }
 axum = { workspace = true }
 code_gen = { workspace = true }
 db = { workspace = true }

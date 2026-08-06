@@ -128,7 +128,6 @@ mod tests {
     use super::*;
     use appctx::testing;
     use migration::run_migrations;
-    use shared_contract::value_object::id::ID;
 
     #[sqlx::test]
     async fn test_create_success(pool: sqlx::PgPool) {

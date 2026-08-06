@@ -14,6 +14,5 @@ jwt = { workspace = true }
 authn_kit = { workspace = true }
 axum = { workspace = true }
 cache = { workspace = true }
-db = { workspace = true }
 shared_contract = { workspace = true }
 web = { workspace = true }

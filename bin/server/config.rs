@@ -1,6 +1,7 @@
 use appctx::{AppCtx, Flow, HttpClient, TokenBundle};
 use appctx::{TokenHelper, TokenRealm};
 use blob::{Blob, BlobConfig};
+use cache::Backend;
 use db::{DbConfig, PgPool, connect};
 use rootcause::Result;
 use secrecy::ExposeSecret;
@@ -10,8 +11,15 @@ use crate::cli::Cli;
 pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let flow = Flow::try_new(cli.database.url.expose_secret()).await?;
     let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_s3(cli),)?;
+    // 缓存后端：默认（或 kv-redb）→ Backend::Redb（redb 嵌入式，与 cache 默认 feature 一致）；
+    // kv-redis → Backend::Redis（bb8 连接池）。
+    #[cfg(all(feature = "kv-redis", not(feature = "kv-redb")))]
+    let kv = Backend::Redis(cache::RedisCache::new(&cli.cache.url).await?);
+    #[cfg(not(all(feature = "kv-redis", not(feature = "kv-redb"))))]
+    let kv = Backend::Redb(cache::RedbCache::open(&cli.cache.db_path)?);
     Ok(AppCtx {
         pg_pool,
+        kv,
         token_bundle: TokenBundle::new(
             TokenHelper::new(
                 TokenRealm::Customer,

@@ -7,6 +7,14 @@ edition = "2024"
 name = "server"
 path = "main.rs"
 
+[features]
+default = []
+# 缓存后端（互斥，开启其一）：
+#   kv-redb  → cache::Backend::Redb（嵌入式，单实例）
+#   kv-redis → cache::Backend::Redis（bb8，跨实例共享）
+kv-redb = ["cache/redb"]
+kv-redis = ["cache/redis"]
+
 [dependencies]
 cache = { workspace = true }
 db = { workspace = true }

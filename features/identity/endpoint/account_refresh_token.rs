@@ -1,6 +1,6 @@
 use crate::endpoint::account_login::LoginResponse;
 use crate::shared::token_ops;
-use appctx::{PgPool, TokenBundle, TokenHelper};
+use appctx::{Backend, TokenBundle, TokenHelper};
 use axum::extract::State;
 use identity_contract::value_object::refresh_token::RefreshToken;
 use serde::Deserialize;
@@ -23,26 +23,26 @@ pub struct RefreshRequest {
     request_body = RefreshRequest,
     responses((status = 200, body = JsonResponse<LoginResponse>))
 )]
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(kv))]
 pub(crate) async fn handler(
-    State(pg_pool): State<PgPool>,
+    State(kv): State<Backend>,
     State(token_bundle): State<TokenBundle>,
     ValidJson(request): ValidJson<RefreshRequest>,
 ) -> JsonResponseType<LoginResponse> {
-    let response = execute(&pg_pool, token_bundle.account(), request).await?;
+    let response = execute(&kv, token_bundle.account(), request).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(kv))]
 #[inline]
 async fn execute(
-    pg_pool: &PgPool,
+    kv: &Backend,
     token_helper: &TokenHelper,
     request: RefreshRequest,
 ) -> rootcause::Result<LoginResponse> {
     let account_id =
-        token_ops::consume_refresh_token(pg_pool, token_helper, &request.refresh_token).await?;
-    let tokens = token_ops::issue_tokens(pg_pool, token_helper, &account_id).await?;
+        token_ops::consume_refresh_token(kv, token_helper, &request.refresh_token).await?;
+    let tokens = token_ops::issue_tokens(kv, token_helper, &account_id).await?;
 
     Ok(LoginResponse::bearer(
         tokens.access_token,
@@ -65,7 +65,7 @@ mod tests {
         let state = testing::build(pool).await;
         let uid = i64::from(tests::insert_test_account(&state.pg_pool, "13900001601").await);
         let first = token_ops::issue_tokens(
-            &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             &ID::new_unchecked(uid),
         )
@@ -74,7 +74,7 @@ mod tests {
         let rt1 = first.refresh_token.clone();
 
         let second = execute(
-            &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             RefreshRequest {
                 refresh_token: RefreshToken::new(rt1.to_string()),
@@ -85,7 +85,7 @@ mod tests {
         assert_ne!(second.refresh_token, rt1);
 
         let err = execute(
-            &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             RefreshRequest {
                 refresh_token: RefreshToken::new(rt1),

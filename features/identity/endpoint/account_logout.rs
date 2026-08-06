@@ -1,5 +1,5 @@
 use crate::shared::token_ops;
-use appctx::{PgPool, TokenBundle, TokenHelper};
+use appctx::{Backend, TokenBundle, TokenHelper};
 use axum::extract::State;
 use http_auth::extract::authed_account::AuthedAccount;
 use rootcause::Result;
@@ -22,24 +22,24 @@ pub struct LogoutResponse {
     responses((status = 200, body = JsonResponse<LogoutResponse>)),
     security(("bearerAuth" = []))
 )]
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(kv))]
 pub(crate) async fn handler(
     AuthedAccount(account_id): AuthedAccount,
-    State(pg_pool): State<PgPool>,
+    State(kv): State<Backend>,
     State(token_bundle): State<TokenBundle>,
 ) -> JsonResponseType<LogoutResponse> {
-    let response = execute(&pg_pool, token_bundle.account(), account_id).await?;
+    let response = execute(&kv, token_bundle.account(), account_id).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(kv))]
 #[inline]
 async fn execute(
-    pg_pool: &PgPool,
+    kv: &Backend,
     token_helper: &TokenHelper,
     account_id: ID,
 ) -> Result<LogoutResponse> {
-    token_ops::revoke_tokens(pg_pool, token_helper, account_id).await?;
+    token_ops::revoke_tokens(kv, token_helper, account_id).await?;
     Ok(LogoutResponse { logged_out: true })
 }
 
@@ -49,7 +49,6 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use authn_kit::{access_jti_key, refresh_key, subject_refresh_key};
-    use cache as kv_cache;
     use migration::run_migrations;
 
     const REALM: &str = "account";
@@ -59,28 +58,32 @@ mod tests {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
         let id = tests::insert_test_account(&state.pg_pool, "13900001501").await;
-        let tokens = token_ops::issue_tokens(&state.pg_pool, state.token_bundle.account(), &id)
+        let tokens = token_ops::issue_tokens(&state.kv, state.token_bundle.account(), &id)
             .await
             .unwrap();
 
-        let response = execute(&state.pg_pool, state.token_bundle.account(), id)
+        let response = execute(&state.kv, state.token_bundle.account(), id)
             .await
             .unwrap();
         assert!(response.logged_out);
 
-        let mut conn = state.pg_pool.acquire().await.unwrap();
-        let refresh_still =
-            kv_cache::get::<String>(&mut *conn, &refresh_key(REALM, &tokens.refresh_token))
-                .await
-                .unwrap();
+        let refresh_still = state
+            .kv
+            .get::<String>(&refresh_key(REALM, &tokens.refresh_token))
+            .await
+            .unwrap();
         assert!(refresh_still.is_none());
 
-        let subject_rev = kv_cache::get::<String>(&mut *conn, &subject_refresh_key(REALM, &id))
+        let subject_rev = state
+            .kv
+            .get::<String>(&subject_refresh_key(REALM, &id))
             .await
             .unwrap();
         assert!(subject_rev.is_none());
 
-        let jti = kv_cache::get::<String>(&mut *conn, &access_jti_key(REALM, &id))
+        let jti = state
+            .kv
+            .get::<String>(&access_jti_key(REALM, &id))
             .await
             .unwrap();
         assert!(jti.is_none());

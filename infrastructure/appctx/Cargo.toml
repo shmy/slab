@@ -10,7 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [features]
-test-utils = ["jwt/test-utils", "blob/test-utils", "flow/test-utils"]
+test-utils = ["jwt/test-utils", "blob/test-utils", "flow/test-utils", "dep:tempfile"]
 
 [dependencies]
 axum = { workspace = true }
@@ -20,3 +20,5 @@ db = { workspace = true }
 blob = { workspace = true }
 tracing = { workspace = true }
 flow = { workspace = true }
+cache = { workspace = true }
+tempfile = { version = "3", optional = true }

@@ -1,7 +1,7 @@
 use appctx::AppCtx;
 use sched_kit::{CronJob, CronJobFuture};
 
-/// 清理 pg_cache 中过期条目。
+/// 清理缓存后端中的过期条目（pg 表 / redb 文件；redis 后端由服务端 TTL 处理，返回 0）。
 pub struct CacheGc;
 
 impl CronJob<AppCtx> for CacheGc {
@@ -13,9 +13,7 @@ impl CronJob<AppCtx> for CacheGc {
     }
     fn run(&self, state: AppCtx) -> CronJobFuture {
         Box::pin(async move {
-            let mut tx = state.pg_pool.begin().await?;
-            let deleted = cache::delete_expired_in_transaction(&mut tx).await?;
-            tx.commit().await?;
+            let deleted = state.kv.delete_expired().await?;
             if deleted > 0 {
                 tracing::info!(deleted, "cache_gc completed");
             } else {

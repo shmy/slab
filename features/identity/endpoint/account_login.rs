@@ -1,7 +1,7 @@
 use crate::shared::token_ops;
 use std::time::Duration;
 
-use appctx::{PgPool, TokenBundle, TokenHelper};
+use appctx::{Backend, PgPool, TokenBundle, TokenHelper};
 use axum::extract::State;
 use identity_contract::error::IdentityError;
 use identity_contract::events::AccountLoggedInEvent;
@@ -11,7 +11,6 @@ use queue::enqueue_event_with_delay;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use shared_contract::value_object::phone_number::PhoneNumber;
-use sqlx::Acquire;
 use utoipa::ToSchema;
 use validify::Validify;
 use web::extract::valid_json::ValidJson;
@@ -57,31 +56,32 @@ impl LoginResponse {
     request_body = LoginRequest,
     responses((status = 200, body = JsonResponse<LoginResponse>))
 )]
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(pg_pool, kv))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    State(kv): State<Backend>,
     State(token_bundle): State<TokenBundle>,
     ValidJson(request): ValidJson<LoginRequest>,
 ) -> JsonResponseType<LoginResponse> {
-    let response = execute(&pg_pool, token_bundle.account(), request).await?;
+    let response = execute(&pg_pool, &kv, token_bundle.account(), request).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(pg_pool, kv))]
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    kv: &Backend,
     token_helper: &TokenHelper,
     request: LoginRequest,
 ) -> rootcause::Result<LoginResponse> {
     let mut conn = pg_pool.acquire().await?;
-    let mut txn = conn.begin().await?;
     let row = sqlx::query_as!(
         LoginRow,
         r#"SELECT id as "id: ID", password FROM accounts WHERE phone = $1"#,
         &*request.phone
     )
-    .fetch_optional(&mut *txn)
+    .fetch_optional(&mut *conn)
     .await?
     .ok_or(IdentityError::AccountInvalidCredentials)?;
 
@@ -91,14 +91,13 @@ async fn execute(
     }
 
     let id = row.id;
-    let tokens = token_ops::issue_tokens(pg_pool, token_helper, &id).await?;
+    let tokens = token_ops::issue_tokens(kv, token_helper, &id).await?;
     enqueue_event_with_delay(
-        txn.as_mut(),
+        &mut conn,
         &AccountLoggedInEvent { id },
         Duration::from_secs(10),
     )
     .await?;
-    txn.commit().await?;
     Ok(LoginResponse::bearer(
         tokens.access_token,
         tokens.refresh_token,
@@ -127,6 +126,7 @@ mod tests {
         let account_id = tests::insert_test_account(&state.pg_pool, "13900001102").await;
         let response = execute(
             &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001102").unwrap(),
@@ -169,6 +169,7 @@ mod tests {
         tests::insert_test_account(&state.pg_pool, "13900001103").await;
         let err = execute(
             &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001103").unwrap(),
@@ -186,6 +187,7 @@ mod tests {
         let state = testing::build(pool).await;
         let err = execute(
             &state.pg_pool,
+            &state.kv,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001104").unwrap(),

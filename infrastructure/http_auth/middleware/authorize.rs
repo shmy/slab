@@ -5,16 +5,14 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use cache as kv_cache;
-use db::PgPool;
+use cache::Backend;
 use jwt::{TokenBundle, TokenHelper, TokenRealm};
 use shared_contract::value_object::id::ID;
 use web::error::WebError;
 
-#[derive(Clone)]
 struct AuthVerifier<'a> {
     token_helper: &'a TokenHelper,
-    pg_pool: &'a PgPool,
+    kv: &'a Backend,
 }
 
 impl Verifier for AuthVerifier<'_> {
@@ -24,16 +22,12 @@ impl Verifier for AuthVerifier<'_> {
             .decode_access_token(token)
             .map_err(|_| AuthnError::AccessTokenInvalid)?;
 
-        let mut conn = self
-            .pg_pool
-            .acquire()
+        let realm = self.token_helper.realm();
+        let stored_jti = self
+            .kv
+            .get::<String>(&authn_kit::access_jti_key(realm, &claims.sub))
             .await
             .map_err(|_| AuthnError::AccessTokenInvalid)?;
-        let realm = self.token_helper.realm();
-        let stored_jti =
-            kv_cache::get::<String>(&mut conn, &authn_kit::access_jti_key(realm, &claims.sub))
-                .await
-                .map_err(|_| AuthnError::AccessTokenInvalid)?;
 
         match stored_jti {
             Some(ref jti) if jti == &claims.jti => Ok(VerifiedToken {
@@ -48,7 +42,7 @@ impl Verifier for AuthVerifier<'_> {
 async fn run_auth(
     realm: TokenRealm,
     token_bundle: &TokenBundle,
-    pg_pool: PgPool,
+    kv: &Backend,
     request: Request,
     next: Next,
 ) -> Response {
@@ -56,10 +50,7 @@ async fn run_auth(
         TokenRealm::Customer => token_bundle.customer(),
         TokenRealm::Account => token_bundle.account(),
     };
-    let verifier = AuthVerifier {
-        token_helper,
-        pg_pool: &pg_pool,
-    };
+    let verifier = AuthVerifier { token_helper, kv };
     match authenticate(&verifier, request, next).await {
         Ok(response) => response,
         Err(err) => err.into_response(),
@@ -68,20 +59,20 @@ async fn run_auth(
 
 pub async fn customer_auth_middleware(
     State(token_bundle): State<TokenBundle>,
-    State(pg_pool): State<PgPool>,
+    State(kv): State<Backend>,
     request: Request,
     next: Next,
 ) -> Response {
-    run_auth(TokenRealm::Customer, &token_bundle, pg_pool, request, next).await
+    run_auth(TokenRealm::Customer, &token_bundle, &kv, request, next).await
 }
 
 pub async fn account_auth_middleware(
     State(token_bundle): State<TokenBundle>,
-    State(pg_pool): State<PgPool>,
+    State(kv): State<Backend>,
     request: Request,
     next: Next,
 ) -> Response {
-    run_auth(TokenRealm::Account, &token_bundle, pg_pool, request, next).await
+    run_auth(TokenRealm::Account, &token_bundle, &kv, request, next).await
 }
 
 async fn authenticate(

@@ -1,101 +1,98 @@
-//! PostgreSQL 上的 **UNLOGGED** 热点 KV：`caches`，带 TTL 与可选事务内读写。
+//! 统一缓存后端：`Backend` 枚举 + 方法门面。
 //!
-//! - **可丢语义**：`UNLOGGED` 表在崩溃后可能丢失未持久化写入；仅适合会话类数据（见 `docs/PG_CACHE.md`）。
-//! - **GC**：`delete_expired_in_transaction` 使用专用 advisory lock，勿与 `pg_queue` GC 共用 key。
-//! - **文档**：`docs/PG_CACHE.md`；AI 速查见 `.cursor/skills/rust-slab-backend/SKILL.md` §11。
+//! 编译期按 feature 装配（可并存，AppCtx 组装处选择用哪个变体）：
+//! - `RedbCache`：feature `redb`，redb 4 嵌入式 KV（可丢：`Durability::None`）
+//! - `RedisCache`：feature `redis`，bb8 连接池 + Redis（TTL 由 Redis 原生处理）
+//!
+//! 无 trait / 无 `dyn` / 无手动 Pin：`Backend` 内部 match 派发，方法签名稳定。
 
-use std::fmt::Debug;
+#[cfg(feature = "redb")]
+mod redb;
+#[cfg(feature = "redis")]
+mod redis;
 
-use chrono::{DateTime, Utc};
+use std::time::Duration;
+
+use rootcause::Result;
 use serde::{Serialize, de::DeserializeOwned};
-use sqlx::PgConnection;
 
-/// 与 `bin/server/background` 中 `cache_gc` 任务成对使用；同库上勿占用相同 advisory key。
-const GC_ADVISORY_KEY_1: i32 = 884_422;
-const GC_ADVISORY_KEY_2: i32 = 1;
+#[cfg(feature = "redb")]
+pub use redb::RedbCache;
+#[cfg(feature = "redis")]
+pub use redis::RedisCache;
 
-/// 在**当前**事务内先拿 `pg_advisory_xact_lock`（多实例/多进程互斥、提交或回滚时自动释放），
-/// 再删除所有 `expires_at < now()` 的行；`execute` 返回删除行数。
-pub async fn delete_expired_in_transaction(conn: &mut PgConnection) -> rootcause::Result<u64> {
-    sqlx::query!(
-        "SELECT pg_advisory_xact_lock($1, $2)",
-        &GC_ADVISORY_KEY_1,
-        &GC_ADVISORY_KEY_2,
-    )
-    .fetch_one(&mut *conn)
-    .await?;
-    let n = sqlx::query!("DELETE FROM caches WHERE expires_at < now()")
-        .execute(&mut *conn)
-        .await?;
-    Ok(n.rows_affected())
+#[cfg(not(any(feature = "redb", feature = "redis")))]
+compile_error!("cache crate requires feature \"redb\" or \"redis\"");
+
+/// 缓存后端句柄：克隆共享、方法即 API。
+#[derive(Clone)]
+pub enum Backend {
+    #[cfg(feature = "redb")]
+    Redb(RedbCache),
+    #[cfg(feature = "redis")]
+    Redis(RedisCache),
 }
 
-pub async fn set_ex<T>(
-    conn: &mut PgConnection,
-    key: &str,
-    value: &T,
-    ttl_secs: u64,
-) -> rootcause::Result<()>
-where
-    T: Serialize + Debug + Send + Sync,
-{
-    let expires: DateTime<Utc> = Utc::now() + chrono::Duration::seconds(ttl_secs as i64);
-    let value = serde_json::to_string(value)?;
-    sqlx::query!(
-        r#"
-            INSERT INTO caches (key, value, expires_at)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (key) DO UPDATE
-            SET value = EXCLUDED.value,
-                expires_at = EXCLUDED.expires_at
-            "#,
-        &key,
-        &value,
-        &expires,
-    )
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
+fn decode<T: DeserializeOwned>(raw: Option<String>) -> Option<T> {
+    raw.and_then(|r| serde_json::from_str(&r).ok())
 }
 
-pub async fn get<T>(conn: &mut PgConnection, key: &str) -> rootcause::Result<Option<T>>
-where
-    T: DeserializeOwned + Send + Sync,
-{
-    let row = sqlx::query!(
-        r#"SELECT value FROM caches WHERE key = $1 AND expires_at > now()"#,
-        &key,
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(row
-        .map(|row| row.value)
-        .and_then(|value: String| serde_json::from_str(&value).ok()))
-}
+impl Backend {
+    /// 读缓存；未命中、已过期或反序列化失败返回 `None`（不区分）。
+    pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let raw = match self {
+            #[cfg(feature = "redb")]
+            Self::Redb(inner) => inner.get_raw(key).await?,
+            #[cfg(feature = "redis")]
+            Self::Redis(inner) => inner.get_raw(key).await?,
+        };
+        Ok(decode(raw))
+    }
 
-pub async fn take<T>(conn: &mut PgConnection, key: &str) -> rootcause::Result<Option<T>>
-where
-    T: DeserializeOwned + Send + Sync,
-{
-    let row = sqlx::query!(
-        r#"
-        DELETE FROM caches
-        WHERE key = $1
-          AND expires_at > now()
-        RETURNING value
-        "#,
-        &key,
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    Ok(row
-        .map(|row| row.value)
-        .and_then(|value: String| serde_json::from_str(&value).ok()))
-}
+    /// 写入缓存并刷新 TTL。
+    pub async fn set_ex<T: Serialize + Send + Sync>(
+        &self,
+        key: &str,
+        value: &T,
+        period: Duration,
+    ) -> Result<()> {
+        let raw = serde_json::to_string(value)?;
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb(inner) => inner.set_ex_raw(key, &raw, period).await,
+            #[cfg(feature = "redis")]
+            Self::Redis(inner) => inner.set_ex_raw(key, &raw, period).await,
+        }
+    }
 
-pub async fn del(conn: &mut PgConnection, key: &str) -> rootcause::Result<()> {
-    sqlx::query!(r#"DELETE FROM caches WHERE key = $1"#, &key,)
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
+    /// 原子消费：未过期则取出并删除；不存在或已过期返回 `None`。
+    pub async fn take<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let raw = match self {
+            #[cfg(feature = "redb")]
+            Self::Redb(inner) => inner.take_raw(key).await?,
+            #[cfg(feature = "redis")]
+            Self::Redis(inner) => inner.take_raw(key).await?,
+        };
+        Ok(decode(raw))
+    }
+
+    /// 删除 key（不区分是否过期）。
+    pub async fn del(&self, key: &str) -> Result<()> {
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb(inner) => inner.del_raw(key).await,
+            #[cfg(feature = "redis")]
+            Self::Redis(inner) => inner.del_raw(key).await,
+        }
+    }
+
+    /// 清理已过期条目，返回删除条数。无 TTL 机制的实现（Redis）返回 0。
+    pub async fn delete_expired(&self) -> Result<u64> {
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb(inner) => inner.delete_expired().await,
+            #[cfg(feature = "redis")]
+            Self::Redis(inner) => inner.delete_expired().await,
+        }
+    }
 }
