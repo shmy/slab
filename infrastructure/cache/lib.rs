@@ -96,3 +96,68 @@ impl Backend {
         }
     }
 }
+
+#[cfg(all(test, feature = "redb"))]
+mod tests {
+    use super::*;
+
+    fn test_backend() -> Backend {
+        let dir = Box::leak(Box::new(tempfile::tempdir().expect("create temp dir")));
+        Backend::Redb(
+            RedbCache::open(dir.path().join("cache.redb")).expect("open redb cache"),
+        )
+    }
+
+    #[tokio::test]
+    async fn generic_facade_roundtrip() {
+        let kv = test_backend();
+        let key = "facade";
+
+        assert!(kv.get::<String>(key).await.unwrap().is_none());
+
+        kv.set_ex(key, &"hello", Duration::from_secs(60)).await.unwrap();
+        assert_eq!(
+            kv.get::<String>(key).await.unwrap().as_deref(),
+            Some("hello")
+        );
+
+        // take 原子消费 + 类型切换（同 key 换类型也安全）。
+        assert_eq!(
+            kv.take::<String>(key).await.unwrap().as_deref(),
+            Some("hello")
+        );
+        assert!(kv.get::<String>(key).await.unwrap().is_none());
+
+        kv.set_ex(key, &42_i64, Duration::from_secs(60)).await.unwrap();
+        assert_eq!(kv.get::<i64>(key).await.unwrap(), Some(42));
+
+        kv.del(key).await.unwrap();
+        assert!(kv.get::<i64>(key).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn corrupt_value_decodes_to_none() {
+        let kv = test_backend();
+        // raw 层写入非法 JSON：门面 get 应静默返回 None（不区分坏数据与未命中）。
+        let Backend::Redb(inner) = &kv else {
+            unreachable!("test backend is redb")
+        };
+        inner
+            .set_ex_raw("bad", "not-json", Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(kv.get::<String>("bad").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_expired_via_facade() {
+        let kv = test_backend();
+        kv.set_ex(&"x", &1_i64, Duration::ZERO).await.unwrap();
+        kv.set_ex(&"y", &2_i64, Duration::from_secs(60)).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        assert_eq!(kv.delete_expired().await.unwrap(), 1);
+        assert!(kv.get::<i64>("x").await.unwrap().is_none());
+        assert_eq!(kv.get::<i64>("y").await.unwrap(), Some(2));
+    }
+}

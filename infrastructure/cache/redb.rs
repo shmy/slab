@@ -132,3 +132,97 @@ impl RedbCache {
         Ok(count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 独立临时库：测试进程生命周期内保持目录（drop 过早会删除数据库文件）。
+    fn test_cache() -> RedbCache {
+        let dir = Box::leak(Box::new(tempfile::tempdir().expect("create temp dir")));
+        RedbCache::open(dir.path().join("cache.redb")).expect("open redb cache")
+    }
+
+    #[tokio::test]
+    async fn set_get_take_del() {
+        let cache = test_cache();
+
+        assert!(cache.get_raw("k").await.unwrap().is_none());
+
+        cache
+            .set_ex_raw("k", "\"v1\"", Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(
+            cache.get_raw("k").await.unwrap().as_deref(),
+            Some("\"v1\"")
+        );
+
+        // take 原子消费：一次取走，第二次无。
+        assert_eq!(
+            cache.take_raw("k").await.unwrap().as_deref(),
+            Some("\"v1\"")
+        );
+        assert!(cache.take_raw("k").await.unwrap().is_none());
+        assert!(cache.get_raw("k").await.unwrap().is_none());
+
+        cache
+            .set_ex_raw("k", "\"v2\"", Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache.del_raw("k").await.unwrap();
+        assert!(cache.get_raw("k").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn overwrite_refreshes_value() {
+        let cache = test_cache();
+        cache
+            .set_ex_raw("k", "\"a\"", Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set_ex_raw("k", "\"b\"", Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(
+            cache.get_raw("k").await.unwrap().as_deref(),
+            Some("\"b\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_is_invisible_and_cleaned() {
+        let cache = test_cache();
+
+        // TTL 0：写后即刻过期（sleep 5ms 跨毫秒，避免与写入时刻同毫秒判定未过期）。
+        cache.set_ex_raw("k1", "\"x\"", Duration::ZERO).await.unwrap();
+        cache
+            .set_ex_raw("k2", "\"y\"", Duration::from_secs(60))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        assert!(cache.get_raw("k1").await.unwrap().is_none());
+        assert_eq!(
+            cache.get_raw("k2").await.unwrap().as_deref(),
+            Some("\"y\"")
+        );
+
+        let n = cache.delete_expired().await.unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(cache.delete_expired().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn take_removes_expired_entry() {
+        let cache = test_cache();
+
+        cache.set_ex_raw("k", "\"x\"", Duration::ZERO).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        // 过期条目 take 返回 None，且被删除（delete_expired 不再计）。
+        assert!(cache.take_raw("k").await.unwrap().is_none());
+        assert_eq!(cache.delete_expired().await.unwrap(), 0);
+    }
+}
