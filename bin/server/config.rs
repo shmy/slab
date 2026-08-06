@@ -11,12 +11,15 @@ use crate::cli::Cli;
 pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let flow = Flow::try_new(cli.database.url.expose_secret()).await?;
     let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_s3(cli),)?;
-    // 缓存后端：默认（或 kv-redb）→ Backend::Redb（redb 嵌入式，与 cache 默认 feature 一致）；
-    // kv-redis → Backend::Redis（bb8 连接池）。
-    #[cfg(all(feature = "kv-redis", not(feature = "kv-redb")))]
-    let kv = Backend::Redis(cache::RedisCache::new(&cli.cache.url).await?);
-    #[cfg(not(all(feature = "kv-redis", not(feature = "kv-redb"))))]
-    let kv = Backend::Redb(cache::RedbCache::open(&cli.cache.db_path)?);
+
+    // 缓存后端（互斥，开启其一；default=kv-pg 与显式 kv-redb/kv-redis 并集时 pg 分支让位）：
+    #[cfg(feature = "kv-pg")]
+    let kv = Backend::try_new(pg_pool.clone()).await?;
+    #[cfg(feature = "kv-redb")]
+    let kv = Backend::try_new(&cli.cache.db_path)?;
+    #[cfg(feature = "kv-redis")]
+    let kv = Backend::try_new(&cli.cache.url).await?;
+
     Ok(AppCtx {
         pg_pool,
         kv,

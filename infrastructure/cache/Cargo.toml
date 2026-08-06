@@ -10,7 +10,8 @@ path = "lib.rs"
 workspace = true
 
 [features]
-default = ["redb"]
+default = ["pg"]
+pg = ["dep:sqlx", "dep:db"]
 redb = ["dep:redb"]
 redis = ["dep:bb8-redis", "dep:redis"]
 
@@ -19,6 +20,8 @@ chrono = { workspace = true, features = ["clock", "std"] }
 rootcause = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true, optional = true }
+db = { workspace = true, optional = true }
 redb = { version = "4.1", optional = true }
 bb8-redis = { version = "0.26", optional = true }
 redis = { version = "1.5", features = ["tokio-comp"], optional = true }

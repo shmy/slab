@@ -10,7 +10,17 @@ path = "lib.rs"
 workspace = true
 
 [features]
-test-utils = ["jwt/test-utils", "blob/test-utils", "flow/test-utils", "dep:tempfile"]
+test-utils = [
+    "jwt/test-utils",
+    "blob/test-utils",
+    "flow/test-utils",
+    "dep:tempfile",
+    "kv-pg",
+]
+# 缓存后端转发（由 bin/server 的 kv-redb / kv-redis 统一开启；testing.rs 据此选择测试后端）
+kv-pg = ["cache/pg"]
+kv-redb = ["cache/redb"]
+kv-redis = ["cache/redis"]
 
 [dependencies]
 axum = { workspace = true }

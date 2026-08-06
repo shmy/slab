@@ -19,7 +19,7 @@ pub struct RedisCache {
 
 impl RedisCache {
     /// 建立连接池。URL 形如 `redis://127.0.0.1:6379`。
-    pub async fn new(url: &str) -> Result<Self> {
+    pub(crate) async fn try_new(url: &str) -> Result<Self> {
         let manager = RedisConnectionManager::new(url)?;
         let pool = Pool::builder().max_size(16).build(manager).await?;
         Ok(Self { pool })
@@ -75,7 +75,7 @@ mod tests {
             eprintln!("REDIS_TEST_URL not set, skipping redis backend test");
             return;
         };
-        let cache = RedisCache::new(&url).await.unwrap();
+        let cache = RedisCache::try_new(&url).await.unwrap();
         let key = "slab_redis_test";
 
         cache.del_raw(key).await.unwrap();
