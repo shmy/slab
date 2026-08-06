@@ -2,12 +2,16 @@
 //!
 //! 注意：每次操作从池独立取连接，**不参与调用方 PG 事务**——缓存是可丢辅助数据，
 //! 调用方在业务事务提交后写入（顺序约定见 `docs/CACHE.md`）。
+//!
+//! 使用运行时 `sqlx::query`（非 `query!` 宏）：DDL/查询不依赖编译期数据库连接或 offline 数据，
+//! 保证初次编译即可通过。
 
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use db::PgPool;
 use rootcause::Result;
+use sqlx::Row;
 
 /// 独立连接模式的 PG 后端。
 #[derive(Clone)]
@@ -19,44 +23,38 @@ impl PgCache {
     /// 仅当 pg 为唯一后端时被 `Backend::try_new` 调用（并集下 pg 让位，避免 dead code）。
     #[cfg(not(any(feature = "redb", feature = "redis")))]
     pub(crate) async fn try_new(pool: PgPool) -> Result<Self> {
-        let mut txn = pool.begin().await?;
-        sqlx::query!(
+        let mut conn = pool.acquire().await?;
+        // 幂等建表：cache crate 自管表结构（不依赖 migration 版本）。
+        sqlx::query(
             r#"
-CREATE UNLOGGED TABLE IF NOT EXISTS caches (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL
-);
-        "#
+            CREATE UNLOGGED TABLE IF NOT EXISTS caches (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+            "#,
         )
-        .execute(&mut *txn)
+        .execute(&mut *conn)
         .await?;
-        sqlx::query!(
-            r#"
-CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at);
-        "#
-        )
-        .execute(&mut *txn)
-        .await?;
-        txn.commit().await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at)")
+            .execute(&mut *conn)
+            .await?;
         Ok(Self { pool })
     }
 
     pub async fn get_raw(&self, key: &str) -> Result<Option<String>> {
         let mut conn = self.pool.acquire().await?;
-        let row = sqlx::query!(
-            r#"SELECT value FROM caches WHERE key = $1 AND expires_at > now()"#,
-            key,
-        )
-        .fetch_optional(&mut *conn)
-        .await?;
-        Ok(row.map(|row| row.value))
+        let row = sqlx::query("SELECT value FROM caches WHERE key = $1 AND expires_at > now()")
+            .bind(key)
+            .fetch_optional(&mut *conn)
+            .await?;
+        Ok(row.map(|row| row.get::<String, _>("value")))
     }
 
     pub async fn set_ex_raw(&self, key: &str, value: &str, period: Duration) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
         let expires: DateTime<Utc> = Utc::now() + period;
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO caches (key, value, expires_at)
             VALUES ($1, $2, $3)
@@ -64,10 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at);
             SET value = EXCLUDED.value,
                 expires_at = EXCLUDED.expires_at
             "#,
-            key,
-            value,
-            &expires,
         )
+        .bind(key)
+        .bind(value)
+        .bind(expires)
         .execute(&mut *conn)
         .await?;
         Ok(())
@@ -75,22 +73,23 @@ CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at);
 
     pub async fn take_raw(&self, key: &str) -> Result<Option<String>> {
         let mut conn = self.pool.acquire().await?;
-        let row = sqlx::query!(
+        let row = sqlx::query(
             r#"
             DELETE FROM caches
             WHERE key = $1 AND expires_at > now()
             RETURNING value
             "#,
-            key,
         )
+        .bind(key)
         .fetch_optional(&mut *conn)
         .await?;
-        Ok(row.map(|row| row.value))
+        Ok(row.map(|row| row.get::<String, _>("value")))
     }
 
     pub async fn del_raw(&self, key: &str) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        sqlx::query!("DELETE FROM caches WHERE key = $1", key)
+        sqlx::query("DELETE FROM caches WHERE key = $1")
+            .bind(key)
             .execute(&mut *conn)
             .await?;
         Ok(())
@@ -99,7 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at);
     pub async fn delete_expired(&self) -> Result<u64> {
         let mut conn = self.pool.acquire().await?;
         // 无 advisory lock：多实例并发清理无害（DELETE 条件幂等）。
-        let n = sqlx::query!("DELETE FROM caches WHERE expires_at < now()")
+        let n = sqlx::query("DELETE FROM caches WHERE expires_at < now()")
             .execute(&mut *conn)
             .await?;
         Ok(n.rows_affected())
@@ -144,7 +143,6 @@ mod tests {
     #[sqlx::test]
     async fn expired_is_invisible_and_cleaned(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        // 直接构造：建表由 run_migrations 覆盖，无需 try_new（并集下可能被 cfg 禁用）。
         let cache = PgCache { pool };
 
         cache
