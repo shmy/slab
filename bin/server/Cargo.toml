@@ -8,7 +8,7 @@ name = "server"
 path = "main.rs"
 
 [features]
-default = ["kv-pg", "queue-pg", "blob-cos"]
+default = ["kv-pg", "queue-pg", "blob-fs"]
 # 缓存后端（互斥，开启其一）：
 #   kv-pg  → cache::Backend::Pg（PostgreSQL，跨实例共享）
 #   kv-redb  → cache::Backend::Redb（嵌入式，单实例）
