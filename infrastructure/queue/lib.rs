@@ -113,7 +113,9 @@ impl QueueBackend {
             #[cfg(feature = "pg")]
             Self::Pg(b) => b.run_dispatcher(ctx, registry, shutdown).await,
             #[cfg(feature = "nats")]
-            Self::Nats(b) => nats::run_nats_dispatcher(b, ctx, registry, shutdown).await,
+            Self::Nats(b) => {
+                nats::run_nats_dispatcher(b, ctx, registry, shutdown, nats::DEFAULT_ACK_WAIT).await
+            }
         }
     }
 

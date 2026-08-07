@@ -24,9 +24,9 @@ use uuid::Uuid;
 use crate::{FrozenRegistry, event::Event};
 
 /// 单条消息最大投递次数（对齐 pg 后端 `max_attempts` 语义；0 表示无限）。
-const DEFAULT_MAX_DELIVER: u64 = 5;
+pub(crate) const DEFAULT_MAX_DELIVER: u64 = 5;
 /// ack 等待窗口：handler 失败不 ack 后，消息在此窗口后重投。
-const DEFAULT_ACK_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const DEFAULT_ACK_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// 可克隆的 JetStream 句柄（publish + 创建 consumer 共用同一连接）。
 #[derive(Clone)]
@@ -179,6 +179,7 @@ pub(crate) async fn run_nats_dispatcher<C: Send + Sync + Clone + 'static>(
     ctx: C,
     registry: FrozenRegistry<C>,
     shutdown: Receiver<bool>,
+    ack_wait: Duration,
 ) -> Result<()> {
     let js_ctx = backend.js.context();
     let stream = backend.js.stream_name().to_string();
@@ -197,7 +198,7 @@ pub(crate) async fn run_nats_dispatcher<C: Send + Sync + Clone + 'static>(
                         // 有限重投（对齐 pg 后端的 max_attempts）：handler 失败不 ack，
                         // ack_wait 到期后 redeliver，超过 max_deliver 后丢弃（日志告警）。
                         max_deliver: DEFAULT_MAX_DELIVER as i64,
-                        ack_wait: DEFAULT_ACK_WAIT,
+                        ack_wait,
                         ..Default::default()
                     },
                     stream.as_str(),
@@ -324,23 +325,40 @@ mod e2e_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::watch;
 
-    #[derive(Debug, Serialize, Deserialize)]
-    struct CountEvent {
-        n: i32,
-    }
-    impl Event for CountEvent {
-        const TOPIC: &'static str = "slab.nats_e2e.evt";
+    /// 唯一 durable 名：每次运行全新 consumer（JetStream 对已存在 durable 复用旧 filter 配置）。
+    fn unique_durable(prefix: &str) -> &'static str {
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        Box::leak(format!("{prefix}_{}", SEQ.fetch_add(1, Ordering::SeqCst)).into_boxed_str())
     }
 
+    macro_rules! e2e_event {
+        ($name:ident, $topic:literal) => {
+            #[derive(Debug, Serialize, Deserialize)]
+            struct $name {
+                n: i32,
+            }
+            impl Event for $name {
+                const TOPIC: &'static str = $topic;
+            }
+        };
+    }
+    // 每个测试独立 topic：避免共享 stream 下多 durable 竞争（可并行运行）。
+    e2e_event!(ConEvent, "slab.e2e.con.evt");
+    e2e_event!(FlakyEvent, "slab.e2e.flaky.evt");
+    e2e_event!(DelayEvent, "slab.e2e.delay.evt");
+    e2e_event!(BroadcastEvent, "slab.e2e.bc.evt");
+
     struct CountHandler {
+        topic: &'static str,
+        name: &'static str,
         calls: Arc<AtomicUsize>,
     }
     impl<C: Send + Sync + 'static> QueueHandler<C> for CountHandler {
         fn topic(&self) -> &'static str {
-            CountEvent::TOPIC
+            self.topic
         }
         fn name(&self) -> &'static str {
-            "nats_e2e_count"
+            self.name
         }
         fn handle<'a>(
             &'a self,
@@ -380,18 +398,20 @@ mod e2e_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::<()>::default();
         registry.register(CountHandler {
+            topic: ConEvent::TOPIC,
+            name: unique_durable("e2e_count"),
             calls: calls.clone(),
         });
         let registry = registry.freeze();
 
         // 发布 2 条 → 启动消费循环 → 等待 handler 计数到达。
-        backend.enqueue_event(&CountEvent { n: 1 }).await.unwrap();
-        backend.enqueue_event(&CountEvent { n: 2 }).await.unwrap();
+        backend.enqueue_event(&ConEvent { n: 1 }).await.unwrap();
+        backend.enqueue_event(&ConEvent { n: 2 }).await.unwrap();
 
         let (tx, rx) = watch::channel(false);
         // Box::leak：dispatcher task 需要 'static 借用（测试进程内泄漏无害）。
         let backend = Box::leak(Box::new(backend));
-        let dispatcher = tokio::spawn(run_nats_dispatcher(backend, (), registry, rx));
+        let dispatcher = tokio::spawn(run_nats_dispatcher(backend, (), registry, rx, Duration::from_secs(60)));
 
         let ok = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -404,6 +424,206 @@ mod e2e_tests {
         .await
         .unwrap_or(false);
         assert!(ok, "handler should consume both messages");
+
+        let _ = tx.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
+    }
+
+    /// handler 前 N 次失败：不 ack → ack_wait 后 redeliver → 最终成功。
+    /// 验证 at-least-once + 有限重投语义（ack_wait 缩短为 1s 以加速测试）。
+    #[tokio::test]
+    #[ignore]
+    async fn handler_failure_redelivers_then_succeeds() {
+        let Some(url) = test_url() else {
+            eprintln!("NATS_TEST_URL not set, skipping nats e2e test");
+            return;
+        };
+        let config = NatsConfig {
+            url,
+            username: None,
+            password: None,
+            stream_name: "slab".to_string(),
+        };
+        let backend = Box::leak(Box::new(NatsBackend::try_new(config).await.unwrap()));
+
+        struct Flaky {
+            attempts: Arc<AtomicUsize>,
+            calls: Arc<AtomicUsize>,
+        }
+        impl<C: Send + Sync + 'static> QueueHandler<C> for Flaky {
+            fn topic(&self) -> &'static str {
+                FlakyEvent::TOPIC
+            }
+            fn name(&self) -> &'static str {
+                unique_durable("e2e_flaky")
+            }
+            fn handle<'a>(
+                &'a self,
+                _ctx: &'a C,
+                _payload: serde_json::Value,
+            ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+                let attempts = self.attempts.clone();
+                let calls = self.calls.clone();
+                Box::pin(async move {
+                    let n = attempts.fetch_add(1, Ordering::SeqCst);
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        Err(report!("transient failure"))
+                    } else {
+                        Ok(())
+                    }
+                })
+            }
+        }
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::<()>::default();
+        registry.register(Flaky {
+            attempts: attempts.clone(),
+            calls: calls.clone(),
+        });
+        let registry = registry.freeze();
+
+        backend.enqueue_event(&FlakyEvent { n: 9 }).await.unwrap();
+
+        let (tx, rx) = watch::channel(false);
+        let dispatcher = tokio::spawn(run_nats_dispatcher(
+            backend,
+            (),
+            registry,
+            rx,
+            Duration::from_secs(1), // 短 ack_wait：失败后 1s 重投
+        ));
+
+        let ok = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                // 前 2 次失败 + 第 3 次成功 = 3 次调用
+                if calls.load(Ordering::SeqCst) >= 3 {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "flaky handler should be retried until success (3 calls)");
+
+        let _ = tx.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
+    }
+
+    /// 延迟发布（ADR-51 schedule）：到期转投后 durable consumer 收到并消费。
+    #[tokio::test]
+    #[ignore]
+    async fn delayed_event_is_delivered_after_schedule() {
+        let Some(url) = test_url() else {
+            eprintln!("NATS_TEST_URL not set, skipping nats e2e test");
+            return;
+        };
+        let config = NatsConfig {
+            url,
+            username: None,
+            password: None,
+            stream_name: "slab".to_string(),
+        };
+        let backend = Box::leak(Box::new(NatsBackend::try_new(config).await.unwrap()));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::<()>::default();
+        registry.register(CountHandler {
+            topic: ConEvent::TOPIC,
+            name: unique_durable("e2e_count"),
+            calls: calls.clone(),
+        });
+        let registry = registry.freeze();
+
+        // 1 秒后转投
+        backend
+            .enqueue_event_delayed(&DelayEvent { n: 42 }, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        let (tx, rx) = watch::channel(false);
+        let dispatcher = tokio::spawn(run_nats_dispatcher(
+            backend,
+            (),
+            registry,
+            rx,
+            Duration::from_secs(60),
+        ));
+
+        // 应在 ~1s 后（转投）被消费，而非立即
+        let ok = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if calls.load(Ordering::SeqCst) >= 1 {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "delayed event should be delivered after schedule");
+
+        let _ = tx.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
+    }
+
+    /// 广播：同一 topic 两个 handler，各自 durable consumer 独立消费同一条消息。
+    #[tokio::test]
+    #[ignore]
+    async fn broadcast_delivers_to_every_handler() {
+        let Some(url) = test_url() else {
+            eprintln!("NATS_TEST_URL not set, skipping nats e2e test");
+            return;
+        };
+        let config = NatsConfig {
+            url,
+            username: None,
+            password: None,
+            stream_name: "slab".to_string(),
+        };
+        let backend = Box::leak(Box::new(NatsBackend::try_new(config).await.unwrap()));
+
+        let calls_a = Arc::new(AtomicUsize::new(0));
+        let calls_b = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::<()>::default();
+        registry
+            .register(CountHandler {
+                topic: BroadcastEvent::TOPIC,
+                name: unique_durable("e2e_broadcast_a"),
+                calls: calls_a.clone(),
+            })
+            .register(CountHandler {
+                topic: BroadcastEvent::TOPIC,
+                name: unique_durable("e2e_broadcast_b"),
+                calls: calls_b.clone(),
+            });
+        let registry = registry.freeze();
+
+        backend.enqueue_event(&BroadcastEvent { n: 7 }).await.unwrap();
+
+        let (tx, rx) = watch::channel(false);
+        let dispatcher = tokio::spawn(run_nats_dispatcher(
+            backend,
+            (),
+            registry,
+            rx,
+            Duration::from_secs(60),
+        ));
+
+        let ok = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if calls_a.load(Ordering::SeqCst) >= 1 && calls_b.load(Ordering::SeqCst) >= 1 {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "both handlers should consume the same message");
 
         let _ = tx.send(true);
         let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
