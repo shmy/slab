@@ -1,6 +1,10 @@
 use appctx::{AppCtx, Flow, HttpClient, TokenBundle};
 use appctx::{TokenHelper, TokenRealm};
-use blob::{Blob, BlobConfig};
+use blob::Blob;
+#[cfg(all(feature = "blob-cos", not(feature = "blob-fs")))]
+use blob::CosConfig;
+#[cfg(feature = "blob-fs")]
+use blob::FsConfig;
 use cache::KvBackend;
 use db::{DbConfig, PgPool, connect};
 use queue::QueueBackend;
@@ -11,7 +15,7 @@ use crate::cli::Cli;
 
 pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let flow = Flow::try_new(cli.database.url.expose_secret()).await?;
-    let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_s3(cli),)?;
+    let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_blob(cli),)?;
 
     // 缓存后端（互斥，开启其一；default=kv-pg 与显式 kv-redb/kv-redis 并集时 pg 分支让位）：
     #[cfg(all(feature = "kv-pg", not(any(feature = "kv-redb", feature = "kv-redis"))))]
@@ -69,13 +73,25 @@ async fn connect_postgresql(cli: &Cli) -> Result<PgPool> {
     .await
 }
 
-async fn connect_s3(cli: &Cli) -> Result<Blob> {
-    Blob::try_new(BlobConfig {
-        endpoint: &cli.s3.endpoint,
-        domain: &cli.s3.domain,
-        bucket: &cli.s3.bucket,
-        secret_id: cli.s3.secret_id.expose_secret(),
-        secret_key: cli.s3.secret_key.expose_secret(),
-    })
-    .await
+async fn connect_blob(cli: &Cli) -> Result<Blob> {
+    // blob 后端：默认 blob-cos（腾讯云 COS / S3 兼容）；blob-fs → 本地文件系统。
+    #[cfg(all(feature = "blob-cos", not(feature = "blob-fs")))]
+    {
+        Blob::try_new(CosConfig {
+            endpoint: &cli.s3.endpoint,
+            domain: &cli.s3.domain,
+            bucket: &cli.s3.bucket,
+            secret_id: cli.s3.secret_id.expose_secret(),
+            secret_key: cli.s3.secret_key.expose_secret(),
+        })
+        .await
+    }
+    #[cfg(feature = "blob-fs")]
+    {
+        Blob::try_new(FsConfig {
+            root: &cli.fs.root,
+            domain: &cli.fs.domain,
+        })
+        .await
+    }
 }

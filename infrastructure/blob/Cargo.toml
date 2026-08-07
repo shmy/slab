@@ -10,16 +10,25 @@ path = "lib.rs"
 workspace = true
 
 [features]
-default = []
+default = ["cos"]
+fs = ["opendal/executors-tokio", "opendal/services-fs"]
+cos = [
+    "opendal/executors-tokio",
+    "opendal/services-cos",
+    # COS 直传需要 HTTP transport（workspace 已关 opendal default features，需显式开启）。
+    "opendal/http-transport-reqwest",
+]
 test-utils = ["opendal/services-memory"]
 
 [dependencies]
 futures-util = { workspace = true }
 opendal = { workspace = true }
 rootcause = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 dotenvy = { workspace = true }
+tempfile = "3"

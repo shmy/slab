@@ -69,7 +69,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/cache`） |
 | 鉴权 | JWT（access + refresh，双 realm） |
 | 定时任务 | tokio-cron-scheduler（`sched_kit`） |
-| 对象存储 | S3 兼容（opendal） |
+| 对象存储 | 可插拔后端：腾讯云 COS（默认）/ 本地文件系统（`infrastructure/blob`） |
 | 可观测性 | OpenTelemetry（OTLP） |
 | API 文档 | OpenAPI + Scalar UI |
 | 内存分配器 | mimalloc |

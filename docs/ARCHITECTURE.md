@@ -55,7 +55,7 @@
 - `db`：数据库连接与连接池（`PgPool`）
 - `queue`：可插拔队列后端——Pg Outbox（默认）/ NATS JetStream（`docs/QUEUE.md`）
 - `cache`：可插拔缓存后端——Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`docs/CACHE.md`）
-- `blob`：对象存储（S3/COS）
+- `blob`：对象存储（腾讯云 COS / 本地 FS，opendal 可插拔后端）
 - `jwt`：JWT 令牌生成/验证
 - `http_client`：HTTP 客户端（reqwest）
 - `web`：通用请求提取、响应封装、HTTP 错误结构

@@ -411,7 +411,13 @@ mod e2e_tests {
         let (tx, rx) = watch::channel(false);
         // Box::leak：dispatcher task 需要 'static 借用（测试进程内泄漏无害）。
         let backend = Box::leak(Box::new(backend));
-        let dispatcher = tokio::spawn(run_nats_dispatcher(backend, (), registry, rx, Duration::from_secs(60)));
+        let dispatcher = tokio::spawn(run_nats_dispatcher(
+            backend,
+            (),
+            registry,
+            rx,
+            Duration::from_secs(60),
+        ));
 
         let ok = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
@@ -507,7 +513,10 @@ mod e2e_tests {
         })
         .await
         .unwrap_or(false);
-        assert!(ok, "flaky handler should be retried until success (3 calls)");
+        assert!(
+            ok,
+            "flaky handler should be retried until success (3 calls)"
+        );
 
         let _ = tx.send(true);
         let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
@@ -602,7 +611,10 @@ mod e2e_tests {
             });
         let registry = registry.freeze();
 
-        backend.enqueue_event(&BroadcastEvent { n: 7 }).await.unwrap();
+        backend
+            .enqueue_event(&BroadcastEvent { n: 7 })
+            .await
+            .unwrap();
 
         let (tx, rx) = watch::channel(false);
         let dispatcher = tokio::spawn(run_nats_dispatcher(

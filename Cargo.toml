@@ -139,9 +139,10 @@ locale = { path = "infrastructure/locale" }
 migration = { path = "infrastructure/migration" }
 mimalloc = { version = "0.1", default-features = false }
 mockall = { version = "0.15", default-features = false }
+# 各基础设施 crate 按需开 services / executor；layers 由代码显式 .layer() 挂载（blob 仅用 LoggingLayer，
+# retry / timeout / concurrent-limit 等层从未启用，不因关 default features 产生行为变化）。
 opendal = { version = "0.58", default-features = false, features = [
-    "default",
-    "services-cos",
+    "layers-logging",
 ] }
 planning = { path = "features/planning" }
 planning_contract = { path = "features/planning_contract" }

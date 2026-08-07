@@ -29,7 +29,12 @@ pub struct Cli {
     pub jwt: JwtCli,
 
     #[command(flatten)]
+    #[cfg(all(feature = "blob-cos", not(feature = "blob-fs")))]
     pub s3: S3Cli,
+
+    #[command(flatten)]
+    #[cfg(feature = "blob-fs")]
+    pub fs: FsCli,
 
     #[command(flatten)]
     pub cache: CacheCli,
@@ -221,6 +226,17 @@ pub struct S3Cli {
     pub bucket: String,
 
     #[arg(id = "s3_domain", long = "s3-domain", env = "S3_DOMAIN")]
+    pub domain: String,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct FsCli {
+    /// 本地文件系统根目录（不存在则自动创建）。
+    #[arg(id = "fs_root", long = "fs-root", env = "FS_ROOT")]
+    pub root: String,
+
+    /// 公网访问前缀（`fill_public_url` 拼接用）。
+    #[arg(id = "fs_domain", long = "fs-domain", env = "FS_DOMAIN")]
     pub domain: String,
 }
 
