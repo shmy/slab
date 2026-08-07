@@ -13,6 +13,10 @@ mod pg;
 mod redb;
 #[cfg(feature = "redis")]
 mod redis;
+#[cfg(feature = "redis")]
+pub use bb8_redis::RedisConnectionManager;
+#[cfg(feature = "redis")]
+pub use bb8_redis::bb8::Pool;
 
 #[cfg(feature = "redb")]
 use std::path::Path;
@@ -62,8 +66,8 @@ impl KvBackend {
     }
 
     #[cfg(feature = "redis")]
-    pub async fn try_new(url: &str) -> Result<Self> {
-        Ok(Self::Redis(RedisCache::try_new(url).await?))
+    pub async fn try_new(pool: Pool<RedisConnectionManager>) -> Result<Self> {
+        Ok(Self::Redis(RedisCache::try_new(pool).await?))
     }
 
     /// 读缓存；未命中、已过期或反序列化失败返回 `None`（不区分）。

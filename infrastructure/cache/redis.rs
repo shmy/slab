@@ -18,10 +18,7 @@ pub struct RedisCache {
 }
 
 impl RedisCache {
-    /// 建立连接池。URL 形如 `redis://127.0.0.1:6379`。
-    pub(crate) async fn try_new(url: &str) -> Result<Self> {
-        let manager = RedisConnectionManager::new(url)?;
-        let pool = Pool::builder().max_size(16).build(manager).await?;
+    pub(crate) async fn try_new(pool: Pool<RedisConnectionManager>) -> Result<Self> {
         Ok(Self { pool })
     }
 }
@@ -63,19 +60,30 @@ impl RedisCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use testcontainers_modules::{
+        redis::{self, REDIS_PORT, Redis},
+        testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner as _},
+    };
 
-    /// 需要本地 Redis（默认跳过）：`REDIS_TEST_URL=redis://127.0.0.1:6379 cargo test -p cache --features redis`
-    fn test_url() -> Option<String> {
-        std::env::var("REDIS_TEST_URL").ok()
+    async fn setup_redis_pool() -> (ContainerAsync<Redis>, Pool<RedisConnectionManager>) {
+        let redis_instance = redis::Redis::default()
+            .with_tag("7-alpine")
+            .start()
+            .await
+            .unwrap();
+        let host_ip = redis_instance.get_host().await.unwrap();
+        let host_port = redis_instance.get_host_port_ipv4(REDIS_PORT).await.unwrap();
+        let url = format!("redis://{host_ip}:{host_port}");
+        let manager = RedisConnectionManager::new(url).unwrap();
+        let pool = Pool::builder().max_size(16).build(manager).await.unwrap();
+        (redis_instance, pool)
     }
 
     #[tokio::test]
     async fn set_get_take_del() {
-        let Some(url) = test_url() else {
-            eprintln!("REDIS_TEST_URL not set, skipping redis backend test");
-            return;
-        };
-        let cache = RedisCache::try_new(&url).await.unwrap();
+        let (_guard, pool) = setup_redis_pool().await;
+
+        let cache = RedisCache::try_new(pool).await.unwrap();
         let key = "slab_redis_test";
 
         cache.del_raw(key).await.unwrap();

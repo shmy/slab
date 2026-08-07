@@ -209,6 +209,7 @@ supplier_contract = { path = "features/supplier_contract" }
 
 tempfile = { version = "3.26", default-features = false }
 tempoid = { version = "0.1", default-features = false }
+testcontainers-modules = { version = "0.15", default-features = false }
 
 thiserror = { version = "2", default-features = false }
 tokio = { version = "1", default-features = false, features = [

@@ -35,7 +35,15 @@ pub async fn build(pg_pool: PgPool) -> AppCtx {
         }
         #[cfg(feature = "kv-redis")]
         {
-            KvBackend::try_new("redis://127.0.0.1:6379/0")
+            use cache::{Pool, RedisConnectionManager};
+            let manager = RedisConnectionManager::new("redis://127.0.0.1:6379/0")
+                .expect("create redis connection manager");
+            let pool = Pool::builder()
+                .max_size(16)
+                .build(manager)
+                .await
+                .expect("create redis pool");
+            KvBackend::try_new(pool)
                 .await
                 .expect("create redis backend")
         }

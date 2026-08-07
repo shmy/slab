@@ -17,13 +17,18 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let flow = Flow::try_new(cli.database.url.expose_secret()).await?;
     let (pg_pool, blob) = tokio::try_join!(connect_postgresql(cli), connect_blob(cli),)?;
 
-    // 缓存后端（互斥，开启其一；default=kv-pg 与显式 kv-redb/kv-redis 并集时 pg 分支让位）：
+    // 缓存后端（互斥，开启其一；default=kv-redis，并集时 pg 分支让位）：
     #[cfg(all(feature = "kv-pg", not(any(feature = "kv-redb", feature = "kv-redis"))))]
     let kv = KvBackend::try_new(pg_pool.clone()).await?;
     #[cfg(feature = "kv-redb")]
     let kv = KvBackend::try_new(&cli.cache.db_path)?;
     #[cfg(feature = "kv-redis")]
-    let kv = KvBackend::try_new(&cli.cache.url).await?;
+    let kv = {
+        use cache::{Pool, RedisConnectionManager};
+        let manager = RedisConnectionManager::new(cli.cache.url.clone())?;
+        let pool = Pool::builder().max_size(16).build(manager).await?;
+        KvBackend::try_new(pool).await?
+    };
 
     // 队列后端：默认（或 queue-pg）→ Outbox + 进程内 dispatcher；queue-nats → JetStream 直发。
     #[cfg(all(feature = "queue-pg", not(feature = "queue-nats")))]
