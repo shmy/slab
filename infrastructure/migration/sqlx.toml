@@ -1,4 +1,4 @@
 [migrate]
 create-schemas = ["public"]
 migrations-dir = "versions"
-table-name = "public.migrations"
+table-name = "public._migrations"

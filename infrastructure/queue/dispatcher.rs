@@ -15,7 +15,7 @@ use crate::status::{QueueStatus, RetryNextAttempt, RetryPlan};
 const DEFAULT_BACKOFF_MAX_SECS: i64 = 300;
 const DEFAULT_BATCH_SIZE: i64 = 32;
 
-/// 一条待处理消息（`queues` 行）。
+/// 一条待处理消息（`_pg_queues` 行）。
 #[derive(FromRow)]
 struct MessageRow {
     id: i64,
@@ -23,7 +23,7 @@ struct MessageRow {
     payload: String,
 }
 
-/// 一条未完成的投递任务（`queue_deliveries` 行：消息 × 监听者）。
+/// 一条未完成的投递任务（`_pg_queue_deliveries` 行：消息 × 监听者）。
 #[derive(FromRow)]
 struct DeliveryRow {
     handler: String,
@@ -99,15 +99,15 @@ async fn run_one_cycle<C: Send + Sync + 'static>(
     let rows = sqlx::query_as::<_, MessageRow>(
         r#"
             SELECT q.id, q.topic, q.payload
-            FROM queues q
+            FROM _pg_queues q
             WHERE q.next_attempt_at <= NOW()
               AND (
                   NOT EXISTS (
-                      SELECT 1 FROM queue_deliveries d
+                      SELECT 1 FROM _pg_queue_deliveries d
                       WHERE d.message_id = q.id
                   )
                   OR EXISTS (
-                      SELECT 1 FROM queue_deliveries d
+                      SELECT 1 FROM _pg_queue_deliveries d
                       WHERE d.message_id = q.id
                         AND d.status = $1
                         AND d.attempts < d.max_attempts
@@ -149,7 +149,7 @@ async fn process_message<C: Send + Sync + 'static>(
     let id = row.id;
     let topic = row.topic;
     let payload: serde_json::Value = serde_json::from_str(&row.payload).map_err(|e| {
-        report!("queues.payload is not valid JSON (queue_id={id}, topic={topic}): {e}")
+        report!("_pg_queues.payload is not valid JSON (queue_id={id}, topic={topic}): {e}")
     })?;
 
     let Some(handlers) = registry.get(topic.as_str()) else {
@@ -171,7 +171,7 @@ async fn process_message<C: Send + Sync + 'static>(
     let deliveries = sqlx::query_as::<_, DeliveryRow>(
         r#"
             SELECT handler, attempts, max_attempts
-            FROM queue_deliveries
+            FROM _pg_queue_deliveries
             WHERE message_id = $1
               AND status = $2
               AND attempts < max_attempts
@@ -212,10 +212,10 @@ async fn ensure_deliveries<C: Send + Sync + 'static>(
     let names: Vec<String> = handlers.iter().map(|h| h.name().to_string()).collect();
     sqlx::query(
         r#"
-        INSERT INTO queue_deliveries (message_id, handler, max_attempts)
+        INSERT INTO _pg_queue_deliveries (message_id, handler, max_attempts)
         SELECT $1, h.handler, q.max_attempts
         FROM unnest($2::text[]) AS h(handler)
-        CROSS JOIN queues q
+        CROSS JOIN _pg_queues q
         WHERE q.id = $1
         ON CONFLICT DO NOTHING
         "#,
@@ -306,7 +306,7 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 async fn mark_delivery_delivered(tx: &mut PgConnection, id: i64, handler: &str) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE queue_deliveries
+        UPDATE _pg_queue_deliveries
         SET status = $3,
             delivered_at = NOW(),
             last_error = NULL
@@ -329,7 +329,7 @@ async fn mark_delivery_terminal_failure(
 ) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE queue_deliveries
+        UPDATE _pg_queue_deliveries
         SET status = $4,
             attempts = max_attempts,
             last_error = $3,
@@ -350,7 +350,7 @@ async fn mark_delivery_terminal_failure(
 async fn mark_queues_terminal_failure(tx: &mut PgConnection, id: i64, error: &str) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE queues
+        UPDATE _pg_queues
         SET status = $3,
             attempts = max_attempts,
             last_error = $2,
@@ -380,7 +380,7 @@ async fn record_delivery_retry(
         RetryNextAttempt::Terminal => {
             sqlx::query(
                 r#"
-                UPDATE queue_deliveries
+                UPDATE _pg_queue_deliveries
                 SET status = $4,
                     attempts = $2,
                     last_error = $3,
@@ -399,7 +399,7 @@ async fn record_delivery_retry(
         RetryNextAttempt::DelaySecs(delay_secs) => {
             sqlx::query(
                 r#"
-                UPDATE queue_deliveries
+                UPDATE _pg_queue_deliveries
                 SET status = $5,
                     attempts = $2,
                     last_error = $3,
@@ -436,10 +436,10 @@ async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
             SELECT
                 COUNT(*) FILTER (WHERE status = $2) AS pending,
                 COUNT(*) FILTER (WHERE status = $3) AS failed
-            FROM queue_deliveries
+            FROM _pg_queue_deliveries
             WHERE message_id = $1
         )
-        UPDATE queues q
+        UPDATE _pg_queues q
         SET status = CASE
                 WHEN agg.failed > 0 THEN $3
                 WHEN agg.pending > 0 THEN $2
@@ -452,7 +452,7 @@ async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
             next_attempt_at = CASE
                 WHEN agg.pending > 0 THEN (
                     SELECT MIN(d.next_attempt_at)
-                    FROM queue_deliveries d
+                    FROM _pg_queue_deliveries d
                     WHERE d.message_id = q.id AND d.status = $2
                 )
                 ELSE 'infinity'::timestamptz
@@ -460,7 +460,7 @@ async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
             last_error = CASE
                 WHEN agg.failed > 0 THEN COALESCE(
                     (SELECT d.last_error
-                     FROM queue_deliveries d
+                     FROM _pg_queue_deliveries d
                      WHERE d.message_id = q.id AND d.status = $3
                      ORDER BY d.updated_at DESC
                      LIMIT 1),
@@ -492,7 +492,6 @@ async fn wait_shutdown(shutdown: &mut Receiver<bool>) {
 mod tests {
     use super::*;
     use crate::registry::Registry;
-    use migration::run_migrations;
     use serde_json::{Value, json};
     use sqlx::{PgPool, Row};
     use std::future::Future;
@@ -558,7 +557,7 @@ mod tests {
 
     async fn enqueue(pool: &PgPool, topic: &str, max_attempts: i32) -> i64 {
         sqlx::query(
-            "INSERT INTO queues (topic, payload, max_attempts) VALUES ($1, $2, $3) RETURNING id",
+            "INSERT INTO _pg_queues (topic, payload, max_attempts) VALUES ($1, $2, $3) RETURNING id",
         )
         .bind(topic)
         .bind(serde_json::to_string(&json!({"n": 1})).unwrap())
@@ -571,7 +570,7 @@ mod tests {
 
     async fn delivery_status(pool: &PgPool, message_id: i64, handler: &str) -> (i16, i32) {
         let row = sqlx::query(
-            "SELECT status, attempts FROM queue_deliveries WHERE message_id = $1 AND handler = $2",
+            "SELECT status, attempts FROM _pg_queue_deliveries WHERE message_id = $1 AND handler = $2",
         )
         .bind(message_id)
         .bind(handler)
@@ -582,7 +581,7 @@ mod tests {
     }
 
     async fn queue_status(pool: &PgPool, id: i64) -> i16 {
-        sqlx::query("SELECT status FROM queues WHERE id = $1")
+        sqlx::query("SELECT status FROM _pg_queues WHERE id = $1")
             .bind(id)
             .fetch_one(pool)
             .await
@@ -605,7 +604,7 @@ mod tests {
 
     #[sqlx::test]
     async fn broadcast_delivers_to_every_handler_of_topic(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let handler_a = TestHandler::ok("slab.test.evt", "listener_a");
         let handler_b = TestHandler::ok("slab.test.evt", "listener_b");
         let calls_a = handler_a.calls.clone();
@@ -648,7 +647,7 @@ mod tests {
 
     #[sqlx::test]
     async fn handler_panic_is_terminal_failure_not_crash(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let mut registry = Registry::<()>::default();
         registry.register(PanicHandler);
         let registry = registry.freeze();
@@ -662,7 +661,7 @@ mod tests {
         assert_eq!(processed, 1);
 
         let row = sqlx::query(
-            "SELECT status, last_error FROM queue_deliveries WHERE message_id = $1 AND handler = 'panic_listener'",
+            "SELECT status, last_error FROM _pg_queue_deliveries WHERE message_id = $1 AND handler = 'panic_listener'",
         )
         .bind(id)
         .fetch_one(&pool)
@@ -679,7 +678,7 @@ mod tests {
 
     #[sqlx::test]
     async fn failing_handler_does_not_block_others(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let ok = TestHandler::ok("slab.test.evt", "listener_ok");
         let bad = TestHandler::failing("slab.test.evt", "listener_bad");
         let calls_ok = ok.calls.clone();
@@ -706,7 +705,7 @@ mod tests {
 
     #[sqlx::test]
     async fn retry_is_isolated_per_handler(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         // flaky 第一次失败（退避重试），ok 一次成功
         let ok = TestHandler::ok("slab.test.evt", "listener_ok");
         let flaky = TestHandler::flaky("slab.test.evt", "listener_flaky", 1);
@@ -729,14 +728,14 @@ mod tests {
 
         // 拨快 flaky 的退避时间（行与投递行一起），第二轮应只重投 flaky
         sqlx::query(
-            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_flaky'",
+            "UPDATE _pg_queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_flaky'",
         )
         .bind(id)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
+            "UPDATE _pg_queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
         )
         .bind(id)
         .execute(&pool)
@@ -753,7 +752,7 @@ mod tests {
 
     #[sqlx::test]
     async fn backoff_gate_respects_per_listener_timing(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         // 两个监听者第一轮都失败退避（max_attempts=2），第二轮只拨快 A：
         // B 仍在退避中，不得被提前执行。
         let a = TestHandler::flaky("slab.test.evt", "listener_a", 1);
@@ -777,14 +776,14 @@ mod tests {
 
         // 只拨快 A 的退避时间（消息行同步拨回，B 的投递行保持未来）
         sqlx::query(
-            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_a'",
+            "UPDATE _pg_queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_a'",
         )
         .bind(id)
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
+            "UPDATE _pg_queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
         )
         .bind(id)
         .execute(&pool)
@@ -807,7 +806,7 @@ mod tests {
 
     #[sqlx::test]
     async fn terminal_failure_takes_precedence_in_row_state(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         // 直接构造混合态：同一消息一个投递已终态失败、另一个 pending 到期。
         // 断言：行状态 = failed（终态失败优先于 pending，告警即时可见），
         // 但 pending 投递仍会被拉取执行，执行后行保持 failed。
@@ -821,7 +820,7 @@ mod tests {
         // 手工写入两个投递行：failed 终态（attempts=2, infinity）+ pending 到期
         sqlx::query(
             r#"
-            INSERT INTO queue_deliveries (message_id, handler, status, attempts, max_attempts, next_attempt_at, last_error)
+            INSERT INTO _pg_queue_deliveries (message_id, handler, status, attempts, max_attempts, next_attempt_at, last_error)
             VALUES ($1, 'listener_failed', 3, 2, 2, 'infinity', 'boom'),
                    ($1, 'listener_pending', 1, 0, 2, NOW() - interval '1 second', NULL)
             "#,
@@ -831,7 +830,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::query(
-            "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
+            "UPDATE _pg_queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
         )
         .bind(id)
         .execute(&pool)
@@ -850,7 +849,7 @@ mod tests {
 
     #[sqlx::test]
     async fn message_without_handler_goes_terminal_failure(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let registry = Registry::<()>::default().freeze();
 
         let id = enqueue(&pool, "slab.no.subscriber", 5).await;
@@ -859,7 +858,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(queue_status(&pool, id).await, 3);
-        let row = sqlx::query("SELECT last_error FROM queues WHERE id = $1")
+        let row = sqlx::query("SELECT last_error FROM _pg_queues WHERE id = $1")
             .bind(id)
             .fetch_one(&pool)
             .await
@@ -873,7 +872,7 @@ mod tests {
 
     #[sqlx::test]
     async fn late_subscriber_backfills_pending_message(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         // 消息先入队，此时无人订阅 → 终态失败，不会投递给后到的监听者
         let id = enqueue(&pool, "slab.late.evt", 5).await;
         let registry = Registry::<()>::default().freeze();

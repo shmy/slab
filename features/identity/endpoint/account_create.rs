@@ -117,7 +117,7 @@ mod tests {
 
         let mut conn = state.pg_pool.acquire().await.unwrap();
         let row = sqlx::query!(
-            r#"SELECT topic, payload FROM queues WHERE status = 1 ORDER BY id DESC LIMIT 1"#
+            r#"SELECT topic, payload FROM _pg_queues WHERE status = 1 ORDER BY id DESC LIMIT 1"#
         )
         .fetch_one(&mut *conn)
         .await

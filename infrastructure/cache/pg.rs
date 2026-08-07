@@ -27,7 +27,7 @@ impl PgCache {
         // 幂等建表：cache crate 自管表结构（不依赖 migration 版本）。
         sqlx::query(
             r#"
-            CREATE UNLOGGED TABLE IF NOT EXISTS caches (
+            CREATE UNLOGGED TABLE IF NOT EXISTS _pg_caches (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 expires_at TIMESTAMPTZ NOT NULL
@@ -36,15 +36,17 @@ impl PgCache {
         )
         .execute(&mut *conn)
         .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_caches_expires_at ON caches (expires_at)")
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_pg_caches_expires_at ON _pg_caches (expires_at)",
+        )
+        .execute(&mut *conn)
+        .await?;
         Ok(Self { pool })
     }
 
     pub async fn get_raw(&self, key: &str) -> Result<Option<String>> {
         let mut conn = self.pool.acquire().await?;
-        let row = sqlx::query("SELECT value FROM caches WHERE key = $1 AND expires_at > now()")
+        let row = sqlx::query("SELECT value FROM _pg_caches WHERE key = $1 AND expires_at > now()")
             .bind(key)
             .fetch_optional(&mut *conn)
             .await?;
@@ -56,7 +58,7 @@ impl PgCache {
         let expires: DateTime<Utc> = Utc::now() + period;
         sqlx::query(
             r#"
-            INSERT INTO caches (key, value, expires_at)
+            INSERT INTO _pg_caches (key, value, expires_at)
             VALUES ($1, $2, $3)
             ON CONFLICT (key) DO UPDATE
             SET value = EXCLUDED.value,
@@ -75,7 +77,7 @@ impl PgCache {
         let mut conn = self.pool.acquire().await?;
         let row = sqlx::query(
             r#"
-            DELETE FROM caches
+            DELETE FROM _pg_caches
             WHERE key = $1 AND expires_at > now()
             RETURNING value
             "#,
@@ -88,7 +90,7 @@ impl PgCache {
 
     pub async fn del_raw(&self, key: &str) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        sqlx::query("DELETE FROM caches WHERE key = $1")
+        sqlx::query("DELETE FROM _pg_caches WHERE key = $1")
             .bind(key)
             .execute(&mut *conn)
             .await?;
@@ -98,7 +100,7 @@ impl PgCache {
     pub async fn delete_expired(&self) -> Result<u64> {
         let mut conn = self.pool.acquire().await?;
         // 无 advisory lock：多实例并发清理无害（DELETE 条件幂等）。
-        let n = sqlx::query("DELETE FROM caches WHERE expires_at < now()")
+        let n = sqlx::query("DELETE FROM _pg_caches WHERE expires_at < now()")
             .execute(&mut *conn)
             .await?;
         Ok(n.rows_affected())

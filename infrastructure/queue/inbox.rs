@@ -1,9 +1,9 @@
-//! 消费者幂等去重：`queue_inbox` 表 + `ensure_once`。
+//! 消费者幂等去重：`_pg_queue_inbox` 表 + `ensure_once`。
 //!
-//! **已废弃**：广播改造后去重职责由 `queue_deliveries` 表的主键 `(message_id, handler)` 承担
+//! **已废弃**：广播改造后去重职责由 `_pg_queue_deliveries` 表的主键 `(message_id, handler)` 承担
 //! （dispatcher 不再调用本模块）。保留仅为兼容历史数据与潜在外部引用，新代码勿用。
 //!
-//! 每条队列消息（由 `queues.id` 标识）对每个 handler 最多处理一次。
+//! 每条队列消息（由 `_pg_queues.id` 标识）对每个 handler 最多处理一次。
 //! 用法：handler 在执行业务逻辑前调用 `PgInbox::ensure_once(tx, message_id, handler_name)`。
 //! 返回 `true` 表示是首次处理（须执行业务逻辑），`false` 表示已处理过（幂等跳过）。
 
@@ -18,14 +18,14 @@ impl PgInbox {
     /// 返回 `true`：首次处理，调用方应执行 handler 业务逻辑。
     /// 返回 `false`：已处理过（幂等跳过），调用方应直接返回 `Ok(())`。
     ///
-    /// 依赖 `queue_inbox` 的 `PRIMARY KEY (message_id, handler)` 保证唯一性。
+    /// 依赖 `_pg_queue_inbox` 的 `PRIMARY KEY (message_id, handler)` 保证唯一性。
     /// 适合在 dispatcher 的 handler 事务内调用（与业务写同事务）。
     pub async fn ensure_once<'e, E>(executor: E, message_id: i64, handler: &str) -> Result<bool>
     where
         E: Executor<'e, Database = Postgres>,
     {
         let result = sqlx::query(
-            "INSERT INTO queue_inbox (message_id, handler) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO _pg_queue_inbox (message_id, handler) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(message_id)
         .bind(handler)
@@ -46,7 +46,7 @@ mod tests {
         let mut conn = pool.acquire().await?;
         sqlx::query(
             r#"
-            CREATE TEMPORARY TABLE queue_inbox (
+            CREATE TEMPORARY TABLE _pg_queue_inbox (
                 message_id BIGINT NOT NULL,
                 handler TEXT NOT NULL,
                 processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -23,7 +23,7 @@ pub async fn delete_delivered_older_than_in_transaction(
         .await?;
     let n = sqlx::query(
         r#"
-            DELETE FROM queues
+            DELETE FROM _pg_queues
             WHERE status = $2
               AND delivered_at IS NOT NULL
               AND delivered_at < NOW() - ($1::bigint * interval '1 day')
@@ -36,14 +36,14 @@ pub async fn delete_delivered_older_than_in_transaction(
     Ok(n.rows_affected())
 }
 
-/// 删除 `queue_inbox` 中对应 `queues` 行已不存在的孤儿记录（通常出现在已投递行被 GC 删除后）。
+/// 删除 `_pg_queue_inbox` 中对应 `_pg_queues` 行已不存在的孤儿记录（通常出现在已投递行被 GC 删除后）。
 /// 调用前应已在同一事务中获取 advisory lock（复用 `QUEUE_GC_ADVISORY_KEY_1`/`_2`）。
 pub async fn delete_orphaned_inbox_in_transaction(conn: &mut PgConnection) -> Result<u64> {
     let n = sqlx::query(
         r#"
-            DELETE FROM queue_inbox
+            DELETE FROM _pg_queue_inbox
             WHERE NOT EXISTS (
-                SELECT 1 FROM queues WHERE queues.id = queue_inbox.message_id
+                SELECT 1 FROM _pg_queues WHERE _pg_queues.id = _pg_queue_inbox.message_id
             )
             "#,
     )
@@ -55,7 +55,6 @@ pub async fn delete_orphaned_inbox_in_transaction(conn: &mut PgConnection) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use migration::run_migrations;
     use sqlx::{Acquire, PgPool, Row};
 
     /// 插入一条指定状态的队列消息，delivered_at 可指定；返回 id。
@@ -66,7 +65,7 @@ mod tests {
     ) -> i64 {
         let mut conn = pool.acquire().await.unwrap();
         let row = sqlx::query(
-            r#"INSERT INTO queues (topic, payload, status, delivered_at)
+            r#"INSERT INTO _pg_queues (topic, payload, status, delivered_at)
                VALUES ('gc.test', '{}', $1, $2) RETURNING id"#,
         )
         .bind(status)
@@ -79,7 +78,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_gc_deletes_old_delivered_keeps_recent(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let old = seed_queue(
             &pool,
             2,
@@ -97,7 +96,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         assert_eq!(n, 1);
-        let remaining = sqlx::query("SELECT id FROM queues ORDER BY id")
+        let remaining = sqlx::query("SELECT id FROM _pg_queues ORDER BY id")
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -110,7 +109,7 @@ mod tests {
 
     #[sqlx::test]
     async fn test_gc_retain_days_floored_at_one(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let old = seed_queue(
             &pool,
             2,
@@ -133,7 +132,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         assert_eq!(n, 1);
-        let remaining = sqlx::query("SELECT id FROM queues")
+        let remaining = sqlx::query("SELECT id FROM _pg_queues")
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -146,17 +145,17 @@ mod tests {
 
     #[sqlx::test]
     async fn test_gc_deletes_orphaned_inbox_rows(pool: PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
-        // 孤儿：queues 中不存在对应消息
+        crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
+        // 孤儿：_pg_queues 中不存在对应消息
         sqlx::query(
-            "INSERT INTO queue_inbox (message_id, handler) VALUES (999999, 'orphan_handler')",
+            "INSERT INTO _pg_queue_inbox (message_id, handler) VALUES (999999, 'orphan_handler')",
         )
         .execute(&mut *pool.acquire().await.unwrap())
         .await
         .unwrap();
         // 非孤儿：先插消息，再插 inbox
         let msg_id = seed_queue(&pool, 2, Some(chrono::Utc::now())).await;
-        sqlx::query("INSERT INTO queue_inbox (message_id, handler) VALUES ($1, 'live_handler')")
+        sqlx::query("INSERT INTO _pg_queue_inbox (message_id, handler) VALUES ($1, 'live_handler')")
             .bind(msg_id)
             .execute(&mut *pool.acquire().await.unwrap())
             .await
@@ -170,7 +169,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         assert_eq!(n, 1);
-        let remaining = sqlx::query("SELECT message_id FROM queue_inbox")
+        let remaining = sqlx::query("SELECT message_id FROM _pg_queue_inbox")
             .fetch_all(&pool)
             .await
             .unwrap()

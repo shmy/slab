@@ -44,7 +44,7 @@ impl PgBackend {
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS queues (
+            CREATE TABLE IF NOT EXISTS _pg_queues (
                 id BIGSERIAL PRIMARY KEY,
                 topic VARCHAR(255) NOT NULL,
                 payload TEXT NOT NULL,
@@ -63,12 +63,12 @@ impl PgBackend {
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queues_pending ON queues (next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_pg_queues_pending ON _pg_queues (next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queues_topic_pending ON queues (topic, next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_pg_queues_topic_pending ON _pg_queues (topic, next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
@@ -77,7 +77,7 @@ impl PgBackend {
             r#"
             DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_queues') THEN
-                    CREATE TRIGGER set_updated_at_queues BEFORE UPDATE ON queues
+                    CREATE TRIGGER set_updated_at_queues BEFORE UPDATE ON _pg_queues
                     FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
                 END IF;
             END $$
@@ -88,8 +88,8 @@ impl PgBackend {
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS queue_deliveries (
-                message_id      BIGINT NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS _pg_queue_deliveries (
+                message_id      BIGINT NOT NULL REFERENCES _pg_queues(id) ON DELETE CASCADE,
                 handler         TEXT NOT NULL,
                 -- 1=pending, 2=delivered, 3=failed
                 status          SMALLINT NOT NULL DEFAULT 1 CHECK (status IN (1, 2, 3)),
@@ -110,7 +110,7 @@ impl PgBackend {
             r#"
             DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_queue_deliveries') THEN
-                    CREATE TRIGGER set_updated_at_queue_deliveries BEFORE UPDATE ON queue_deliveries
+                    CREATE TRIGGER set_updated_at_queue_deliveries BEFORE UPDATE ON _pg_queue_deliveries
                     FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
                 END IF;
             END $$
@@ -119,19 +119,19 @@ impl PgBackend {
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_pending ON queue_deliveries (next_attempt_at, message_id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_pending ON _pg_queue_deliveries (next_attempt_at, message_id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_delivered ON queue_deliveries (delivered_at) WHERE status = 2 AND delivered_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_delivered ON _pg_queue_deliveries (delivered_at) WHERE status = 2 AND delivered_at IS NOT NULL",
         )
         .execute(&mut *conn)
         .await?;
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS queue_inbox (
+            CREATE TABLE IF NOT EXISTS _pg_queue_inbox (
                 message_id BIGINT NOT NULL,
                 handler TEXT NOT NULL,
                 processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -216,7 +216,7 @@ mod tests {
             .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
-        let count = sqlx::query("SELECT COUNT(*) FROM queues")
+        let count = sqlx::query("SELECT COUNT(*) FROM _pg_queues")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
