@@ -77,8 +77,11 @@ async fn execute(
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
     AuditService::record_create(&mut txn, "account", &id, &ctx, &account).await?;
+    // 强一致入队：与业务同事务，回滚即不投递（Outbox 语义）。
+    queue
+        .enqueue_event_in_tx(&mut txn, &AccountCreatedEvent { id })
+        .await?;
     txn.commit().await?;
-    queue.enqueue_event(&AccountCreatedEvent { id }).await?;
     Ok(CreateAccountResponse {
         id,
         name: account.name,

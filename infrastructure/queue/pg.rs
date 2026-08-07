@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use db::PgPool;
 use rootcause::Result;
-use sqlx::Acquire;
+use sqlx::{Acquire, PgConnection};
 use tokio::sync::watch::Receiver;
 
 use crate::event::Event;
@@ -137,6 +137,15 @@ impl PgBackend {
     pub(crate) async fn enqueue_event<T: Event>(&self, event: &T) -> Result<()> {
         let mut conn = self.pg_pool.acquire().await?;
         enqueue::enqueue_event(&mut conn, event).await
+    }
+
+    /// 事务内入队（强一致）：与业务同一事务，回滚即不投递（Outbox 语义）。
+    pub(crate) async fn enqueue_event_in_tx<T: Event>(
+        &self,
+        executor: &mut PgConnection,
+        event: &T,
+    ) -> Result<()> {
+        crate::enqueue::enqueue_event(executor, event).await
     }
 
     pub(crate) async fn enqueue_event_delayed<T: Event>(

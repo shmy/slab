@@ -280,7 +280,7 @@ mod tests {
             url,
             username: None,
             password: None,
-            stream_name: "slab_test".to_string(),
+            stream_name: "slab".to_string(),
         };
         let js = connect(&config).await.unwrap();
         js.publish_json(TestEvent::TOPIC, &TestEvent { n: 7 })
@@ -299,7 +299,7 @@ mod tests {
             url,
             username: None,
             password: None,
-            stream_name: "slab_test".to_string(),
+            stream_name: "slab".to_string(),
         };
         let js = connect(&config).await.unwrap();
         js.publish_json_delayed(
@@ -309,5 +309,103 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+}
+
+#[cfg(all(test, feature = "nats"))]
+mod e2e_tests {
+    use super::*;
+    use crate::QueueHandler;
+    use crate::registry::Registry;
+    use serde::{Deserialize, Serialize};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::watch;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct CountEvent {
+        n: i32,
+    }
+    impl Event for CountEvent {
+        const TOPIC: &'static str = "slab.nats_e2e.evt";
+    }
+
+    struct CountHandler {
+        calls: Arc<AtomicUsize>,
+    }
+    impl<C: Send + Sync + 'static> QueueHandler<C> for CountHandler {
+        fn topic(&self) -> &'static str {
+            CountEvent::TOPIC
+        }
+        fn name(&self) -> &'static str {
+            "nats_e2e_count"
+        }
+        fn handle<'a>(
+            &'a self,
+            _ctx: &'a C,
+            _payload: serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+            let calls = self.calls.clone();
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+
+    fn test_url() -> Option<String> {
+        std::env::var("NATS_TEST_URL").ok()
+    }
+
+    /// 端到端：publish → durable consumer 消费（真实 nats-server，需 `-js`）。
+    /// `NATS_TEST_URL=... cargo test -p queue --features nats -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn publish_consume_roundtrip() {
+        let Some(url) = test_url() else {
+            eprintln!("NATS_TEST_URL not set, skipping nats e2e test");
+            return;
+        };
+        let config = NatsConfig {
+            url,
+            username: None,
+            password: None,
+            stream_name: "slab".to_string(),
+        };
+        let backend = NatsBackend::try_new(config).await.unwrap();
+
+        // 先注册 handler（durable consumer 幂等，重复跑不冲突）。
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::<()>::default();
+        registry.register(CountHandler {
+            calls: calls.clone(),
+        });
+        let registry = registry.freeze();
+
+        // 发布 2 条 → 启动消费循环 → 等待 handler 计数到达。
+        backend.enqueue_event(&CountEvent { n: 1 }).await.unwrap();
+        backend.enqueue_event(&CountEvent { n: 2 }).await.unwrap();
+
+        let (tx, rx) = watch::channel(false);
+        // Box::leak：dispatcher task 需要 'static 借用（测试进程内泄漏无害）。
+        let backend = Box::leak(Box::new(backend));
+        let dispatcher = tokio::spawn(run_nats_dispatcher(backend, (), registry, rx));
+
+        let ok = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if calls.load(Ordering::SeqCst) >= 2 {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(ok, "handler should consume both messages");
+
+        let _ = tx.send(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), dispatcher).await;
     }
 }

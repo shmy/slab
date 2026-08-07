@@ -22,6 +22,8 @@ use std::time::Duration;
 #[cfg(all(feature = "pg", not(feature = "nats")))]
 use db::PgPool;
 use rootcause::Result;
+#[cfg(feature = "pg")]
+use sqlx::PgConnection;
 use tokio::sync::watch::Receiver;
 
 pub use event::Event;
@@ -64,6 +66,22 @@ impl QueueBackend {
         match self {
             #[cfg(feature = "pg")]
             Self::Pg(b) => b.enqueue_event(event).await,
+            #[cfg(feature = "nats")]
+            Self::Nats(b) => b.enqueue_event(event).await,
+        }
+    }
+
+    /// 事务内入队（**强一致，pg 后端**）：与业务同一事务，回滚即不投递（Outbox 语义）。
+    /// nats 后端无事务语义，等价于 `enqueue_event`（直发 JetStream，忽略 `executor`）。
+    /// 需要「业务提交成功则消息必落库」的可靠性时用本方法；普通通知类事件用 `enqueue_event`。
+    pub async fn enqueue_event_in_tx<T: Event>(
+        &self,
+        executor: &mut PgConnection,
+        event: &T,
+    ) -> Result<()> {
+        match self {
+            #[cfg(feature = "pg")]
+            Self::Pg(b) => b.enqueue_event_in_tx(executor, event).await,
             #[cfg(feature = "nats")]
             Self::Nats(b) => b.enqueue_event(event).await,
         }

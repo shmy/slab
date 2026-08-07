@@ -129,9 +129,10 @@ UPDATE queues SET next_attempt_at = NOW() WHERE id = <id>;
 ## 7. 入队 API（`Backend` 方法门面）
 
 - `queue.enqueue_event(event)`：`event` 须实现 `Event` trait（携带 `TOPIC` 常量）。pg 写 outbox 表（内部自取连接）；nats 直发 JetStream。
+- `queue.enqueue_event_in_tx(tx, event)`：**强一致入队（pg 后端）**——与业务同一事务，回滚即不投递（Outbox 语义）。需要「业务提交成功则消息必落库」的可靠性时用（如创建类事件）；nats 后端无事务语义，等价于普通入队。
 - `queue.enqueue_event_with_delay(event, delay)`：pg 推迟首次可见时间（`next_attempt_at`）；nats 用 JetStream ADR-51 `Nats-Schedule` 调度。
 
-**语义**：入队**不参与调用方事务**——后端独立连接/直发。业务回滚后事件可能已入队，消费端 handler 须幂等。
+**语义**：普通入队**不参与调用方事务**——业务回滚后事件可能已入队/已投递（**幽灵事件**），消费端 handler 必须幂等 + **校验实体存在性**（见 §8）。
 
 ```rust
 // endpoint 内直接入队（AppCtx.queue 经 State 提取），无需事务连接
