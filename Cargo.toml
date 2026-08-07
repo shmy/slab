@@ -3,6 +3,10 @@ resolver = "3"
 members = [
     "bin/migrator",
     "bin/server",
+    "cross_domain/approval",
+    "cross_domain/code_gen",
+    "cross_domain/costing",
+    "cross_domain/inventory_ledger",
     "features/audit",
     "features/audit_contract",
     "features/customer",
@@ -34,16 +38,12 @@ members = [
     "features/warehouse",
     "features/warehouse_contract",
     "infrastructure/appctx",
-    "infrastructure/approval",
     "infrastructure/blob",
-    "infrastructure/code_gen",
-    "infrastructure/costing",
     "infrastructure/db",
     "infrastructure/feature",
     "infrastructure/flow",
     "infrastructure/http_auth",
     "infrastructure/http_client",
-    "infrastructure/inventory_ledger",
     "infrastructure/jwt",
     "infrastructure/locale",
     "infrastructure/migration",
@@ -59,7 +59,7 @@ members = [
 [workspace.dependencies]
 accept-language = { version = "3.1", default-features = false }
 appctx = { path = "infrastructure/appctx" }
-approval = { path = "infrastructure/approval" }
+approval = { path = "cross_domain/approval" }
 argon2 = { version = "0.5", default-features = false, features = ["std"] }
 askama = { version = "0.16", default-features = false, features = [
     "std",
@@ -102,8 +102,8 @@ clap = { version = "4.6", default-features = false, features = [
     "derive",
     "error-context",
 ] }
-code_gen = { path = "infrastructure/code_gen" }
-costing = { path = "infrastructure/costing" }
+code_gen = { path = "cross_domain/code_gen" }
+costing = { path = "cross_domain/costing" }
 customer = { path = "features/customer" }
 customer_contract = { path = "features/customer_contract" }
 db = { path = "infrastructure/db" }
@@ -124,7 +124,7 @@ identity = { path = "features/identity" }
 identity_contract = { path = "features/identity_contract" }
 image_kit = { path = "libs/image_kit" }
 imageformat = { version = "0.3", default-features = false }
-inventory_ledger = { path = "infrastructure/inventory_ledger" }
+inventory_ledger = { path = "cross_domain/inventory_ledger" }
 ipnetwork = { version = "0.21", default-features = false }
 item = { path = "features/item" }
 item_contract = { path = "features/item_contract" }

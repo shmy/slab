@@ -210,9 +210,9 @@
 
 | 模块 | 位置 | 封装的不变量 | 使用者 |
 |------|------|------------|--------|
-| `inventory_ledger` | `infrastructure/inventory_ledger/` | 库存 UPSERT + FOR UPDATE + 流水记录 + 不足校验 | sales, purchase, production, warehouse |
-| `approval` | `infrastructure/approval/` | 单据 submit/approve/reject 状态迁移规则 | purchase, sales, warehouse |
-| `costing` | `infrastructure/costing/` | 加权平均成本重算 | purchase |
+| `inventory_ledger` | `cross_domain/inventory_ledger/` | 库存 UPSERT + FOR UPDATE + 流水记录 + 不足校验 | sales, purchase, production, warehouse |
+| `approval` | `cross_domain/approval/` | 单据 submit/approve/reject 状态迁移规则 | purchase, sales, warehouse |
+| `costing` | `cross_domain/costing/` | 加权平均成本重算 | purchase |
 
 **原则：**
 

@@ -22,9 +22,15 @@ features/{domain} (切片)
     ├──→ {domain}_contract           ← 自己的公共表面
     └──→ 其他 *_contract（只读 Port）
 
+cross_domain/（共享业务件，跨域通道的例外栖息地）
+    ├──→ 被 ≥2 个 feature 依赖的**业务规则**（非技术件）
+    ├──→ 不走 contract 只读 Port / 事件（等同事务写 Port 例外，如 inventory_ledger 被 4 域直写）
+    └──→ 现状：approval / code_gen / costing / inventory_ledger
+
 禁止：
 ✗ contract 之间互相依赖
 ✗ 切片依赖其他 features/{other} runtime crate
+✗ 往 cross_domain/ 塞技术件（可替换、无业务词汇的件归 infrastructure/）
 ```
 
 验证：`cargo test -p server arch_test`

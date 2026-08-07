@@ -5,7 +5,7 @@
 ## 1. 定位
 
 - **用途**：基于 [sayiir](https://docs.sayiir.dev) 1.0 的**持久化工作流引擎**封装。`CheckpointingRunner` + Postgres 后端：每个 task 完成后自动存快照，进程崩溃后可 `resume` 续跑；测试环境通过 `test-utils` 特性切换为 in-memory backend。
-- **不是**：不是消息队列（那是 `infrastructure/queue`）；不替代审批状态机（`infrastructure/approval`）；未启用分布式 worker（sayiir 的 `PooledWorker` 预留，单进程够用）。
+- **不是**：不是消息队列（那是 `infrastructure/queue`）；不替代审批状态机（`cross_domain/approval`）；未启用分布式 worker（sayiir 的 `PooledWorker` 预留，单进程够用）。
 - **职责边界**：只做**编排真相**（等待、超时、分流、联动），不做**业务真相**（单据状态列仍由同步端点维护）。
 
 ## 2. 核心概念
@@ -130,7 +130,7 @@ client.send_event("po:PO-2026-0001", "manager_approval", bytes).await?;
 | 审批超时升级 | `delay "24h"` + route：未审自动提醒上一级 |
 | 跨单据联动 | 采购单批准 → 推送/生成到货计划；销售单批准 → 交货计划 |
 
-**不适用（保持同步状态机 + 单事务）**：纯 CRUD 与查询侧（列表/统计/报表——状态必须留在实体列）；单事务原子操作（扣库存、过账）；纯 submit/approve/reject 状态跳转（`infrastructure/approval` 已是最简形态）。
+**不适用（保持同步状态机 + 单事务）**：纯 CRUD 与查询侧（列表/统计/报表——状态必须留在实体列）；单事务原子操作（扣库存、过账）；纯 submit/approve/reject 状态跳转（`cross_domain/approval` 已是最简形态）。
 
 ## 9. 陷阱与边界
 
