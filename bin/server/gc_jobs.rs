@@ -2,11 +2,11 @@ use appctx::AppCtx;
 use sched_kit::{CronJob, CronJobFuture};
 
 /// 清理缓存后端中的过期条目（pg 表 / redb 文件；redis 后端由服务端 TTL 处理，返回 0）。
-pub struct CacheGc;
+pub struct KvGc;
 
-impl CronJob<AppCtx> for CacheGc {
+impl CronJob<AppCtx> for KvGc {
     fn name(&self) -> &'static str {
-        "cache_gc"
+        "kv_gc"
     }
     fn expr(&self) -> &'static str {
         "every 5 minutes"
@@ -15,9 +15,9 @@ impl CronJob<AppCtx> for CacheGc {
         Box::pin(async move {
             let deleted = state.kv.delete_expired().await?;
             if deleted > 0 {
-                tracing::info!(deleted, "cache_gc completed");
+                tracing::info!(deleted, "kv_gc completed");
             } else {
-                tracing::debug!("cache_gc: no expired cache rows");
+                tracing::debug!("kv_gc: no expired cache rows");
             }
             Ok(())
         })
