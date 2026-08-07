@@ -40,8 +40,12 @@ pub async fn build(pg_pool: PgPool) -> AppCtx {
                 .expect("create redis backend")
         }
     };
-    // 队列后端：测试环境直接构造 Pg 变体（Outbox 表由 run_migrations 建好；不依赖 NATS 实例）。
-    let queue = QueueBackend::Pg(queue::PgBackend::new(pg_pool.clone()));
+    // 队列后端：测试环境直接构造 Pg 变体（`try_new` 幂等建表，不依赖 NATS 实例）。
+    let queue = QueueBackend::Pg(
+        queue::PgBackend::try_new(pg_pool.clone())
+            .await
+            .expect("create PG queue backend"),
+    );
     AppCtx {
         pg_pool,
         kv,

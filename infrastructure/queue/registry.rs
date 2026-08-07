@@ -3,8 +3,11 @@ use std::sync::Arc;
 
 use crate::handler::QueueHandler;
 
+/// topic → 监听者列表（广播：同一 topic 多个 handler）。
+type HandlerMap<C> = HashMap<&'static str, Vec<Arc<dyn QueueHandler<C>>>>;
+
 pub struct Registry<C: Send + Sync + 'static> {
-    handlers: HashMap<&'static str, Vec<Arc<dyn QueueHandler<C>>>>,
+    handlers: HandlerMap<C>,
 }
 
 impl<C: Send + Sync + 'static> Default for Registry<C> {
@@ -44,7 +47,7 @@ impl<C: Send + Sync + 'static> Registry<C> {
 
 #[derive(Clone)]
 pub struct FrozenRegistry<C: Send + Sync + 'static> {
-    handlers: Arc<HashMap<&'static str, Vec<Arc<dyn QueueHandler<C>>>>>,
+    handlers: Arc<HandlerMap<C>>,
 }
 
 impl<C: Send + Sync + 'static> FrozenRegistry<C> {
@@ -67,7 +70,6 @@ mod tests {
     use super::*;
     use rootcause::Result;
     use serde_json::Value;
-    use sqlx::PgConnection;
     use std::future::Future;
     use std::pin::Pin;
 

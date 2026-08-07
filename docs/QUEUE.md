@@ -34,6 +34,9 @@
 
 ## 2. 数据模型
 
+> 建表：`PgBackend::try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` / `queue_inbox` + 索引 + 触发器），
+> 不依赖 migration 版本；migration 0001/0009 中的同款定义保持兼容（IF NOT EXISTS 双保险）。
+
 ### `queues` — 消息本体（一行一条消息）
 
 | 列                          | 说明                                                                                                                   |

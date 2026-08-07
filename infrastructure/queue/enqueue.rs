@@ -8,16 +8,11 @@ pub async fn enqueue_event<T: Event>(
     event: &T,
 ) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
-    sqlx::query!(
-        r#"
-        INSERT INTO queues (topic, payload)
-        VALUES ($1, $2)
-        "#,
-        T::TOPIC,
-        payload_json,
-    )
-    .execute(executor)
-    .await?;
+    sqlx::query("INSERT INTO queues (topic, payload) VALUES ($1, $2)")
+        .bind(T::TOPIC)
+        .bind(&payload_json)
+        .execute(executor)
+        .await?;
     Ok(())
 }
 
@@ -27,15 +22,12 @@ pub async fn enqueue_event_with_delay<T: Event>(
     delay: Duration,
 ) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
-    sqlx::query!(
-        r#"
-        INSERT INTO queues (topic, payload, next_attempt_at)
-        VALUES ($1, $2, NOW() + ($3 * interval '1 second'))
-        "#,
-        T::TOPIC,
-        payload_json,
-        delay.as_secs_f64(),
+    sqlx::query(
+        "INSERT INTO queues (topic, payload, next_attempt_at) VALUES ($1, $2, NOW() + ($3 * interval '1 second'))",
     )
+    .bind(T::TOPIC)
+    .bind(&payload_json)
+    .bind(delay.as_secs_f64())
     .execute(executor)
     .await?;
     Ok(())
@@ -46,6 +38,7 @@ mod tests {
     use super::*;
     use migration::run_migrations;
     use serde::{Deserialize, Serialize};
+    use sqlx::Row;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestEvent {
@@ -65,14 +58,14 @@ mod tests {
             .await
             .unwrap();
 
-        let row = sqlx::query!("SELECT topic, payload, status, attempts FROM queues")
+        let row = sqlx::query("SELECT topic, payload, status, attempts FROM queues")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert_eq!(row.topic, "slab.test.enqueue");
-        assert_eq!(row.status, 1); // pending（依赖表默认值）
-        assert_eq!(row.attempts, 0);
-        assert!(row.payload.contains("\"n\":7"));
+        assert_eq!(row.get::<String, _>("topic"), "slab.test.enqueue");
+        assert_eq!(row.get::<i16, _>("status"), 1); // pending（依赖表默认值）
+        assert_eq!(row.get::<i32, _>("attempts"), 0);
+        assert!(row.get::<String, _>("payload").contains("\"n\":7"));
     }
 
     #[sqlx::test]
@@ -85,10 +78,10 @@ mod tests {
             .unwrap();
 
         // 延迟入队：next_attempt_at 必须晚于当前时刻
-        let row = sqlx::query!("SELECT (next_attempt_at > NOW()) AS \"is_future!\" FROM queues")
+        let row = sqlx::query("SELECT (next_attempt_at > NOW()) AS is_future FROM queues")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert!(row.is_future);
+        assert!(row.get::<bool, _>("is_future"));
     }
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use db::PgPool;
 use futures_util::FutureExt;
 use rootcause::{Result, report};
-use sqlx::PgConnection;
+use sqlx::{FromRow, PgConnection};
 use tokio::sync::watch::Receiver;
 
 use crate::handler::QueueHandler;
@@ -16,6 +16,7 @@ const DEFAULT_BACKOFF_MAX_SECS: i64 = 300;
 const DEFAULT_BATCH_SIZE: i64 = 32;
 
 /// 一条待处理消息（`queues` 行）。
+#[derive(FromRow)]
 struct MessageRow {
     id: i64,
     topic: String,
@@ -23,6 +24,7 @@ struct MessageRow {
 }
 
 /// 一条未完成的投递任务（`queue_deliveries` 行：消息 × 监听者）。
+#[derive(FromRow)]
 struct DeliveryRow {
     handler: String,
     attempts: i32,
@@ -94,8 +96,7 @@ async fn run_one_cycle<C: Send + Sync + 'static>(
     //   - 存在到期未完成的投递（status=pending 且 attempts 未耗尽且 next_attempt_at 已到）
     // 行级状态不做拉取条件（纯聚合/告警），pending 投递存在与否才是驱动力：
     // 部分失败 + 部分退避的消息行仍可被拉取，直到所有投递终态。
-    let rows = sqlx::query_as!(
-        MessageRow,
+    let rows = sqlx::query_as::<_, MessageRow>(
         r#"
             SELECT q.id, q.topic, q.payload
             FROM queues q
@@ -117,9 +118,9 @@ async fn run_one_cycle<C: Send + Sync + 'static>(
             FOR UPDATE SKIP LOCKED
             LIMIT $2
             "#,
-        QueueStatus::Pending.as_i16(),
-        batch_size,
     )
+    .bind(QueueStatus::Pending.as_i16())
+    .bind(batch_size)
     .fetch_all(&mut *tx)
     .await?;
 
@@ -167,8 +168,7 @@ async fn process_message<C: Send + Sync + 'static>(
 
     // 拉取该消息尚未完成的投递任务（严格按各自退避时间门控：
     // 一个监听者到期不牵连其它仍在退避中的监听者）。
-    let deliveries = sqlx::query_as!(
-        DeliveryRow,
+    let deliveries = sqlx::query_as::<_, DeliveryRow>(
         r#"
             SELECT handler, attempts, max_attempts
             FROM queue_deliveries
@@ -178,9 +178,9 @@ async fn process_message<C: Send + Sync + 'static>(
               AND next_attempt_at <= NOW()
             ORDER BY handler ASC
             "#,
-        id,
-        QueueStatus::Pending.as_i16(),
     )
+    .bind(id)
+    .bind(QueueStatus::Pending.as_i16())
     .fetch_all(&mut *tx)
     .await?;
 
@@ -210,7 +210,7 @@ async fn ensure_deliveries<C: Send + Sync + 'static>(
     handlers: &[Arc<dyn QueueHandler<C>>],
 ) -> Result<()> {
     let names: Vec<String> = handlers.iter().map(|h| h.name().to_string()).collect();
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO queue_deliveries (message_id, handler, max_attempts)
         SELECT $1, h.handler, q.max_attempts
@@ -219,9 +219,9 @@ async fn ensure_deliveries<C: Send + Sync + 'static>(
         WHERE q.id = $1
         ON CONFLICT DO NOTHING
         "#,
-        id,
-        &names,
     )
+    .bind(id)
+    .bind(&names)
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -242,7 +242,7 @@ async fn deliver_one<C: Send + Sync + 'static>(
     let attempts = delivery.attempts;
     let max_attempts = delivery.max_attempts;
 
-    sqlx::query!("SAVEPOINT pg_queue_handler")
+    sqlx::query("SAVEPOINT pg_queue_handler")
         .execute(&mut *tx)
         .await?;
     // 捕获订阅者 panic：handler 的 panic 不得传播到分发任务（否则会经
@@ -253,14 +253,14 @@ async fn deliver_one<C: Send + Sync + 'static>(
         .await;
     match handle_result {
         Ok(Ok(())) => {
-            sqlx::query!("RELEASE SAVEPOINT pg_queue_handler")
+            sqlx::query("RELEASE SAVEPOINT pg_queue_handler")
                 .execute(&mut *tx)
                 .await?;
             mark_delivery_delivered(tx, id, handler_name).await?;
         }
         Ok(Err(error)) => {
             let message = error.to_string();
-            sqlx::query!("ROLLBACK TO SAVEPOINT pg_queue_handler")
+            sqlx::query("ROLLBACK TO SAVEPOINT pg_queue_handler")
                 .execute(&mut *tx)
                 .await?;
             record_delivery_retry(
@@ -273,17 +273,17 @@ async fn deliver_one<C: Send + Sync + 'static>(
                 message.as_str(),
             )
             .await?;
-            sqlx::query!("RELEASE SAVEPOINT pg_queue_handler")
+            sqlx::query("RELEASE SAVEPOINT pg_queue_handler")
                 .execute(&mut *tx)
                 .await?;
         }
         Err(panic) => {
             let message = panic_message(&panic);
-            sqlx::query!("ROLLBACK TO SAVEPOINT pg_queue_handler")
+            sqlx::query("ROLLBACK TO SAVEPOINT pg_queue_handler")
                 .execute(&mut *tx)
                 .await?;
             mark_delivery_terminal_failure(tx, id, handler_name, &message).await?;
-            sqlx::query!("RELEASE SAVEPOINT pg_queue_handler")
+            sqlx::query("RELEASE SAVEPOINT pg_queue_handler")
                 .execute(&mut *tx)
                 .await?;
         }
@@ -304,7 +304,7 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 }
 
 async fn mark_delivery_delivered(tx: &mut PgConnection, id: i64, handler: &str) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE queue_deliveries
         SET status = $3,
@@ -312,10 +312,10 @@ async fn mark_delivery_delivered(tx: &mut PgConnection, id: i64, handler: &str) 
             last_error = NULL
         WHERE message_id = $1 AND handler = $2
         "#,
-        id,
-        handler,
-        QueueStatus::Delivered.as_i16(),
     )
+    .bind(id)
+    .bind(handler)
+    .bind(QueueStatus::Delivered.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -327,7 +327,7 @@ async fn mark_delivery_terminal_failure(
     handler: &str,
     error: &str,
 ) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE queue_deliveries
         SET status = $4,
@@ -336,11 +336,11 @@ async fn mark_delivery_terminal_failure(
             next_attempt_at = 'infinity'::timestamptz
         WHERE message_id = $1 AND handler = $2
         "#,
-        id,
-        handler,
-        error,
-        QueueStatus::Failed.as_i16(),
     )
+    .bind(id)
+    .bind(handler)
+    .bind(error)
+    .bind(QueueStatus::Failed.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -348,7 +348,7 @@ async fn mark_delivery_terminal_failure(
 
 /// 消息整体终态失败（无监听者订阅该 topic 时触发，保留防呆语义）。
 async fn mark_queues_terminal_failure(tx: &mut PgConnection, id: i64, error: &str) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE queues
         SET status = $3,
@@ -357,10 +357,10 @@ async fn mark_queues_terminal_failure(tx: &mut PgConnection, id: i64, error: &st
             next_attempt_at = 'infinity'::timestamptz
         WHERE id = $1
         "#,
-        id,
-        error,
-        QueueStatus::Failed.as_i16(),
     )
+    .bind(id)
+    .bind(error)
+    .bind(QueueStatus::Failed.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -378,7 +378,7 @@ async fn record_delivery_retry(
     let plan = RetryPlan::from_failure(attempts, max_attempts, config.backoff_max_secs, error);
     match plan.next_attempt_at {
         RetryNextAttempt::Terminal => {
-            sqlx::query!(
+            sqlx::query(
                 r#"
                 UPDATE queue_deliveries
                 SET status = $4,
@@ -387,17 +387,17 @@ async fn record_delivery_retry(
                     next_attempt_at = 'infinity'::timestamptz
                 WHERE message_id = $1 AND handler = $5
                 "#,
-                id,
-                plan.attempts,
-                plan.last_error,
-                plan.status.as_i16(),
-                handler,
             )
+            .bind(id)
+            .bind(plan.attempts)
+            .bind(&plan.last_error)
+            .bind(plan.status.as_i16())
+            .bind(handler)
             .execute(&mut *tx)
             .await?;
         }
         RetryNextAttempt::DelaySecs(delay_secs) => {
-            sqlx::query!(
+            sqlx::query(
                 r#"
                 UPDATE queue_deliveries
                 SET status = $5,
@@ -406,13 +406,13 @@ async fn record_delivery_retry(
                     next_attempt_at = NOW() + ($4::bigint * interval '1 second')
                 WHERE message_id = $1 AND handler = $6
                 "#,
-                id,
-                plan.attempts,
-                plan.last_error,
-                delay_secs,
-                plan.status.as_i16(),
-                handler,
             )
+            .bind(id)
+            .bind(plan.attempts)
+            .bind(&plan.last_error)
+            .bind(delay_secs)
+            .bind(plan.status.as_i16())
+            .bind(handler)
             .execute(&mut *tx)
             .await?;
         }
@@ -430,7 +430,7 @@ async fn record_delivery_retry(
 /// 人工修复路径：将失败投递行改回 pending 并重置 attempts/next_attempt_at，
 /// 同时把消息行 next_attempt_at 拨回过去（行状态由下次处理自动刷新）。
 async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         WITH agg AS (
             SELECT
@@ -471,11 +471,11 @@ async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
         FROM agg
         WHERE q.id = $1
         "#,
-        id,
-        QueueStatus::Pending.as_i16(),
-        QueueStatus::Failed.as_i16(),
-        QueueStatus::Delivered.as_i16(),
     )
+    .bind(id)
+    .bind(QueueStatus::Pending.as_i16())
+    .bind(QueueStatus::Failed.as_i16())
+    .bind(QueueStatus::Delivered.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -494,7 +494,7 @@ mod tests {
     use crate::registry::Registry;
     use migration::run_migrations;
     use serde_json::{Value, json};
-    use sqlx::{PgConnection, PgPool};
+    use sqlx::{PgPool, Row};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
@@ -557,36 +557,37 @@ mod tests {
     }
 
     async fn enqueue(pool: &PgPool, topic: &str, max_attempts: i32) -> i64 {
-        sqlx::query!(
+        sqlx::query(
             "INSERT INTO queues (topic, payload, max_attempts) VALUES ($1, $2, $3) RETURNING id",
-            topic,
-            serde_json::to_string(&json!({"n": 1})).unwrap(),
-            max_attempts,
         )
+        .bind(topic)
+        .bind(serde_json::to_string(&json!({"n": 1})).unwrap())
+        .bind(max_attempts)
         .fetch_one(pool)
         .await
         .unwrap()
-        .id
+        .get::<i64, _>("id")
     }
 
     async fn delivery_status(pool: &PgPool, message_id: i64, handler: &str) -> (i16, i32) {
-        let row = sqlx::query!(
+        let row = sqlx::query(
             "SELECT status, attempts FROM queue_deliveries WHERE message_id = $1 AND handler = $2",
-            message_id,
-            handler,
         )
+        .bind(message_id)
+        .bind(handler)
         .fetch_one(pool)
         .await
         .unwrap();
-        (row.status, row.attempts)
+        (row.get::<i16, _>("status"), row.get::<i32, _>("attempts"))
     }
 
     async fn queue_status(pool: &PgPool, id: i64) -> i16 {
-        sqlx::query!("SELECT status FROM queues WHERE id = $1", id)
+        sqlx::query("SELECT status FROM queues WHERE id = $1")
+            .bind(id)
             .fetch_one(pool)
             .await
             .unwrap()
-            .status
+            .get::<i16, _>("status")
     }
 
     fn config() -> DispatcherConfig {
@@ -660,16 +661,20 @@ mod tests {
             .unwrap();
         assert_eq!(processed, 1);
 
-        let row = sqlx::query!(
+        let row = sqlx::query(
             "SELECT status, last_error FROM queue_deliveries WHERE message_id = $1 AND handler = 'panic_listener'",
-            id,
         )
+        .bind(id)
         .fetch_one(&pool)
         .await
         .unwrap();
         // 3 = TerminalFailure，不重试；错误信息保留 panic 细节
-        assert_eq!(row.status, 3);
-        assert!(row.last_error.unwrap_or_default().contains("kaboom"));
+        assert_eq!(row.get::<i16, _>("status"), 3);
+        assert!(
+            row.get::<Option<String>, _>("last_error")
+                .unwrap_or_default()
+                .contains("kaboom")
+        );
     }
 
     #[sqlx::test]
@@ -723,18 +728,17 @@ mod tests {
         assert_eq!(queue_status(&pool, id).await, 1); // 行保持 pending
 
         // 拨快 flaky 的退避时间（行与投递行一起），第二轮应只重投 flaky
-        sqlx::query!(
-            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second'
-             WHERE message_id = $1 AND handler = 'listener_flaky'",
-            id,
+        sqlx::query(
+            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_flaky'",
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query!(
+        sqlx::query(
             "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
-            id,
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
@@ -772,18 +776,17 @@ mod tests {
         assert_eq!(delivery_status(&pool, id, "listener_b").await, (1, 1));
 
         // 只拨快 A 的退避时间（消息行同步拨回，B 的投递行保持未来）
-        sqlx::query!(
-            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second'
-             WHERE message_id = $1 AND handler = 'listener_a'",
-            id,
+        sqlx::query(
+            "UPDATE queue_deliveries SET next_attempt_at = NOW() - interval '1 second' WHERE message_id = $1 AND handler = 'listener_a'",
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query!(
+        sqlx::query(
             "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
-            id,
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
@@ -816,21 +819,21 @@ mod tests {
 
         let id = enqueue(&pool, "slab.test.evt", 2).await;
         // 手工写入两个投递行：failed 终态（attempts=2, infinity）+ pending 到期
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO queue_deliveries (message_id, handler, status, attempts, max_attempts, next_attempt_at, last_error)
             VALUES ($1, 'listener_failed', 3, 2, 2, 'infinity', 'boom'),
                    ($1, 'listener_pending', 1, 0, 2, NOW() - interval '1 second', NULL)
             "#,
-            id,
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query!(
+        sqlx::query(
             "UPDATE queues SET next_attempt_at = NOW() - interval '1 second' WHERE id = $1",
-            id,
         )
+        .bind(id)
         .execute(&pool)
         .await
         .unwrap();
@@ -856,11 +859,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(queue_status(&pool, id).await, 3);
-        let row = sqlx::query!("SELECT last_error FROM queues WHERE id = $1", id,)
+        let row = sqlx::query("SELECT last_error FROM queues WHERE id = $1")
+            .bind(id)
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(row.last_error.unwrap().starts_with("no_handler_for_topic:"));
+        assert!(
+            row.get::<Option<String>, _>("last_error")
+                .unwrap()
+                .starts_with("no_handler_for_topic:")
+        );
     }
 
     #[sqlx::test]

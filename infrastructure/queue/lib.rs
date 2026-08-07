@@ -46,20 +46,21 @@ pub enum QueueBackend {
     #[cfg(feature = "pg")]
     Pg(PgBackend),
     #[cfg(feature = "nats")]
-    Nats(NatsBackend),
+    Nats(Box<NatsBackend>),
 }
 
 impl QueueBackend {
     /// 仅当无 `nats` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义。
     #[cfg(all(feature = "pg", not(feature = "nats")))]
     pub async fn try_new(pg_pool: PgPool) -> Result<Self> {
-        Ok(Self::Pg(PgBackend::new(pg_pool)))
+        Ok(Self::Pg(PgBackend::try_new(pg_pool).await?))
     }
 
     /// NATS 后端：`config` 为 JetStream 连接参数；消费上下文（如 AppCtx）由 `run_dispatcher` 传入。
     #[cfg(feature = "nats")]
     pub async fn try_new(config: NatsConfig) -> Result<Self> {
-        Ok(Self::Nats(NatsBackend::try_new(config).await?))
+        let nats = NatsBackend::try_new(config).await?;
+        Ok(Self::Nats(Box::new(nats)))
     }
 
     /// 入队。pg：写 outbox 表（与业务同事务）；nats：JetStream 直发（忽略 `executor`）。

@@ -24,15 +24,11 @@ impl PgInbox {
     where
         E: Executor<'e, Database = Postgres>,
     {
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO queue_inbox (message_id, handler)
-            VALUES ($1, $2)
-            ON CONFLICT DO NOTHING
-            "#,
-            message_id,
-            handler,
+        let result = sqlx::query(
+            "INSERT INTO queue_inbox (message_id, handler) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
+        .bind(message_id)
+        .bind(handler)
         .execute(executor)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -48,7 +44,7 @@ mod tests {
     async fn ensure_once_returns_true_on_first_call(pool: sqlx::PgPool) -> sqlx::Result<()> {
         // Temp table 是连接级别的，需在同一连接上创建和使用
         let mut conn = pool.acquire().await?;
-        sqlx::query!(
+        sqlx::query(
             r#"
             CREATE TEMPORARY TABLE queue_inbox (
                 message_id BIGINT NOT NULL,
@@ -56,7 +52,7 @@ mod tests {
                 processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (message_id, handler)
             )
-            "#
+            "#,
         )
         .execute(&mut *conn)
         .await?;
