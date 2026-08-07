@@ -11,7 +11,6 @@ pub mod enqueue;
 pub mod event;
 mod gc;
 mod handler;
-pub mod inbox;
 #[cfg(feature = "nats")]
 mod nats;
 mod pg;
@@ -32,10 +31,7 @@ pub use nats::{NatsBackend, NatsConfig};
 pub use pg::PgBackend;
 pub use registry::{FrozenRegistry, Registry};
 
-pub use gc::{
-    DEFAULT_DELIVERED_RETENTION_DAYS, delete_delivered_older_than_in_transaction,
-    delete_orphaned_inbox_in_transaction,
-};
+pub use gc::{DEFAULT_DELIVERED_RETENTION_DAYS, delete_delivered_older_than_in_transaction};
 
 #[cfg(not(any(feature = "pg", feature = "nats")))]
 compile_error!("queue crate requires feature \"pg\" or \"nats\"");

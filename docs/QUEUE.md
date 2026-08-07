@@ -34,7 +34,7 @@
 
 ## 2. 数据模型
 
-> 建表：`PgBackend::try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` / `queue_inbox` + 索引 + 触发器），
+> 建表：`PgBackend::try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` + 索引 + 触发器），
 > 不依赖 migration 版本；migration 0001/0009 中的同款定义保持兼容（IF NOT EXISTS 双保险）。
 
 ### `queues` — 消息本体（一行一条消息）
@@ -85,7 +85,7 @@ features/{domain}（`lib.rs` 中 `register`）
 ```
 
 - **注册表**：`Registry::register` 为**追加**（同 topic 多个 handler 全部保留）→ `freeze()` → `FrozenRegistry`，启动时一次性构建。
-- **GC**：`bin/server/background/queue_gc_job.rs` 调用 `delete_delivered_older_than_in_transaction` + `delete_orphaned_inbox_in_transaction`，带 `pg_advisory_xact_lock`，避免多实例同时删。删除消息行时 `queue_deliveries` 由外键级联清理。
+- **GC**：`bin/server/background/queue_gc_job.rs` 调用 `delete_delivered_older_than_in_transaction`，带 `pg_advisory_xact_lock`，避免多实例同时删。删除消息行时 `queue_deliveries` 由外键级联清理。
 
 ## 4. 投递语义
 
@@ -177,7 +177,7 @@ registrar.queue.register(BHandler);   // 同一 topic，同一消息两个监听
 | `infrastructure/queue/lib.rs`                     | `Backend` 枚举 + 方法门面 |
 | `infrastructure/queue/pg.rs`                       | `PgBackend`（Outbox + dispatcher） |
 | `infrastructure/queue/nats.rs`                     | `NatsBackend`（JetStream 直发 + durable consumer） |
-| `infrastructure/migration/versions/0001_create_foundations.sql` | `queues` / `queue_inbox` 表与索引   |
+| `infrastructure/migration/versions/0001_create_foundations.sql` | `fn_set_updated_at` 函数 |
 | `infrastructure/migration/versions/0009_create_queue_deliveries.sql` | 投递状态表与索引              |
 | `bin/server/config.rs`                             | 按 feature 组装 `queue::Backend`    |
 | `bin/server/server.rs`                             | dispatcher 启动与 registry 构建    |

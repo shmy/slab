@@ -4,7 +4,7 @@
 //! - **消费**：`run_dispatcher` 批事务轮询（FOR UPDATE SKIP LOCKED + SAVEPOINT + 指数退避），
 //!   投递状态在 `queue_deliveries`（消息 × 监听者）。
 //! - **GC**：`delete_delivered_older_than_in_transaction` 清理已投递消息。
-//! - **建表**：`try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` / `queue_inbox` + 索引 + 触发器），
+//! - **建表**：`try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` + 索引 + 触发器），
 //!   不依赖 migration 版本；使用运行时 `sqlx::query`（非宏），初次编译即可通过。
 
 use std::time::Duration;
@@ -25,7 +25,7 @@ pub struct PgBackend {
 }
 
 impl PgBackend {
-    /// 建立后端并幂等建表（`queues` / `queue_deliveries` / `queue_inbox` + 索引 + 触发器）。
+    /// 建立后端并幂等建表（`queues` / `queue_deliveries` + 索引 + 触发器）。
     pub async fn try_new(pg_pool: PgPool) -> Result<Self> {
         let mut conn = pg_pool.acquire().await?;
         sqlx::query(
@@ -129,18 +129,6 @@ impl PgBackend {
         .execute(&mut *conn)
         .await?;
 
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS _pg_queue_inbox (
-                message_id BIGINT NOT NULL,
-                handler TEXT NOT NULL,
-                processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (message_id, handler)
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await?;
         Ok(Self { pg_pool })
     }
 }
@@ -181,9 +169,9 @@ impl PgBackend {
         let mut conn = self.pg_pool.acquire().await?;
         let mut tx = conn.begin().await?;
         let deleted = gc::delete_delivered_older_than_in_transaction(&mut tx, days).await?;
-        let deleted_inbox = gc::delete_orphaned_inbox_in_transaction(&mut tx).await?;
+
         tx.commit().await?;
-        Ok(deleted + deleted_inbox)
+        Ok(deleted)
     }
 }
 
@@ -202,7 +190,7 @@ mod tests {
         const TOPIC: &'static str = "slab.pg_backend.evt";
     }
 
-    /// 不跑 migration：验证 `try_new` 幂等自建表（queues + queue_deliveries + queue_inbox）后可直接入队。
+    /// 不跑 migration：验证 `try_new` 幂等自建表（queues + queue_deliveries）后可直接入队。
     #[sqlx::test]
     async fn try_new_creates_schema_and_enqueues(pool: sqlx::PgPool) {
         let backend = PgBackend::try_new(pool.clone()).await.unwrap();

@@ -116,7 +116,7 @@
 | `0007_create_production_tables` | 生产（work_orders、production_receipts 等） |
 | `0008_create_p4_foundations` | 财务/计划（payments、item_costs 等） |
 
-另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`queue_inbox`（已废弃的投递去重表）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/CACHE.md`）。
+另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/CACHE.md`）。
 
 ### 5.2 事件消费现状
 

@@ -43,7 +43,7 @@ impl CronJob<AppCtx> for QueueGc {
             if deleted > 0 {
                 tracing::info!(deleted, "queue_gc completed");
             } else {
-                tracing::debug!("queue_gc: no old delivered queue rows or orphaned inbox entries");
+                tracing::debug!("queue_gc: no old delivered queue rows");
             }
             Ok(())
         })

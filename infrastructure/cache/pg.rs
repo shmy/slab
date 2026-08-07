@@ -110,12 +110,33 @@ impl PgCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use migration::run_migrations;
+
+    /// 测试本地建表（migration 已不含 caches；try_new 在并集下可能被 cfg 禁用，故独立建表）。
+    async fn ensure_schema(pool: &sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE UNLOGGED TABLE IF NOT EXISTS _pg_caches (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+            "#,
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_pg_caches_expires_at ON _pg_caches (expires_at)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    }
 
     #[sqlx::test]
     async fn set_get_take_del(pool: sqlx::PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
-        // 直接构造：建表由 run_migrations 覆盖，无需 try_new（并集下可能被 cfg 禁用）。
+        ensure_schema(&pool).await;
         let cache = PgCache { pool };
 
         assert!(cache.get_raw("k").await.unwrap().is_none());
@@ -144,7 +165,7 @@ mod tests {
 
     #[sqlx::test]
     async fn expired_is_invisible_and_cleaned(pool: sqlx::PgPool) {
-        run_migrations(&pool).await.expect("run migrations");
+        ensure_schema(&pool).await;
         let cache = PgCache { pool };
 
         cache
