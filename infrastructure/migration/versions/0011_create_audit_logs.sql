@@ -8,7 +8,7 @@
 CREATE TABLE audit_logs (
     id BIGINT PRIMARY KEY,
     operator_id BIGINT NOT NULL,
-    action VARCHAR(64) NOT NULL,          -- 业务动作，如 account.create / purchase_order.approve
+    action SMALLINT NOT NULL,        -- 业务动作，如 account.create / purchase_order.approve
     entity VARCHAR(64) NOT NULL,          -- 资源类型（snake_case）
     entity_id BIGINT NOT NULL,
     before JSONB,                          -- 变更前快照（创建时为 NULL）

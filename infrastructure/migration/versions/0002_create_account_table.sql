@@ -1,6 +1,6 @@
 CREATE TABLE accounts (
     id BIGINT PRIMARY KEY NOT NULL,
-    name VARCHAR(16) NOT NULL, -- 姓名
+    name VARCHAR(64) NOT NULL, -- 姓名
     phone VARCHAR(11) UNIQUE NOT NULL, -- 手机号11位
     password VARCHAR(255) NOT NULL, -- 密码
     privileged BOOLEAN NOT NULL DEFAULT FALSE, -- 是否特权账户
