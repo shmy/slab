@@ -1,14 +1,19 @@
 use std::ops::Deref;
 
-use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{FromRequest, Request};
 use serde::de::DeserializeOwned;
+use serde_path_to_error::Error as PathError;
 use validify::Validify;
 
 use crate::error::WebError;
 
-/// JSON 请求体：先按 Axum [`Json`] 反序列化，再执行 **validify**（`#[modify]` + `#[validate]`）。
-/// 校验失败时返回 [`WebError::InvalidRequestBody`]，`msg` 为 l10n key。
+/// JSON 请求体：先按 serde 反序列化（经 `serde_path_to_error` 保留字段路径），
+/// 再执行 **validify**（`#[modify]` + `#[validate]`）。
+///
+/// 失败时返回 [`WebError::InvalidRequestBody`]：`key` 为 l10n key，`field` 为出错字段的
+/// 完整路径（如 `items.0.quantity`），由 locale 中间件参数化渲染进 detail。
+/// 反序列化走 serde_path_to_error 而非 Axum `Json`，以便把字段路径带出错误上下文。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidJson<T: Validify>(pub T);
 
@@ -28,12 +33,239 @@ where
     type Rejection = WebError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let Json(mut inner) = Json::<T>::from_request(req, state)
-            .await
-            .map_err(|r| WebError::InvalidRequestBody(r.body_text()))?;
-        inner
-            .validify()
-            .map_err(|e| WebError::InvalidRequestBody(super::validify_util::errors_to_key(e)))?;
+        // 对齐 Axum `Json` 的 Content-Type 语义：缺失/非 JSON → 400 兜底（历史行为，保持）。
+        let content_type = req
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok());
+        if !content_type.is_some_and(|ct| ct.starts_with("application/json")) {
+            return Err(WebError::InvalidRequestBody {
+                key: "invalid_request_body".to_string(),
+                field: None,
+            });
+        }
+
+        let bytes =
+            Bytes::from_request(req, state)
+                .await
+                .map_err(|_| WebError::InvalidRequestBody {
+                    key: "invalid_request_body".to_string(),
+                    field: None,
+                })?;
+
+        let mut de = serde_json::Deserializer::from_slice(&bytes);
+        let mut inner = match serde_path_to_error::deserialize::<_, T>(&mut de) {
+            Ok(value) => value,
+            Err(e) => return Err(serde_error_to_web(&e)),
+        };
+        if let Err(e) = de.end() {
+            tracing::debug!(error = %e, "json request body rejected");
+            let (key, field) = l10n_key_and_field("", &e);
+            return Err(WebError::InvalidRequestBody {
+                key: key.to_string(),
+                field,
+            });
+        }
+        inner.validify().map_err(|e| WebError::InvalidRequestBody {
+            key: super::validify_util::errors_to_key(e),
+            field: None,
+        })?;
         Ok(ValidJson(inner))
+    }
+}
+
+/// serde 反序列化错误 → l10n key + 展示字段路径。
+///
+/// - missing / unknown / duplicate field：字段名在 serde_json 错误 Display 的反引号里，
+///   `path` 为字段所在容器（serde_path_to_error 语义），拼接成完整路径（`items.0.quantity`）。
+/// - invalid type 等：字段路径由 serde_path_to_error 直接提供（`path`）。
+/// - 语法 / trailing：无字段，`field` 为 `None`。
+fn l10n_key_and_field(path: &str, inner: &serde_json::Error) -> (&'static str, Option<String>) {
+    let msg = inner.to_string();
+    match inner.classify() {
+        serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
+            // TrailingCharacters 在 classify 里归为 Syntax，需文本细分。
+            if msg.contains("trailing characters") {
+                ("json_body_trailing", None)
+            } else {
+                ("json_body_syntax", None)
+            }
+        }
+        serde_json::error::Category::Io => ("invalid_request_body", None),
+        serde_json::error::Category::Data => {
+            if msg.contains("missing field") {
+                ("json_body_missing_field", field_path(path, &msg))
+            } else if msg.contains("invalid type") {
+                ("json_body_invalid_type", non_empty(path))
+            } else if msg.contains("unknown field") {
+                ("json_body_unknown_field", field_path(path, &msg))
+            } else if msg.contains("duplicate field") {
+                ("json_body_duplicate_field", field_path(path, &msg))
+            } else {
+                ("invalid_request_body", non_empty(path))
+            }
+        }
+    }
+}
+
+fn serde_error_to_web(e: &PathError<serde_json::Error>) -> WebError {
+    let path = e.path().to_string();
+    let inner = e.inner();
+    tracing::debug!(path = %path, error = %inner, "json request body rejected");
+    let (key, field) = l10n_key_and_field(&path, inner);
+    WebError::InvalidRequestBody {
+        key: key.to_string(),
+        field,
+    }
+}
+
+/// `missing field \`phone\`` 等：取反引号内的字段名，与父级 `path` 拼接成完整路径。
+/// 注意 serde_path_to_error 对空路径的 Display 是 `"."`，需先归一为 `""`。
+fn field_path(path: &str, msg: &str) -> Option<String> {
+    let path = normalize_path(path);
+    let name = msg.split('`').nth(1).map(str::to_string)?;
+    Some(match path {
+        "" => name,
+        p => format!("{p}.{name}"),
+    })
+}
+
+fn non_empty(path: &str) -> Option<String> {
+    let path = normalize_path(path);
+    if path.is_empty() {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
+/// serde_path_to_error 空路径的 Display 为 `"."`，统一为 `""`。
+fn normalize_path(path: &str) -> &str {
+    if path == "." { "" } else { path }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::l10n_key_and_field;
+    use serde::Deserialize;
+    use serde::de::DeserializeOwned;
+
+    #[derive(Debug, Deserialize)]
+    struct Dto {
+        phone: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StrictDto {
+        phone: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Outer {
+        address: Address,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Address {
+        city: String,
+    }
+
+    fn json_err<T: DeserializeOwned + std::fmt::Debug>(json: &str) -> serde_json::Error {
+        serde_json::from_str::<T>(json).unwrap_err()
+    }
+
+    #[test]
+    fn missing_field_extracts_field_name() {
+        let err = json_err::<Dto>("{}");
+        let (key, field) = l10n_key_and_field("", &err);
+        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(field.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn dot_empty_path_produces_plain_field_name() {
+        // serde_path_to_error 对空路径的 Display 是 "."，必须归一为 ""，
+        // 否则 field_path 会拼出 "..phone"。
+        let err = json_err::<Dto>("{}");
+        let (key, field) = l10n_key_and_field(".", &err);
+        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(field.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn dot_empty_path_yields_no_field_for_invalid_type() {
+        let err = json_err::<Dto>("123");
+        let (key, field) = l10n_key_and_field(".", &err);
+        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(field, None);
+    }
+
+    #[test]
+    fn missing_field_joins_parent_path() {
+        let err = json_err::<Address>("{}");
+        let (key, field) = l10n_key_and_field("address", &err);
+        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(field.as_deref(), Some("address.city"));
+    }
+
+    #[test]
+    fn invalid_type_uses_path() {
+        let err = json_err::<Dto>(r#"{"phone": 123}"#);
+        let (key, field) = l10n_key_and_field("phone", &err);
+        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(field.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn unknown_field_extracts_field_name() {
+        let err = json_err::<StrictDto>(r#"{"phone": "1", "xyz": 1}"#);
+        let (key, field) = l10n_key_and_field("", &err);
+        assert_eq!(key, "json_body_unknown_field");
+        assert_eq!(field.as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn duplicate_field_extracts_field_name() {
+        let err = json_err::<Dto>(r#"{"phone": "a", "phone": "b"}"#);
+        let (key, field) = l10n_key_and_field("", &err);
+        assert_eq!(key, "json_body_duplicate_field");
+        assert_eq!(field.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn syntax_error_has_no_field() {
+        let err = json_err::<Dto>("{");
+        let (key, field) = l10n_key_and_field("", &err);
+        assert_eq!(key, "json_body_syntax");
+        assert_eq!(field, None);
+    }
+
+    #[test]
+    fn trailing_characters_has_no_field() {
+        let err = json_err::<Dto>(r#"{"phone": "1"} extra"#);
+        let (key, field) = l10n_key_and_field("", &err);
+        assert_eq!(key, "json_body_trailing");
+        assert_eq!(field, None);
+    }
+
+    #[test]
+    fn serde_path_to_error_provides_parent_path_for_missing_field() {
+        let mut de = serde_json::Deserializer::from_str(r#"{"address": {}}"#);
+        let err = serde_path_to_error::deserialize::<_, Outer>(&mut de).unwrap_err();
+        assert_eq!(err.path().to_string(), "address");
+        let (key, field) = l10n_key_and_field(&err.path().to_string(), err.inner());
+        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(field.as_deref(), Some("address.city"));
+    }
+
+    #[test]
+    fn serde_path_to_error_provides_invalid_type_path() {
+        let mut de = serde_json::Deserializer::from_str(r#"{"phone": 123}"#);
+        let err = serde_path_to_error::deserialize::<_, Dto>(&mut de).unwrap_err();
+        assert_eq!(err.path().to_string(), "phone");
+        let (key, field) = l10n_key_and_field(&err.path().to_string(), err.inner());
+        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(field.as_deref(), Some("phone"));
     }
 }

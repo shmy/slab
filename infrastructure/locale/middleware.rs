@@ -9,7 +9,7 @@ use trace_kit::extract_trace_id;
 use web::error::WebError;
 use web::response::json_response::ProblemDetails;
 
-use crate::{DEFAULT_LOCALE, translate};
+use crate::{DEFAULT_LOCALE, translate, translate_with_args};
 
 const LANGUAGE_COOKIE_NAME: &str = "accept_language";
 
@@ -19,7 +19,13 @@ pub async fn l10n_middleware(request: Request, next: Next) -> Response {
     let locale = parse_locale(&request);
     let response = next.run(request).await;
     if let Some(err) = response.extensions().get::<WebError>() {
-        let info = translate(&locale, &err.to_string());
+        let info = match err {
+            WebError::InvalidRequestBody { key, field } => match field {
+                Some(f) => translate_with_args(&locale, key, &[("field", f.clone())]),
+                None => translate(&locale, key),
+            },
+            _ => translate(&locale, &err.to_string()),
+        };
         let problem = ProblemDetails::new(
             err.problem_type(),
             err.problem_title(),
@@ -57,4 +63,72 @@ fn parse_locale(request: &Request) -> String {
             .to_string()
         })
         .unwrap_or_else(|| DEFAULT_LOCALE.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::header;
+    use axum::http::{Request, StatusCode};
+    use axum::middleware;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use web::error::WebError;
+
+    use super::l10n_middleware;
+
+    async fn handler() -> Result<&'static str, WebError> {
+        Err(WebError::InvalidRequestBody {
+            key: "json_body_missing_field".to_string(),
+            field: Some("phone".to_string()),
+        })
+    }
+
+    fn router() -> Router {
+        Router::new()
+            .route("/", get(handler))
+            .layer(middleware::from_fn(l10n_middleware))
+    }
+
+    #[tokio::test]
+    async fn zh_cn_detail_interpolates_field() {
+        let resp = router()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::ACCEPT_LANGUAGE, "zh-CN")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["detail"], "缺少必填字段：phone");
+        assert_eq!(json["error_code"], "invalid_request_body");
+    }
+
+    #[tokio::test]
+    async fn en_detail_interpolates_field() {
+        let resp = router()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::ACCEPT_LANGUAGE, "en")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["detail"], "Missing required field: phone");
+    }
 }

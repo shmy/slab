@@ -80,13 +80,45 @@ pub fn translate(locale: &str, key: &str) -> String {
     key.to_string()
 }
 
+/// 带参数翻译（Fluent 插值 `{ $name }`）。
+/// 参数以 `(&str, String)` 传入，不把 fluent 类型泄漏到公共 API。
+/// Fluent 会对变量插值包裹 bidi 隔离字符（FSI/PDI），这里剥离，保证 detail 干净。
+pub fn translate_with_args(locale: &str, key: &str, args: &[(&str, String)]) -> String {
+    let mut fluent_args = fluent_bundle::FluentArgs::new();
+    for (name, value) in args {
+        fluent_args.set(*name, value.clone());
+    }
+    if let Some(text) = try_translate_with_args(locale, key, &fluent_args) {
+        return strip_isolates(text);
+    }
+    if locale != DEFAULT_LOCALE
+        && let Some(text) = try_translate_with_args(DEFAULT_LOCALE, key, &fluent_args)
+    {
+        return strip_isolates(text);
+    }
+    key.to_string()
+}
+
 fn try_translate(locale: &str, key: &str) -> Option<String> {
+    try_translate_with_args(locale, key, &fluent_bundle::FluentArgs::new())
+}
+
+fn try_translate_with_args(
+    locale: &str,
+    key: &str,
+    args: &fluent_bundle::FluentArgs,
+) -> Option<String> {
     let bundle = BUNDLES.get(locale)?;
     let msg = bundle.get_message(key)?;
     let pattern = msg.value()?;
     let mut errors = vec![];
-    let value = bundle.format_pattern(pattern, None, &mut errors);
+    let value = bundle.format_pattern(pattern, Some(args), &mut errors);
     Some(value.into_owned())
+}
+
+/// 剥离 Fluent 变量插值引入的 bidi 隔离字符（FSI U+2068 / PDI U+2069）。
+fn strip_isolates(s: String) -> String {
+    s.replace(['\u{2068}', '\u{2069}'], "")
 }
 
 #[cfg(test)]
@@ -100,6 +132,24 @@ mod tests {
     #[test]
     fn test_translate_known_key_zh() {
         assert_eq!(translate("zh-CN", "ok"), "操作成功");
+    }
+
+    #[test]
+    fn test_translate_with_args_interpolates_field() {
+        let args = [("field", "phone".to_string())];
+        assert_eq!(
+            translate_with_args("zh-CN", "json_body_missing_field", &args),
+            "缺少必填字段：phone"
+        );
+        assert_eq!(
+            translate_with_args("en-US", "json_body_invalid_type", &args),
+            "Field phone has an incorrect type"
+        );
+        // 未知 locale 回退默认（en-US）。
+        assert_eq!(
+            translate_with_args("ja", "json_body_missing_field", &args),
+            "Missing required field: phone"
+        );
     }
 
     #[test]
@@ -117,6 +167,30 @@ mod tests {
     fn test_translate_unknown_key() {
         let result = translate("en-US", "no_such_key");
         assert_eq!(result, "no_such_key");
+    }
+
+    #[test]
+    fn test_web_json_body_keys_exist_in_both_locales() {
+        // web 层 serde 反序列化分类 key（`WebError::InvalidRequestBody` 携带，非 L10n 字面量，
+        // 结构性测试扫不到，这里显式钉死双语言翻译存在性）。
+        for key in [
+            "invalid_request_body",
+            "json_body_syntax",
+            "json_body_missing_field",
+            "json_body_invalid_type",
+            "json_body_unknown_field",
+            "json_body_duplicate_field",
+            "json_body_trailing",
+        ] {
+            assert!(
+                try_translate("en-US", key).is_some(),
+                "missing key `{key}` in en-US locales"
+            );
+            assert!(
+                try_translate("zh-CN", key).is_some(),
+                "missing key `{key}` in zh-CN locales"
+            );
+        }
     }
 
     #[test]
@@ -151,6 +225,14 @@ mod tests {
                         ));
                     }
                 } else {
+                    let p = path.display().to_string();
+                    // 内部基础设施错误（永远 500，不进 locale）与内部库同款豁免。
+                    if p.contains("libs/image_kit")
+                        || p.contains("libs/authz_kit")
+                        || p.contains("infrastructure/blob")
+                    {
+                        continue;
+                    }
                     violations.push(format!(
                         "#[error] 消息必须是 snake_case key 或参数化（内部库）：{}: {msg}",
                         path.display()

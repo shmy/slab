@@ -28,7 +28,10 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let TypedMultipart(inner) = TypedMultipart::<T>::from_request(req, state)
             .await
-            .map_err(|e| WebError::InvalidRequestBody(e.to_string()))?;
+            .map_err(|e| WebError::InvalidRequestBody {
+                key: e.to_string(),
+                field: None,
+            })?;
         Ok(Self(inner))
     }
 }

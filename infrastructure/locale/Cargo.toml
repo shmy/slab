@@ -20,3 +20,6 @@ unic-langid = { workspace = true }
 
 [dev-dependencies]
 regex = "1"
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
