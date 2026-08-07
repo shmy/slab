@@ -1,6 +1,6 @@
 use appctx::TokenHelper;
 use authn_kit::{access_jti_key, refresh_key, subject_refresh_key};
-use cache::Backend;
+use cache::KvBackend;
 use identity_contract::error::IdentityError;
 use rootcause::Result;
 use shared_contract::value_object::id::ID;
@@ -19,7 +19,7 @@ pub(crate) struct TokenPair {
 /// 调用方保证先提交业务事务再调用本函数，缓存失败不影响登录（吊销延迟到 TTL 过期）。
 #[tracing::instrument(skip(kv, token_helper))]
 pub async fn issue_tokens(
-    kv: &Backend,
+    kv: &KvBackend,
     token_helper: &TokenHelper,
     user_id: &ID,
 ) -> Result<TokenPair> {
@@ -62,7 +62,7 @@ pub async fn issue_tokens(
 /// 消费 refresh token（原子 take），返回对应用户 ID。
 #[tracing::instrument(skip(kv, refresh_token))]
 pub async fn consume_refresh_token(
-    kv: &Backend,
+    kv: &KvBackend,
     token_helper: &TokenHelper,
     refresh_token: &str,
 ) -> Result<ID> {
@@ -76,7 +76,7 @@ pub async fn consume_refresh_token(
 
 /// 吊销用户全部令牌（refresh token 轮换 + access jti 清除）。
 #[tracing::instrument(skip(kv))]
-pub async fn revoke_tokens(kv: &Backend, token_helper: &TokenHelper, user_id: ID) -> Result<()> {
+pub async fn revoke_tokens(kv: &KvBackend, token_helper: &TokenHelper, user_id: ID) -> Result<()> {
     let realm = token_helper.realm();
     let user_refresh_key = subject_refresh_key(realm, user_id);
     if let Some(old_refresh_token) = kv.get::<String>(&user_refresh_key).await? {

@@ -36,20 +36,12 @@ impl CronJob<AppCtx> for QueueGc {
     }
     fn run(&self, state: AppCtx) -> CronJobFuture {
         Box::pin(async move {
-            let mut tx = state.pg_pool.begin().await?;
-            let deleted_queue = queue::delete_delivered_older_than_in_transaction(
-                &mut tx,
-                queue::DEFAULT_DELIVERED_RETENTION_DAYS,
-            )
-            .await?;
-            let deleted_inbox = queue::delete_orphaned_inbox_in_transaction(&mut tx).await?;
-            tx.commit().await?;
-            if deleted_queue > 0 || deleted_inbox > 0 {
-                tracing::info!(
-                    deleted_queue,
-                    deleted_inbox,
-                    "queue_gc completed (queues delivered + orphaned inbox)"
-                );
+            let deleted = state
+                .queue
+                .delete_delivered_older_than(queue::DEFAULT_DELIVERED_RETENTION_DAYS)
+                .await?;
+            if deleted > 0 {
+                tracing::info!(deleted, "queue_gc completed");
             } else {
                 tracing::debug!("queue_gc: no old delivered queue rows or orphaned inbox entries");
             }

@@ -1,4 +1,5 @@
 use crate::repository::account_repository::AccountRepository;
+use appctx::QueueBackend;
 use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
@@ -7,7 +8,6 @@ use identity_contract::entity::account::Account;
 use identity_contract::events::AccountCreatedEvent;
 use identity_contract::value_object::hashed_password::HashedPassword;
 use identity_contract::value_object::password::Password;
-use queue::enqueue_event;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use shared_contract::value_object::phone_number::PhoneNumber;
@@ -43,20 +43,22 @@ pub(crate) struct CreateAccountResponse {
     responses((status = 200, body = JsonResponse<CreateAccountResponse>)),
     security(("bearerAuth" = []))
 )]
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(pg_pool, queue))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
+    State(queue): State<QueueBackend>,
     ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateAccountRequest>,
 ) -> JsonResponseType<CreateAccountResponse> {
-    let response = execute(&pg_pool, ctx, request).await?;
+    let response = execute(&pg_pool, &queue, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool))]
+#[tracing::instrument(skip(pg_pool, queue))]
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
+    queue: &QueueBackend,
     ctx: OperatorContext,
     request: CreateAccountRequest,
 ) -> rootcause::Result<CreateAccountResponse> {
@@ -75,8 +77,8 @@ async fn execute(
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
     AuditService::record_create(&mut txn, "account", &id, &ctx, &account).await?;
-    enqueue_event(&mut txn, &AccountCreatedEvent { id }).await?;
     txn.commit().await?;
+    queue.enqueue_event(&AccountCreatedEvent { id }).await?;
     Ok(CreateAccountResponse {
         id,
         name: account.name,
@@ -103,9 +105,14 @@ mod tests {
             phone: PhoneNumber::try_new("13900001201").unwrap(),
             password: Password::new_unchecked("admin123!".to_string()),
         };
-        let response = execute(&state.pg_pool, tests::test_operator_context(), request)
-            .await
-            .unwrap();
+        let response = execute(
+            &state.pg_pool,
+            &state.queue,
+            tests::test_operator_context(),
+            request,
+        )
+        .await
+        .unwrap();
         assert!(i64::from(response.id) > 0);
 
         let mut conn = state.pg_pool.acquire().await.unwrap();

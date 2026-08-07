@@ -1,8 +1,9 @@
 use appctx::{AppCtx, Flow, HttpClient, TokenBundle};
 use appctx::{TokenHelper, TokenRealm};
 use blob::{Blob, BlobConfig};
-use cache::Backend;
+use cache::KvBackend;
 use db::{DbConfig, PgPool, connect};
+use queue::QueueBackend;
 use rootcause::Result;
 use secrecy::ExposeSecret;
 
@@ -14,15 +15,28 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
 
     // 缓存后端（互斥，开启其一；default=kv-pg 与显式 kv-redb/kv-redis 并集时 pg 分支让位）：
     #[cfg(all(feature = "kv-pg", not(any(feature = "kv-redb", feature = "kv-redis"))))]
-    let kv = Backend::try_new(pg_pool.clone()).await?;
+    let kv = KvBackend::try_new(pg_pool.clone()).await?;
     #[cfg(feature = "kv-redb")]
-    let kv = Backend::try_new(&cli.cache.db_path)?;
+    let kv = KvBackend::try_new(&cli.cache.db_path)?;
     #[cfg(feature = "kv-redis")]
-    let kv = Backend::try_new(&cli.cache.url).await?;
+    let kv = KvBackend::try_new(&cli.cache.url).await?;
+
+    // 队列后端：默认（或 queue-pg）→ Outbox + 进程内 dispatcher；queue-nats → JetStream 直发。
+    #[cfg(all(feature = "queue-pg", not(feature = "queue-nats")))]
+    let queue = QueueBackend::try_new(pg_pool.clone()).await?;
+    #[cfg(feature = "queue-nats")]
+    let queue = QueueBackend::try_new(queue::NatsConfig {
+        url: cli.nats.url.clone(),
+        username: cli.nats.username.clone(),
+        password: cli.nats.password.clone(),
+        stream_name: cli.nats.stream_name.clone(),
+    })
+    .await?;
 
     Ok(AppCtx {
         pg_pool,
         kv,
+        queue,
         token_bundle: TokenBundle::new(
             TokenHelper::new(
                 TokenRealm::Customer,

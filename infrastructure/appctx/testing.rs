@@ -1,13 +1,14 @@
 use crate::{AppCtx, Blob, HttpClient, TokenBundle, TokenHelper, TokenRealm};
-use cache::Backend;
+use cache::KvBackend;
 use db::PgPool;
 use flow::Flow;
+use queue::QueueBackend;
 
 /// 构建用于集成测试的 `AppCtx`。
 ///
 /// 使用 in-memory Blob + 测试用 JWT helper。
-/// 缓存后端：`redb` feature 下用临时文件 `RedbCache`；否则（含 `redis` feature，
-/// 测试环境无 Redis 实例）退回 `PgCache` 复用测试 PG 池。
+/// 缓存后端：kv-redb → 临时文件 `RedbCache`；kv-redis → 直连本地 Redis
+/// （需本机 Redis，否则构造失败）；默认 → `PgCache` 复用测试 PG 池。
 #[allow(clippy::expect_used)]
 pub async fn build(pg_pool: PgPool) -> AppCtx {
     let token_bundle = TokenBundle::new(
@@ -21,7 +22,7 @@ pub async fn build(pg_pool: PgPool) -> AppCtx {
     let kv = {
         #[cfg(all(feature = "kv-pg", not(any(feature = "kv-redb", feature = "kv-redis"))))]
         {
-            Backend::try_new(pg_pool.clone())
+            KvBackend::try_new(pg_pool.clone())
                 .await
                 .expect("create PG backend")
         }
@@ -30,18 +31,21 @@ pub async fn build(pg_pool: PgPool) -> AppCtx {
             let dir = Box::leak(Box::new(
                 tempfile::tempdir().expect("create temp cache dir"),
             ));
-            Backend::try_new(dir).expect("create redb backend")
+            KvBackend::try_new(dir.path().join("cache.redb")).expect("create redb backend")
         }
         #[cfg(feature = "kv-redis")]
         {
-            Backend::try_new("redis://127.0.0.1:6379/0")
+            KvBackend::try_new("redis://127.0.0.1:6379/0")
                 .await
                 .expect("create redis backend")
         }
     };
+    // 队列后端：测试环境直接构造 Pg 变体（Outbox 表由 run_migrations 建好；不依赖 NATS 实例）。
+    let queue = QueueBackend::Pg(queue::PgBackend::new(pg_pool.clone()));
     AppCtx {
         pg_pool,
         kv,
+        queue,
         token_bundle,
         http_client: HttpClient::default(),
         blob,

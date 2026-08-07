@@ -1,9 +1,10 @@
-//! PostgreSQL-backed outbox-ish queue：`queues`（消息本体）+ `queue_deliveries`（消息 × 监听者投递状态）+ 应用内 dispatcher 消费。
+//! 队列后端：`Backend` 枚举 + 方法门面（模式与 `infrastructure/cache` 一致）。
 //!
-//! - **语义**：at-least-once；**广播**——同一 topic 可注册多个 `QueueHandler`（监听者），
-//!   一条消息投递给所有监听者，各自独立重试/终态（`queue_deliveries` 承载每个监听者的投递状态）。
-//! - **入队**：与业务同事务（`enqueue_event` 等接收 `&Transaction`）。
-//! - **文档**：仓库根 `docs/PG_QUEUE.md`。
+//! - `PgBackend`：feature `pg`（**默认**），Outbox 表 + 进程内 dispatcher，入队与业务同事务。
+//! - `NatsBackend`：feature `nats`，JetStream 直发（延迟用 ADR-51 schedule），入队不参与 PG 事务。
+//!
+//! **入队语义差异**：pg 与业务同事务（回滚即不投递）；nats 直发（业务回滚事件仍已投递）——
+//! 消费端 handler 必须幂等。**消费端幂等**均靠 handler 实现（at-least-once）。
 
 mod dispatcher;
 pub mod enqueue;
@@ -11,15 +12,103 @@ pub mod event;
 mod gc;
 mod handler;
 pub mod inbox;
+#[cfg(feature = "nats")]
+mod nats;
+mod pg;
 mod registry;
 mod status;
 
-pub use dispatcher::{DispatcherConfig, run_dispatcher};
-pub use enqueue::{enqueue_event, enqueue_event_with_delay};
+use std::time::Duration;
+
+#[cfg(all(feature = "pg", not(feature = "nats")))]
+use db::PgPool;
+use rootcause::Result;
+use tokio::sync::watch::Receiver;
+
+pub use event::Event;
+pub use handler::QueueHandler;
+#[cfg(feature = "nats")]
+pub use nats::{NatsBackend, NatsConfig};
+pub use pg::PgBackend;
+pub use registry::{FrozenRegistry, Registry};
+
 pub use gc::{
     DEFAULT_DELIVERED_RETENTION_DAYS, delete_delivered_older_than_in_transaction,
     delete_orphaned_inbox_in_transaction,
 };
-pub use handler::QueueHandler;
-pub use inbox::PgInbox;
-pub use registry::{FrozenRegistry, Registry};
+
+#[cfg(not(any(feature = "pg", feature = "nats")))]
+compile_error!("queue crate requires feature \"pg\" or \"nats\"");
+
+/// 队列后端句柄：入队 + 消费 + 清理，克隆共享。
+#[derive(Clone)]
+pub enum QueueBackend {
+    #[cfg(feature = "pg")]
+    Pg(PgBackend),
+    #[cfg(feature = "nats")]
+    Nats(NatsBackend),
+}
+
+impl QueueBackend {
+    /// 仅当无 `nats` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义。
+    #[cfg(all(feature = "pg", not(feature = "nats")))]
+    pub async fn try_new(pg_pool: PgPool) -> Result<Self> {
+        Ok(Self::Pg(PgBackend::new(pg_pool)))
+    }
+
+    /// NATS 后端：`config` 为 JetStream 连接参数；消费上下文（如 AppCtx）由 `run_dispatcher` 传入。
+    #[cfg(feature = "nats")]
+    pub async fn try_new(config: NatsConfig) -> Result<Self> {
+        Ok(Self::Nats(NatsBackend::try_new(config).await?))
+    }
+
+    /// 入队。pg：写 outbox 表（与业务同事务）；nats：JetStream 直发（忽略 `executor`）。
+    pub async fn enqueue_event<T: Event>(&self, event: &T) -> Result<()> {
+        match self {
+            #[cfg(feature = "pg")]
+            Self::Pg(b) => b.enqueue_event(event).await,
+            #[cfg(feature = "nats")]
+            Self::Nats(b) => b.enqueue_event(event).await,
+        }
+    }
+
+    /// 延迟入队。pg：`next_attempt_at` 门控；nats：JetStream ADR-51 `@at` 调度。
+    pub async fn enqueue_event_with_delay<T: Event>(
+        &self,
+        event: &T,
+        delay: Duration,
+    ) -> Result<()> {
+        match self {
+            #[cfg(feature = "pg")]
+            Self::Pg(b) => b.enqueue_event_delayed(event, delay).await,
+            #[cfg(feature = "nats")]
+            Self::Nats(b) => b.enqueue_event_delayed(event, delay).await,
+        }
+    }
+
+    /// 启动消费循环（阻塞直到 shutdown）。pg：进程内轮询 outbox；nats：每 handler 一个 durable consumer。
+    /// `ctx` 为消费上下文（如 `AppCtx`），原样传给每个 `QueueHandler::handle`。
+    pub async fn run_dispatcher<C: Send + Sync + Clone + 'static>(
+        &self,
+        ctx: C,
+        registry: FrozenRegistry<C>,
+        shutdown: Receiver<bool>,
+    ) -> Result<()> {
+        match self {
+            #[cfg(feature = "pg")]
+            Self::Pg(b) => b.run_dispatcher(ctx, registry, shutdown).await,
+            #[cfg(feature = "nats")]
+            Self::Nats(b) => nats::run_nats_dispatcher(b, ctx, registry, shutdown).await,
+        }
+    }
+
+    /// 清理已投递旧消息（GC 定时任务）。pg：删 outbox 行；nats：无 outbox，返回 0。
+    pub async fn delete_delivered_older_than(&self, days: i64) -> Result<u64> {
+        match self {
+            #[cfg(feature = "pg")]
+            Self::Pg(b) => b.delete_delivered_older_than(days).await,
+            #[cfg(feature = "nats")]
+            Self::Nats(_) => Ok(0),
+        }
+    }
+}

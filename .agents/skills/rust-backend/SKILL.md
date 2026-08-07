@@ -136,7 +136,7 @@ description: Slab Rust 后端垂直切片实现规范
 
 ## 域外队列（queue）
 
-速查，详见 `docs/PG_QUEUE.md`：
+速查，详见 `docs/QUEUE.md`：
 
 - Crate：`infrastructure/queue`；表：`queues`
 - **入队**：在业务 Transaction 内调用 `enqueue_event`，与主写同事务提交，直接构造事件对象入队，无需中间桥接函数

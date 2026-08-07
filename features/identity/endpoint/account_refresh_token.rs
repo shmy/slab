@@ -1,6 +1,6 @@
 use crate::endpoint::account_login::LoginResponse;
 use crate::shared::token_ops;
-use appctx::{Backend, TokenBundle, TokenHelper};
+use appctx::{KvBackend, TokenBundle, TokenHelper};
 use axum::extract::State;
 use identity_contract::value_object::refresh_token::RefreshToken;
 use serde::Deserialize;
@@ -25,7 +25,7 @@ pub struct RefreshRequest {
 )]
 #[tracing::instrument(skip(kv))]
 pub(crate) async fn handler(
-    State(kv): State<Backend>,
+    State(kv): State<KvBackend>,
     State(token_bundle): State<TokenBundle>,
     ValidJson(request): ValidJson<RefreshRequest>,
 ) -> JsonResponseType<LoginResponse> {
@@ -36,7 +36,7 @@ pub(crate) async fn handler(
 #[tracing::instrument(skip(kv))]
 #[inline]
 async fn execute(
-    kv: &Backend,
+    kv: &KvBackend,
     token_helper: &TokenHelper,
     request: RefreshRequest,
 ) -> rootcause::Result<LoginResponse> {

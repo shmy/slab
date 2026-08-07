@@ -35,6 +35,9 @@ pub struct Cli {
     pub cache: CacheCli,
 
     #[command(flatten)]
+    pub nats: NatsCli,
+
+    #[command(flatten)]
     pub otlp: OtlpCli,
 }
 
@@ -164,6 +167,33 @@ pub struct CacheCli {
         env = "REDIS_URL"
     )]
     pub url: String,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct NatsCli {
+    /// NATS 服务器地址（queue-nats 后端）
+    #[arg(
+        id = "nats_url",
+        long = "nats-url",
+        default_value = "nats://127.0.0.1:4222",
+        env = "NATS_URL"
+    )]
+    pub url: String,
+
+    #[arg(id = "nats_username", long = "nats-username", env = "NATS_USERNAME")]
+    pub username: Option<String>,
+
+    #[arg(id = "nats_password", long = "nats-password", env = "NATS_PASSWORD")]
+    pub password: Option<String>,
+
+    /// JetStream stream 名（自动 get_or_create）
+    #[arg(
+        id = "nats_stream_name",
+        long = "nats-stream-name",
+        default_value = "slab",
+        env = "NATS_STREAM_NAME"
+    )]
+    pub stream_name: String,
 }
 
 #[derive(Clone, Debug, clap::Args)]

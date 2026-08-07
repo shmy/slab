@@ -1,5 +1,5 @@
 use crate::shared::token_ops;
-use appctx::{Backend, TokenBundle, TokenHelper};
+use appctx::{KvBackend, TokenBundle, TokenHelper};
 use axum::extract::State;
 use http_auth::extract::authed_account::AuthedAccount;
 use rootcause::Result;
@@ -25,7 +25,7 @@ pub struct LogoutResponse {
 #[tracing::instrument(skip(kv))]
 pub(crate) async fn handler(
     AuthedAccount(account_id): AuthedAccount,
-    State(kv): State<Backend>,
+    State(kv): State<KvBackend>,
     State(token_bundle): State<TokenBundle>,
 ) -> JsonResponseType<LogoutResponse> {
     let response = execute(&kv, token_bundle.account(), account_id).await?;
@@ -35,7 +35,7 @@ pub(crate) async fn handler(
 #[tracing::instrument(skip(kv))]
 #[inline]
 async fn execute(
-    kv: &Backend,
+    kv: &KvBackend,
     token_helper: &TokenHelper,
     account_id: ID,
 ) -> Result<LogoutResponse> {

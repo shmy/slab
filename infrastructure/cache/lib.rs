@@ -30,10 +30,13 @@ pub use redis::RedisCache;
 
 #[cfg(not(any(feature = "pg", feature = "redb", feature = "redis")))]
 compile_error!("cache crate requires feature \"pg\", \"redb\" or \"redis\"");
+// redb/redis 后端互斥（`Backend::try_new` 同名不同签名，双开并集重复定义；与 server 的 kv-* 互斥声明一致）。
+#[cfg(all(feature = "redb", feature = "redis"))]
+compile_error!("cache: features \"redb\" and \"redis\" are mutually exclusive (开启其一)");
 
 /// 缓存后端句柄：克隆共享、方法即 API。
 #[derive(Clone)]
-pub enum Backend {
+pub enum KvBackend {
     #[cfg(feature = "pg")]
     Pg(PgCache),
     #[cfg(feature = "redb")]
@@ -46,7 +49,7 @@ fn decode<T: DeserializeOwned>(raw: Option<String>) -> Option<T> {
     raw.and_then(|r| serde_json::from_str(&r).ok())
 }
 
-impl Backend {
+impl KvBackend {
     /// 仅当无 `redb` / `redis` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义。
     #[cfg(all(feature = "pg", not(any(feature = "redb", feature = "redis"))))]
     pub async fn try_new(pool: sqlx::PgPool) -> Result<Self> {
@@ -136,9 +139,9 @@ impl Backend {
 mod tests {
     use super::*;
 
-    fn test_backend() -> Backend {
+    fn test_backend() -> KvBackend {
         let dir = Box::leak(Box::new(tempfile::tempdir().expect("create temp dir")));
-        Backend::Redb(RedbCache::try_new(dir.path().join("cache.redb")).expect("open redb cache"))
+        KvBackend::Redb(RedbCache::try_new(dir.path().join("cache.redb")).expect("open redb cache"))
     }
 
     #[tokio::test]
@@ -176,7 +179,7 @@ mod tests {
     async fn corrupt_value_decodes_to_none() {
         let kv = test_backend();
         // raw 层写入非法 JSON：门面 get 应静默返回 None（不区分坏数据与未命中）。
-        let Backend::Redb(inner) = &kv else {
+        let KvBackend::Redb(inner) = &kv else {
             unreachable!("test backend is redb")
         };
         inner

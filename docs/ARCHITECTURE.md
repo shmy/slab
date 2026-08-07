@@ -53,7 +53,7 @@
 ### 2.3 技术适配层（infrastructure）
 
 - `db`：数据库连接与连接池（`PgPool`）
-- `queue`：PostgreSQL 域外队列（`docs/PG_QUEUE.md`）
+- `queue`：可插拔队列后端——Pg Outbox（默认）/ NATS JetStream（`docs/QUEUE.md`）
 - `cache`：可插拔缓存后端——Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`docs/CACHE.md`）
 - `blob`：对象存储（S3/COS）
 - `jwt`：JWT 令牌生成/验证
@@ -116,7 +116,7 @@
 | `0007_create_production_tables` | 生产（work_orders、production_receipts 等） |
 | `0008_create_p4_foundations` | 财务/计划（payments、item_costs 等） |
 
-另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，见 `docs/PG_QUEUE.md`）、`queue_inbox`（已废弃的投递去重表）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/CACHE.md`）。
+另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`queue_inbox`（已废弃的投递去重表）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/CACHE.md`）。
 
 ### 5.2 事件消费现状
 

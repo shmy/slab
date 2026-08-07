@@ -1,12 +1,36 @@
-# PostgreSQL 域外队列（`queue`）
+# 队列后端（`queue`）
 
-本文描述 `infrastructure/queue` 与表 `queues` / `queue_deliveries` 的架构、语义与运维边界，与当前代码一致。
+本文描述 `infrastructure/queue` 的架构、语义与运维边界，与当前代码一致。
 
-## 1. 定位
+## 1. 后端架构与选型
+
+`queue` 提供统一门面 `Backend` 枚举 + 方法 API（模式与 `infrastructure/cache` 一致），后端编译期按 feature 装配：
+
+| 后端 | feature | 实现 | 入队语义 | 消费 |
+|------|---------|------|---------|------|
+| **Pg**（默认） | `pg` | `PgBackend`（Outbox 表 `queues` + 进程内 dispatcher） | 后端自取连接入队（独立于调用方事务） | 批事务轮询 + 每监听者投递状态/重试 |
+| **Nats** | `nats` | `NatsBackend`（JetStream 直发） | 直发（不参与 PG 事务；延迟用 ADR-51 `@at` 调度） | 每 handler 一个 durable pull consumer |
+
+**选型规则**：
+
+- 默认（无显式选择）→ `PgBackend`：零新增组件、入队与业务同事务（Outbox 语义）。
+- 需要跨进程投递 / 独立消息中间件 → `queue-nats`（JetStream，本地 `nats-server -js` 即可）。
+
+**feature 切换**（`bin/server`，互斥开启其一；未显式选择时默认 `queue-pg`）：
+
+| 命令 | 后端 |
+|------|------|
+| `cargo run -p server`（默认） | `Backend::Pg` |
+| `cargo run -p server --features queue-nats` | `Backend::Nats`（配置 `NATS_URL` / `NATS_STREAM_NAME`） |
+
+**入队语义**：两个后端均为「独立连接/直发」——`enqueue_event(event)` 不接收调用方事务连接（pg 后端内部从池取连接，nats 直发 JetStream）。**业务事务回滚后事件可能已入队/已投递**——消费端 handler 必须幂等（at-least-once）。
+
+> 以下 §2–§11 为 **Pg 后端**（Outbox + dispatcher）的深度文档；Nats 后端消费为「每个 handler 一个 durable consumer，回调拿 PG 连接执行 `QueueHandler::handle`」。
+
+## 2. 定位（Pg 后端）
 
 - **用途**：事务内入队（outbox-ish），由独立 **dispatcher** 在同一应用进程内拉取并消费；适合「与主业务同一 DB 事务提交、再异步处理」的场景。
 - **广播语义**：一条消息投递给同一 topic 的**所有**监听者（每个 `QueueHandler` 一个投递行，各自独立重试/终态）。
-- **不是**：Kafka/NATS 级消息中间件；不跨网络投递到第三方；不提供 exactly-once。
 
 ## 2. 数据模型
 
@@ -99,16 +123,16 @@ WHERE message_id = <id> AND handler = '<name>';
 UPDATE queues SET next_attempt_at = NOW() WHERE id = <id>;
 ```
 
-## 7. 入队 API
+## 7. 入队 API（`Backend` 方法门面）
 
-- `enqueue_event(tx, event)`：默认 `next_attempt_at = now`（表默认值）。`event` 须实现 `Event` trait（携带 `TOPIC` 常量）。
-- `enqueue_event_with_delay(tx, event, delay)`：推迟首次可见时间。
+- `queue.enqueue_event(event)`：`event` 须实现 `Event` trait（携带 `TOPIC` 常量）。pg 写 outbox 表（内部自取连接）；nats 直发 JetStream。
+- `queue.enqueue_event_with_delay(event, delay)`：pg 推迟首次可见时间（`next_attempt_at`）；nats 用 JetStream ADR-51 `Nats-Schedule` 调度。
 
-**约定**：在**与业务写库同一 `Transaction`** 中调用，保证「业务提交成功则消息必落库」。
+**语义**：入队**不参与调用方事务**——后端独立连接/直发。业务回滚后事件可能已入队，消费端 handler 须幂等。
 
 ```rust
-// endpoint 内直接入队，无需中间层
-enqueue_event(tx.as_mut(), &AccountCreatedEvent { id }).await?;
+// endpoint 内直接入队（AppCtx.queue 经 State 提取），无需事务连接
+queue.enqueue_event(&AccountCreatedEvent { id }).await?;
 ```
 
 **广播订阅**：消息只入队一行；多个监听者各自注册同一 `topic` 即可，入队侧无需任何改动：
@@ -147,11 +171,14 @@ registrar.queue.register(BHandler);   // 同一 topic，同一消息两个监听
 
 | 路径                                                           | 职责                               |
 | -------------------------------------------------------------- | ---------------------------------- |
-| `infrastructure/queue/`                            | crate 实现                         |
+| `infrastructure/queue/lib.rs`                     | `Backend` 枚举 + 方法门面 |
+| `infrastructure/queue/pg.rs`                       | `PgBackend`（Outbox + dispatcher） |
+| `infrastructure/queue/nats.rs`                     | `NatsBackend`（JetStream 直发 + durable consumer） |
 | `infrastructure/migration/versions/0001_create_foundations.sql` | `queues` / `queue_inbox` 表与索引   |
 | `infrastructure/migration/versions/0009_create_queue_deliveries.sql` | 投递状态表与索引              |
-| `bin/server/server.rs`                                         | dispatcher 启动与 registry 构建    |
-| `bin/server/gc_jobs.rs`                                        | 已投递行 GC                        |
-| `features/identity/subscriber/`                                | 各 topic 的 `QueueHandler` 实现    |
+| `bin/server/config.rs`                             | 按 feature 组装 `queue::Backend`    |
+| `bin/server/server.rs`                             | dispatcher 启动与 registry 构建    |
+| `bin/server/gc_jobs.rs`                            | 已投递行 GC（nats 后端为空操作）    |
+| `features/identity/subscriber/`                    | 各 topic 的 `QueueHandler` 实现    |
 | `features/identity/lib.rs`                                     | `register(&mut Registrar)` 聚合注册 |
 | 各域 `*_contract/events.rs`                                   | 事件定义（`Event` trait）          |

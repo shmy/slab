@@ -47,14 +47,15 @@ impl Default for DispatcherConfig {
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn run_dispatcher(
+pub async fn run_dispatcher<C: Send + Sync + 'static>(
     pg_pool: PgPool,
-    registry: FrozenRegistry,
+    ctx: C,
+    registry: FrozenRegistry<C>,
     config: DispatcherConfig,
     mut shutdown: Receiver<bool>,
 ) -> Result<()> {
     loop {
-        let processed = match run_one_cycle(&pg_pool, &registry, &config).await {
+        let processed = match run_one_cycle(&pg_pool, &ctx, &registry, &config).await {
             Ok(processed) => processed,
             Err(error) => {
                 tracing::warn!(%error, "pg_queue dispatcher cycle failed");
@@ -79,9 +80,10 @@ pub async fn run_dispatcher(
 }
 
 #[tracing::instrument(skip_all)]
-async fn run_one_cycle(
+async fn run_one_cycle<C: Send + Sync + 'static>(
     pg_pool: &PgPool,
-    registry: &FrozenRegistry,
+    ctx: &C,
+    registry: &FrozenRegistry<C>,
     config: &DispatcherConfig,
 ) -> Result<usize> {
     tracing::trace!("pg_queue dispatcher running one cycle");
@@ -128,7 +130,7 @@ async fn run_one_cycle(
 
     let processed = rows.len();
     for row in rows {
-        process_message(&mut tx, registry, config, row).await?;
+        process_message(&mut tx, ctx, registry, config, row).await?;
     }
 
     tx.commit().await?;
@@ -136,9 +138,10 @@ async fn run_one_cycle(
 }
 
 /// 处理一条消息：确保所有监听者的投递行存在，逐个投递，最后聚合刷新消息行状态。
-async fn process_message(
+async fn process_message<C: Send + Sync + 'static>(
     tx: &mut PgConnection,
-    registry: &FrozenRegistry,
+    ctx: &C,
+    registry: &FrozenRegistry<C>,
     config: &DispatcherConfig,
     row: MessageRow,
 ) -> Result<()> {
@@ -193,7 +196,7 @@ async fn process_message(
                 .await?;
             continue;
         };
-        deliver_one(tx, handler, &payload, config, id, &delivery).await?;
+        deliver_one(tx, ctx, handler, &payload, config, id, &delivery).await?;
     }
 
     refresh_message_state(tx, id).await?;
@@ -201,10 +204,10 @@ async fn process_message(
 }
 
 /// 为 topic 的所有监听者补投递行（幂等：已有行不重复）。
-async fn ensure_deliveries(
+async fn ensure_deliveries<C: Send + Sync + 'static>(
     tx: &mut PgConnection,
     id: i64,
-    handlers: &[Arc<dyn QueueHandler>],
+    handlers: &[Arc<dyn QueueHandler<C>>],
 ) -> Result<()> {
     let names: Vec<String> = handlers.iter().map(|h| h.name().to_string()).collect();
     sqlx::query!(
@@ -226,9 +229,10 @@ async fn ensure_deliveries(
 
 /// 投递单个监听者：SAVEPOINT 隔离，成功标记 delivered，失败按退避计划重试/终态。
 /// 一个监听者失败不影响其它监听者，也不影响同批其它消息。
-async fn deliver_one(
+async fn deliver_one<C: Send + Sync + 'static>(
     tx: &mut PgConnection,
-    handler: &Arc<dyn QueueHandler>,
+    ctx: &C,
+    handler: &Arc<dyn QueueHandler<C>>,
     payload: &serde_json::Value,
     config: &DispatcherConfig,
     id: i64,
@@ -244,7 +248,7 @@ async fn deliver_one(
     // 捕获订阅者 panic：handler 的 panic 不得传播到分发任务（否则会经
     // server 的 join_task resume_unwind 拖垮整个 HTTP 服务）。
     // panic 按终态失败记录（不重试），SAVEPOINT 回滚 handler 的部分写入。
-    let handle_result = AssertUnwindSafe(handler.handle(tx, payload.clone()))
+    let handle_result = AssertUnwindSafe(handler.handle(ctx, payload.clone()))
         .catch_unwind()
         .await;
     match handle_result {
@@ -531,7 +535,7 @@ mod tests {
         }
     }
 
-    impl QueueHandler for TestHandler {
+    impl<C: Send + Sync + 'static> QueueHandler<C> for TestHandler {
         fn topic(&self) -> &'static str {
             self.topic
         }
@@ -540,7 +544,7 @@ mod tests {
         }
         fn handle<'a>(
             &'a self,
-            _tx: &'a mut PgConnection,
+            _ctx: &'a C,
             _payload: Value,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
             let attempt = self.calls.fetch_add(1, Ordering::SeqCst);
@@ -605,13 +609,15 @@ mod tests {
         let handler_b = TestHandler::ok("slab.test.evt", "listener_b");
         let calls_a = handler_a.calls.clone();
         let calls_b = handler_b.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(handler_a).register(handler_b);
         let registry = registry.freeze();
 
         let id = enqueue(&pool, "slab.test.evt", 5).await;
 
-        let processed = run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        let processed = run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(processed, 1);
         assert_eq!(calls_a.load(Ordering::SeqCst), 1);
         assert_eq!(calls_b.load(Ordering::SeqCst), 1);
@@ -623,7 +629,7 @@ mod tests {
     /// 测试监听者：handle 中直接 panic。
     struct PanicHandler;
 
-    impl QueueHandler for PanicHandler {
+    impl<C: Send + Sync + 'static> QueueHandler<C> for PanicHandler {
         fn topic(&self) -> &'static str {
             "slab.test.evt"
         }
@@ -632,7 +638,7 @@ mod tests {
         }
         fn handle<'a>(
             &'a self,
-            _tx: &'a mut PgConnection,
+            _ctx: &'a C,
             _payload: Value,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
             Box::pin(async { panic!("kaboom") })
@@ -642,14 +648,16 @@ mod tests {
     #[sqlx::test]
     async fn handler_panic_is_terminal_failure_not_crash(pool: PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(PanicHandler);
         let registry = registry.freeze();
 
         let id = enqueue(&pool, "slab.test.evt", 1).await;
 
         // 订阅者 panic 被接缝处捕获：run_one_cycle 正常返回，不传播
-        let processed = run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        let processed = run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(processed, 1);
 
         let row = sqlx::query!(
@@ -671,13 +679,15 @@ mod tests {
         let bad = TestHandler::failing("slab.test.evt", "listener_bad");
         let calls_ok = ok.calls.clone();
         let calls_bad = bad.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(ok).register(bad);
         let registry = registry.freeze();
 
         let id = enqueue(&pool, "slab.test.evt", 1).await; // 1 次尝试即终态
 
-        let processed = run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        let processed = run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(processed, 1);
         // 两个监听者都被触发
         assert_eq!(calls_ok.load(Ordering::SeqCst), 1);
@@ -696,14 +706,16 @@ mod tests {
         let ok = TestHandler::ok("slab.test.evt", "listener_ok");
         let flaky = TestHandler::flaky("slab.test.evt", "listener_flaky", 1);
         let calls_flaky = flaky.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(ok).register(flaky);
         let registry = registry.freeze();
 
         let id = enqueue(&pool, "slab.test.evt", 2).await;
 
         // 第一轮：ok delivered，flaky 退避（pending, attempts=1）
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(delivery_status(&pool, id, "listener_ok").await, (2, 0));
         let (status, attempts) = delivery_status(&pool, id, "listener_flaky").await;
         assert_eq!(status, 1);
@@ -727,7 +739,9 @@ mod tests {
         .await
         .unwrap();
 
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(calls_flaky.load(Ordering::SeqCst), 2);
         assert_eq!(delivery_status(&pool, id, "listener_flaky").await, (2, 1));
         assert_eq!(queue_status(&pool, id).await, 2); // 全部完成 → delivered
@@ -742,14 +756,16 @@ mod tests {
         let b = TestHandler::flaky("slab.test.evt", "listener_b", 1);
         let calls_a = a.calls.clone();
         let calls_b = b.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(a).register(b);
         let registry = registry.freeze();
 
         let id = enqueue(&pool, "slab.test.evt", 2).await;
 
         // 第一轮：双方都失败 → 各自退避（pending, attempts=1）
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(calls_a.load(Ordering::SeqCst), 1);
         assert_eq!(calls_b.load(Ordering::SeqCst), 1);
         assert_eq!(delivery_status(&pool, id, "listener_a").await, (1, 1));
@@ -773,7 +789,9 @@ mod tests {
         .unwrap();
 
         // 第二轮：只执行 A（成功）；B 未到期不得执行
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(calls_a.load(Ordering::SeqCst), 2);
         assert_eq!(
             calls_b.load(Ordering::SeqCst),
@@ -792,7 +810,7 @@ mod tests {
         // 但 pending 投递仍会被拉取执行，执行后行保持 failed。
         let ok = TestHandler::ok("slab.test.evt", "listener_pending");
         let calls_ok = ok.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(ok);
         let registry = registry.freeze();
 
@@ -817,7 +835,9 @@ mod tests {
         .await
         .unwrap();
 
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         // pending 投递被拉取执行成功；终态失败仍在 → 行状态 = failed
         assert_eq!(calls_ok.load(Ordering::SeqCst), 1);
         assert_eq!(delivery_status(&pool, id, "listener_pending").await, (2, 0));
@@ -828,11 +848,13 @@ mod tests {
     #[sqlx::test]
     async fn message_without_handler_goes_terminal_failure(pool: PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let registry = Registry::default().freeze();
+        let registry = Registry::<()>::default().freeze();
 
         let id = enqueue(&pool, "slab.no.subscriber", 5).await;
 
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(queue_status(&pool, id).await, 3);
         let row = sqlx::query!("SELECT last_error FROM queues WHERE id = $1", id,)
             .fetch_one(&pool)
@@ -846,19 +868,23 @@ mod tests {
         run_migrations(&pool).await.expect("run migrations");
         // 消息先入队，此时无人订阅 → 终态失败，不会投递给后到的监听者
         let id = enqueue(&pool, "slab.late.evt", 5).await;
-        let registry = Registry::default().freeze();
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        let registry = Registry::<()>::default().freeze();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(queue_status(&pool, id).await, 3);
 
         // 监听者后注册，重新入队一条消息 → 正常投递
         let handler = TestHandler::ok("slab.late.evt", "listener_late");
         let calls = handler.calls.clone();
-        let mut registry = Registry::default();
+        let mut registry = Registry::<()>::default();
         registry.register(handler);
         let registry = registry.freeze();
 
         let id2 = enqueue(&pool, "slab.late.evt", 5).await;
-        run_one_cycle(&pool, &registry, &config()).await.unwrap();
+        run_one_cycle(&pool, &(), &registry, &config())
+            .await
+            .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(queue_status(&pool, id2).await, 2);
     }

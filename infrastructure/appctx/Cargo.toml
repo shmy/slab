@@ -31,4 +31,5 @@ blob = { workspace = true }
 tracing = { workspace = true }
 flow = { workspace = true }
 cache = { workspace = true }
+queue = { workspace = true }
 tempfile = { version = "3", optional = true }

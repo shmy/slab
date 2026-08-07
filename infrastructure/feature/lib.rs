@@ -9,8 +9,8 @@ use utoipa_axum::router::OpenApiRouter;
 ///
 /// `FeatureModule::register` 中被域模块填充，随后由 server 消费。
 pub struct ModuleRegistrar {
-    /// 队列消费 handler。
-    pub queue: Registry,
+    /// 队列消费 handler（消费上下文为 `AppCtx`）。
+    pub queue: Registry<AppCtx>,
     /// 定时任务（cron）。
     pub scheduler: CronScheduler<AppCtx>,
 }

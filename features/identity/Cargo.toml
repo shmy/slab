@@ -6,6 +6,11 @@ edition = "2024"
 [lib]
 path = "lib.rs"
 
+[features]
+# 缓存后端转发（与 server/appctx 的 kv-* 模式一致）：测试选择后端，如 `cargo test -p identity --features kv-redb`
+kv-redb = ["appctx/kv-redb"]
+kv-redis = ["appctx/kv-redis"]
+
 [dependencies]
 appctx = { workspace = true }
 audit_contract = { workspace = true }

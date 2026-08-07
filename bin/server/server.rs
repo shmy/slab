@@ -1,10 +1,8 @@
 use std::net::SocketAddr;
 
-use appctx::PgPool;
 use axum::Router;
 use feature::ModuleRegistrar;
 use lazy_limit::{Duration, RuleConfig};
-use queue::{DispatcherConfig, run_dispatcher};
 use rootcause::{Report, Result, report};
 use tokio::net::TcpListener;
 use tokio::sync::watch::Receiver;
@@ -47,7 +45,8 @@ pub async fn serve(cli: Cli) -> Result<()> {
 
     let server_fut = tokio::spawn(start_http_server(listener, router, shutdown.subscribe()));
     let dispatcher_fut = tokio::spawn(start_dispatcher(
-        state.pg_pool.clone(),
+        state.queue.clone(),
+        state.clone(),
         frozen_registry,
         shutdown.subscribe(),
     ));
@@ -96,11 +95,12 @@ async fn start_http_server(listener: TcpListener, app: Router, rx: Receiver<bool
 }
 
 async fn start_dispatcher(
-    pg_pool: PgPool,
-    registry: queue::FrozenRegistry,
+    backend: queue::QueueBackend,
+    ctx: appctx::AppCtx,
+    registry: queue::FrozenRegistry<appctx::AppCtx>,
     rx: Receiver<bool>,
 ) -> Result<()> {
-    run_dispatcher(pg_pool, registry, DispatcherConfig::default(), rx).await
+    backend.run_dispatcher(ctx, registry, rx).await
 }
 
 fn join_task(

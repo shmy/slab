@@ -5,14 +5,14 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use cache::Backend;
+use cache::KvBackend;
 use jwt::{TokenBundle, TokenHelper, TokenRealm};
 use shared_contract::value_object::id::ID;
 use web::error::WebError;
 
 struct AuthVerifier<'a> {
     token_helper: &'a TokenHelper,
-    kv: &'a Backend,
+    kv: &'a KvBackend,
 }
 
 impl Verifier for AuthVerifier<'_> {
@@ -42,7 +42,7 @@ impl Verifier for AuthVerifier<'_> {
 async fn run_auth(
     realm: TokenRealm,
     token_bundle: &TokenBundle,
-    kv: &Backend,
+    kv: &KvBackend,
     request: Request,
     next: Next,
 ) -> Response {
@@ -59,7 +59,7 @@ async fn run_auth(
 
 pub async fn customer_auth_middleware(
     State(token_bundle): State<TokenBundle>,
-    State(kv): State<Backend>,
+    State(kv): State<KvBackend>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -68,7 +68,7 @@ pub async fn customer_auth_middleware(
 
 pub async fn account_auth_middleware(
     State(token_bundle): State<TokenBundle>,
-    State(kv): State<Backend>,
+    State(kv): State<KvBackend>,
     request: Request,
     next: Next,
 ) -> Response {
