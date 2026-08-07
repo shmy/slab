@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_web_json_body_keys_exist_in_both_locales() {
-        // web 层 serde 反序列化分类 key（`WebError::InvalidRequestBody` 携带，非 L10n 字面量，
+        // web 层反序列化分类 key（`WebError::Invalid*Params` / `InvalidRequestBody` 携带，非 L10n 字面量，
         // 结构性测试扫不到，这里显式钉死双语言翻译存在性）。
         for key in [
             "invalid_request_body",
@@ -181,6 +181,15 @@ mod tests {
             "json_body_unknown_field",
             "json_body_duplicate_field",
             "json_body_trailing",
+            "query_missing_field",
+            "query_invalid_type",
+            "query_unknown_field",
+            "query_duplicate_field",
+            "query_invalid",
+            "path_params_invalid_type",
+            "path_params_parse_error",
+            "path_params_wrong_count",
+            "invalid_path_params",
         ] {
             assert!(
                 try_translate("en-US", key).is_some(),
@@ -191,6 +200,28 @@ mod tests {
                 "missing key `{key}` in zh-CN locales"
             );
         }
+    }
+
+    #[test]
+    fn test_query_and_path_keys_interpolate_field() {
+        let args = [("field", "page".to_string())];
+        assert_eq!(
+            translate_with_args("zh-CN", "query_invalid_type", &args),
+            "查询参数 page 类型不正确"
+        );
+        assert_eq!(
+            translate_with_args("en-US", "query_missing_field", &args),
+            "Missing required query parameter: page"
+        );
+        let args = [("field", "id".to_string())];
+        assert_eq!(
+            translate_with_args("zh-CN", "path_params_invalid_type", &args),
+            "路径参数 id 类型不正确"
+        );
+        assert_eq!(
+            translate_with_args("en-US", "path_params_parse_error", &args),
+            "Failed to parse path parameter: id"
+        );
     }
 
     #[test]

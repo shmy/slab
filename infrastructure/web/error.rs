@@ -11,9 +11,11 @@ pub enum WebError {
     /// `field` 为出错字段的完整路径（serde_path_to_error 提供，可 None）。
     InvalidRequestBody { key: String, field: Option<String> },
     /// Path 参数无法反序列化到目标类型（如 `{id}` 与路径参数类型不匹配）。
-    InvalidPathParams(String),
+    /// `key` 为 l10n key，`field` 为出错的路径参数名（可 None）。
+    InvalidPathParams { key: String, field: Option<String> },
     /// Query 字符串无法反序列化到目标类型。
-    InvalidQueryParams(String),
+    /// `key` 为 l10n key，`field` 为出错的查询字段路径（可 None）。
+    InvalidQueryParams { key: String, field: Option<String> },
     /// 本地化 KEY
     L10n(String),
 }
@@ -21,9 +23,9 @@ pub enum WebError {
 impl fmt::Display for WebError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WebError::InvalidRequestBody { key, .. } => write!(f, "{key}"),
-            WebError::InvalidPathParams(s) => write!(f, "{s}"),
-            WebError::InvalidQueryParams(s) => write!(f, "{s}"),
+            WebError::InvalidRequestBody { key, .. }
+            | WebError::InvalidPathParams { key, .. }
+            | WebError::InvalidQueryParams { key, .. } => write!(f, "{key}"),
             WebError::L10n(s) => write!(f, "{s}"),
         }
     }
@@ -35,8 +37,8 @@ impl WebError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             WebError::InvalidRequestBody { .. }
-            | WebError::InvalidPathParams(_)
-            | WebError::InvalidQueryParams(_) => StatusCode::BAD_REQUEST,
+            | WebError::InvalidPathParams { .. }
+            | WebError::InvalidQueryParams { .. } => StatusCode::BAD_REQUEST,
             WebError::L10n(key) => l10n_status_code(key),
         }
     }
@@ -44,8 +46,8 @@ impl WebError {
     pub fn problem_type(&self) -> &'static str {
         match self {
             WebError::InvalidRequestBody { .. } => "urn:slab:problem:invalid-request-body",
-            WebError::InvalidPathParams(_) => "urn:slab:problem:invalid-path-params",
-            WebError::InvalidQueryParams(_) => "urn:slab:problem:invalid-query-params",
+            WebError::InvalidPathParams { .. } => "urn:slab:problem:invalid-path-params",
+            WebError::InvalidQueryParams { .. } => "urn:slab:problem:invalid-query-params",
             WebError::L10n(key) => match l10n_status_code(key) {
                 StatusCode::UNAUTHORIZED => "urn:slab:problem:unauthorized",
                 StatusCode::INTERNAL_SERVER_ERROR => "urn:slab:problem:internal-server-error",
@@ -57,8 +59,8 @@ impl WebError {
     pub fn problem_title(&self) -> &'static str {
         match self {
             WebError::InvalidRequestBody { .. } => "Invalid request body",
-            WebError::InvalidPathParams(_) => "Invalid path parameters",
-            WebError::InvalidQueryParams(_) => "Invalid query parameters",
+            WebError::InvalidPathParams { .. } => "Invalid path parameters",
+            WebError::InvalidQueryParams { .. } => "Invalid query parameters",
             WebError::L10n(key) => match l10n_status_code(key) {
                 StatusCode::UNAUTHORIZED => "Unauthorized",
                 StatusCode::INTERNAL_SERVER_ERROR => "Internal server error",
@@ -70,8 +72,8 @@ impl WebError {
     pub fn error_code(&self) -> &str {
         match self {
             WebError::InvalidRequestBody { .. } => "invalid_request_body",
-            WebError::InvalidPathParams(_) => "invalid_path_params",
-            WebError::InvalidQueryParams(_) => "invalid_query_params",
+            WebError::InvalidPathParams { .. } => "invalid_path_params",
+            WebError::InvalidQueryParams { .. } => "invalid_query_params",
             WebError::L10n(key) => key.as_str(),
         }
     }

@@ -7530,10 +7530,12 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum_typed_multipart",
+ "form_urlencoded",
  "rootcause",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "shared_contract",
  "tokio",
  "tracing",

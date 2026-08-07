@@ -1,14 +1,17 @@
 use std::ops::Deref;
 
-use axum::extract::{FromRequestParts, Query};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
 use validify::Validify;
 
 use crate::error::WebError;
 
+use super::classify::classify_serde_message;
+
 /// Query 提取器：反序列化后执行 **validify** 校验。
-/// 反序列化失败 → [`WebError::InvalidQueryParams`]；校验失败 → [`WebError::InvalidQueryParams`]（携带 l10n key）。
+/// 反序列化失败 → [`WebError::InvalidQueryParams`]（l10n key + 字段路径）；校验失败 → 同上（l10n key）。
+/// 反序列化走 serde_urlencoded + serde_path_to_error（与 Axum `Query` 内部同构，但保留字段路径）。
 #[derive(Debug, Clone)]
 pub struct ValidQuery<T>(pub T);
 
@@ -27,13 +30,86 @@ where
 {
     type Rejection = WebError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let Query(mut inner) = Query::<T>::from_request_parts(parts, state)
-            .await
-            .map_err(|r| WebError::InvalidQueryParams(r.body_text()))?;
-        inner
-            .validify()
-            .map_err(|e| WebError::InvalidQueryParams(super::validify_util::errors_to_key(e)))?;
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let query = parts.uri.query().unwrap_or_default();
+        let deserializer =
+            serde_urlencoded::Deserializer::new(form_urlencoded::parse(query.as_bytes()));
+        let mut inner = serde_path_to_error::deserialize::<_, T>(deserializer)
+            .map_err(|e| query_error_to_web(&e))?;
+        inner.validify().map_err(|e| WebError::InvalidQueryParams {
+            key: super::validify_util::errors_to_key(e),
+            field: None,
+        })?;
         Ok(ValidQuery(inner))
+    }
+}
+
+fn query_error_to_web(e: &serde_path_to_error::Error<serde_urlencoded::de::Error>) -> WebError {
+    let path = e.path().to_string();
+    let msg = e.inner().to_string();
+    tracing::debug!(path = %path, error = %msg, "query string rejected");
+    let (kind, field) = classify_serde_message(&path, &msg);
+    let key = match kind {
+        "missing_field" => "query_missing_field",
+        "invalid_type" => "query_invalid_type",
+        "unknown_field" => "query_unknown_field",
+        "duplicate_field" => "query_duplicate_field",
+        _ => "query_invalid",
+    };
+    WebError::InvalidQueryParams {
+        key: key.to_string(),
+        field,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::query_error_to_web;
+    use crate::error::WebError;
+    use serde::Deserialize;
+    use serde::de::DeserializeOwned;
+
+    #[derive(Debug, Deserialize)]
+    struct QueryDto {
+        phone: String,
+        page: u32,
+    }
+
+    fn parse_query<T: DeserializeOwned + std::fmt::Debug>(
+        qs: &str,
+    ) -> serde_path_to_error::Error<serde_urlencoded::de::Error> {
+        let de = serde_urlencoded::Deserializer::new(form_urlencoded::parse(qs.as_bytes()));
+        serde_path_to_error::deserialize::<_, T>(de).unwrap_err()
+    }
+
+    fn expect_key_field(web: WebError) -> (String, Option<String>) {
+        match web {
+            WebError::InvalidQueryParams { key, field } => (key, field),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_field_maps_to_key_with_field() {
+        let e = parse_query::<QueryDto>("page=1");
+        let (key, field) = expect_key_field(query_error_to_web(&e));
+        assert_eq!(key, "query_missing_field");
+        assert_eq!(field.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn invalid_type_maps_to_key_with_field() {
+        let e = parse_query::<QueryDto>("phone=1&page=abc");
+        let (key, field) = expect_key_field(query_error_to_web(&e));
+        assert_eq!(key, "query_invalid_type");
+        assert_eq!(field.as_deref(), Some("page"));
+    }
+
+    #[test]
+    fn empty_query_missing_field() {
+        let e = parse_query::<QueryDto>("");
+        let (key, field) = expect_key_field(query_error_to_web(&e));
+        assert_eq!(key, "query_missing_field");
+        assert_eq!(field.as_deref(), Some("phone"));
     }
 }

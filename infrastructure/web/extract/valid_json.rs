@@ -93,18 +93,19 @@ fn l10n_key_and_field(path: &str, inner: &serde_json::Error) -> (&'static str, O
         }
         serde_json::error::Category::Io => ("invalid_request_body", None),
         serde_json::error::Category::Data => {
-            if msg.contains("missing field") {
-                ("json_body_missing_field", field_path(path, &msg))
-            } else if msg.contains("invalid type") {
-                ("json_body_invalid_type", non_empty(path))
-            } else if msg.contains("unknown field") {
-                ("json_body_unknown_field", field_path(path, &msg))
-            } else if msg.contains("duplicate field") {
-                ("json_body_duplicate_field", field_path(path, &msg))
-            } else {
-                ("invalid_request_body", non_empty(path))
-            }
+            let (kind, field) = super::classify::classify_serde_message(path, &msg);
+            (serde_body_key(kind), field)
         }
+    }
+}
+
+fn serde_body_key(kind: &str) -> &'static str {
+    match kind {
+        "missing_field" => "json_body_missing_field",
+        "invalid_type" => "json_body_invalid_type",
+        "unknown_field" => "json_body_unknown_field",
+        "duplicate_field" => "json_body_duplicate_field",
+        _ => "invalid_request_body",
     }
 }
 
@@ -117,31 +118,6 @@ fn serde_error_to_web(e: &PathError<serde_json::Error>) -> WebError {
         key: key.to_string(),
         field,
     }
-}
-
-/// `missing field \`phone\`` 等：取反引号内的字段名，与父级 `path` 拼接成完整路径。
-/// 注意 serde_path_to_error 对空路径的 Display 是 `"."`，需先归一为 `""`。
-fn field_path(path: &str, msg: &str) -> Option<String> {
-    let path = normalize_path(path);
-    let name = msg.split('`').nth(1).map(str::to_string)?;
-    Some(match path {
-        "" => name,
-        p => format!("{p}.{name}"),
-    })
-}
-
-fn non_empty(path: &str) -> Option<String> {
-    let path = normalize_path(path);
-    if path.is_empty() {
-        None
-    } else {
-        Some(path.to_string())
-    }
-}
-
-/// serde_path_to_error 空路径的 Display 为 `"."`，统一为 `""`。
-fn normalize_path(path: &str) -> &str {
-    if path == "." { "" } else { path }
 }
 
 #[cfg(test)]

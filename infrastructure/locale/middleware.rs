@@ -20,7 +20,9 @@ pub async fn l10n_middleware(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
     if let Some(err) = response.extensions().get::<WebError>() {
         let info = match err {
-            WebError::InvalidRequestBody { key, field } => match field {
+            WebError::InvalidRequestBody { key, field }
+            | WebError::InvalidQueryParams { key, field }
+            | WebError::InvalidPathParams { key, field } => match field {
                 Some(f) => translate_with_args(&locale, key, &[("field", f.clone())]),
                 None => translate(&locale, key),
             },
