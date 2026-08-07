@@ -5,7 +5,7 @@ use blob::Blob;
 use blob::CosConfig;
 #[cfg(feature = "blob-fs")]
 use blob::FsConfig;
-use cache::KvBackend;
+use kv::KvBackend;
 use db::{DbConfig, PgPool, connect};
 use queue::QueueBackend;
 use rootcause::Result;
@@ -24,7 +24,7 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     let kv = KvBackend::try_new_redb(&cli.cache.db_path)?;
     #[cfg(feature = "kv-redis")]
     let kv = {
-        use cache::{Pool, RedisConnectionManager};
+        use kv::{Pool, RedisConnectionManager};
         let manager = RedisConnectionManager::new(cli.cache.url.clone())?;
         let pool = Pool::builder().max_size(16).build(manager).await?;
         KvBackend::try_new_redis(pool).await?

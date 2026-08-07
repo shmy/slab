@@ -1,4 +1,4 @@
-//! 统一对象存储后端：`Blob` 枚举 + 方法门面（模式与 `infrastructure/cache`、`infrastructure/queue` 一致）。
+//! 统一对象存储后端：`Blob` 枚举 + 方法门面（模式与 `infrastructure/kv`、`infrastructure/queue` 一致）。
 //!
 //! 编译期按 feature 装配（可并存，AppCtx 组装处选择用哪个变体）：
 //! - `Cos`：feature `cos`（**默认**），腾讯云 COS / S3 兼容对象存储
@@ -59,7 +59,7 @@ impl Debug for Blob {
 
 impl Blob {
     /// 各后端构造器独立命名：同名 `try_new` 在 feature 并集下会因方法重名冲突（Rust 无重载），
-    /// 拆名后 cos 与 fs 可并存（与 cache 的 `try_new_pg/redb/redis` 同构）。
+    /// 拆名后 cos 与 fs 可并存（与 kv 的 `try_new_pg/redb/redis` 同构）。
     #[cfg(feature = "cos")]
     pub async fn try_new_cos<'a>(config: CosConfig<'a>) -> Result<Self> {
         Ok(Self::Cos(Cos::try_new(config).await?))

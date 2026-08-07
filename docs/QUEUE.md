@@ -4,7 +4,7 @@
 
 ## 1. 后端架构与选型
 
-`queue` 提供统一门面 `QueueBackend` 枚举 + 方法 API（模式与 `infrastructure/cache` 一致），后端编译期按 feature 装配：
+`queue` 提供统一门面 `QueueBackend` 枚举 + 方法 API（模式与 `infrastructure/kv` 一致），后端编译期按 feature 装配：
 
 | 后端 | feature | 实现 | 入队语义 | 消费 |
 |------|---------|------|---------|------|

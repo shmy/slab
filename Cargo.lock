@@ -56,11 +56,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "blob",
- "cache",
  "db",
  "flow",
  "http_client",
  "jwt",
+ "kv",
  "queue",
  "tracing",
 ]
@@ -776,25 +776,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "cache"
-version = "0.1.0"
-dependencies = [
- "bb8-redis",
- "chrono",
- "db",
- "migration",
- "redb",
- "redis",
- "rootcause",
- "serde",
- "serde_json",
- "sqlx 0.9.0",
- "tempfile",
- "testcontainers-modules",
- "tokio",
 ]
 
 [[package]]
@@ -2380,8 +2361,8 @@ version = "0.1.0"
 dependencies = [
  "authn_kit",
  "axum",
- "cache",
  "jwt",
+ "kv",
  "shared_contract",
  "web",
 ]
@@ -2646,12 +2627,12 @@ dependencies = [
  "audit_contract",
  "authn_kit",
  "axum",
- "cache",
  "db",
  "feature",
  "futures-util",
  "http_auth",
  "identity_contract",
+ "kv",
  "migration",
  "queue",
  "rootcause",
@@ -3056,6 +3037,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
 dependencies = [
  "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "kv"
+version = "0.1.0"
+dependencies = [
+ "bb8-redis",
+ "chrono",
+ "db",
+ "migration",
+ "redb",
+ "redis",
+ "rootcause",
+ "serde",
+ "serde_json",
+ "sqlx 0.9.0",
+ "tempfile",
+ "testcontainers-modules",
+ "tokio",
 ]
 
 [[package]]
@@ -5615,7 +5615,6 @@ dependencies = [
  "axum-governor",
  "axum-tracing-opentelemetry",
  "blob",
- "cache",
  "clap",
  "customer",
  "db",
@@ -5628,6 +5627,7 @@ dependencies = [
  "humantime",
  "identity",
  "item",
+ "kv",
  "lazy-limit",
  "locale",
  "migration",

@@ -66,7 +66,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 数据库 | PostgreSQL + sqlx 0.9 |
 | 消息队列 | 可插拔：Pg Outbox（默认）/ NATS JetStream（`infrastructure/queue`） |
 | 流程编排 | sayiir 持久化工作流（`infrastructure/flow`） |
-| 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/cache`） |
+| 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/kv`） |
 | 鉴权 | JWT（access + refresh，双 realm） |
 | 定时任务 | tokio-cron-scheduler（`sched_kit`） |
 | 对象存储 | 可插拔后端：腾讯云 COS（默认）/ 本地文件系统（`infrastructure/blob`） |
@@ -118,7 +118,7 @@ cargo test -p server arch_test
 - `docs/ARCHITECTURE.md` — 完整架构说明
 - `docs/FLOW.md` — 流程引擎（sayiir 工作流）设计
 - `docs/QUEUE.md` — 队列设计
-- `docs/CACHE.md` — 缓存设计
+- `docs/KV.md` — KV 缓存设计
 - `docs/E2E_HURL.md` — E2E 测试约定
 - `AGENTS.md` — AI 助手上下文
 

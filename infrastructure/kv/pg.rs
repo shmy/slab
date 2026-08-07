@@ -20,11 +20,11 @@ pub struct PgCache {
 }
 
 impl PgCache {
-    /// 供 `KvBackend::try_new_pg` 调用；幂等建表（cache crate 自管表结构，不依赖 migration 版本）。
+    /// 供 `KvBackend::try_new_pg` 调用；幂等建表（kv crate 自管表结构，不依赖 migration 版本）。
     #[cfg(feature = "pg")]
     pub(crate) async fn try_new(pool: PgPool) -> Result<Self> {
         let mut conn = pool.acquire().await?;
-        // 幂等建表：cache crate 自管表结构（不依赖 migration 版本）。
+        // 幂等建表：kv crate 自管表结构（不依赖 migration 版本）。
         sqlx::query(
             r#"
             CREATE UNLOGGED TABLE IF NOT EXISTS _pg_caches (

@@ -36,7 +36,6 @@ members = [
     "infrastructure/appctx",
     "infrastructure/approval",
     "infrastructure/blob",
-    "infrastructure/cache",
     "infrastructure/code_gen",
     "infrastructure/costing",
     "infrastructure/db",
@@ -95,7 +94,7 @@ axum_typed_multipart = { version = "0.16", default-features = false, features = 
 blake3 = { version = "1.8", default-features = false }
 blob = { path = "infrastructure/blob" }
 bytes = { version = "1", default-features = false }
-cache = { path = "infrastructure/cache" }
+kv = { path = "infrastructure/kv" }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4.6", default-features = false, features = [
     "std",

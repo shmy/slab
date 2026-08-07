@@ -1,4 +1,4 @@
-//! 队列后端：`QueueBackend` 枚举 + 方法门面（模式与 `infrastructure/cache` 一致）。
+//! 队列后端：`QueueBackend` 枚举 + 方法门面（模式与 `infrastructure/kv` 一致）。
 //!
 //! - `PgBackend`：feature `pg`（**默认**），Outbox 表 + 进程内 dispatcher，入队与业务同事务。
 //! - `NatsBackend`：feature `nats`，JetStream 直发（延迟用 ADR-51 schedule），入队不参与 PG 事务。
@@ -49,7 +49,7 @@ pub enum QueueBackend {
 
 impl QueueBackend {
     /// 各后端构造器独立命名：同名 `try_new` 在 feature 并集下会因方法重名冲突（Rust 无重载），
-    /// 拆名后 pg 与 nats 可并存（与 cache 的 `try_new_pg/redb/redis` 同构）。
+    /// 拆名后 pg 与 nats 可并存（与 kv 的 `try_new_pg/redb/redis` 同构）。
     #[cfg(feature = "pg")]
     pub async fn try_new_pg(pg_pool: PgPool) -> Result<Self> {
         Ok(Self::Pg(PgBackend::try_new(pg_pool).await?))

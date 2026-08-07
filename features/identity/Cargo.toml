@@ -16,7 +16,7 @@ appctx = { workspace = true }
 audit_contract = { workspace = true }
 authn_kit = { workspace = true }
 axum = { workspace = true }
-cache = { workspace = true }
+kv = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
 futures-util = { workspace = true }

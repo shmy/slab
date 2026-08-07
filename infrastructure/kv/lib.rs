@@ -33,10 +33,10 @@ pub use redb::RedbCache;
 pub use redis::RedisCache;
 
 #[cfg(not(any(feature = "pg", feature = "redb", feature = "redis")))]
-compile_error!("cache crate requires feature \"pg\", \"redb\" or \"redis\"");
+compile_error!("kv crate requires feature \"pg\", \"redb\" or \"redis\"");
 // redb/redis 后端互斥（嵌入式单实例 vs 跨实例共享，语义二选一；与 server 的 kv-* 互斥声明一致）。
 #[cfg(all(feature = "redb", feature = "redis"))]
-compile_error!("cache: features \"redb\" and \"redis\" are mutually exclusive (开启其一)");
+compile_error!("kv: features \"redb\" and \"redis\" are mutually exclusive (开启其一)");
 
 /// 缓存后端句柄：克隆共享、方法即 API。
 #[derive(Clone)]

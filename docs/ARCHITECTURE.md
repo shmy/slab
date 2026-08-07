@@ -54,7 +54,7 @@
 
 - `db`：数据库连接与连接池（`PgPool`）
 - `queue`：可插拔队列后端——Pg Outbox（默认）/ NATS JetStream（`docs/QUEUE.md`）
-- `cache`：可插拔缓存后端——Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`docs/CACHE.md`）
+- `kv`：可插拔 KV 缓存后端——Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`docs/KV.md`）
 - `blob`：对象存储（腾讯云 COS / 本地 FS，opendal 可插拔后端）
 - `jwt`：JWT 令牌生成/验证
 - `http_client`：HTTP 客户端（reqwest）
@@ -116,7 +116,7 @@
 | `0007_create_production_tables` | 生产（work_orders、production_receipts 等） |
 | `0008_create_p4_foundations` | 财务/计划（payments、item_costs 等） |
 
-另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/CACHE.md`）。
+另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/KV.md`）。
 
 ### 5.2 事件消费现状
 

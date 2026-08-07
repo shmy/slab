@@ -1,6 +1,6 @@
 use appctx::TokenHelper;
 use authn_kit::{access_jti_key, refresh_key, subject_refresh_key};
-use cache::KvBackend;
+use kv::KvBackend;
 use identity_contract::error::IdentityError;
 use rootcause::Result;
 use shared_contract::value_object::id::ID;
@@ -15,7 +15,7 @@ pub(crate) struct TokenPair {
 
 /// 签发令牌：写入缓存后端（可丢辅助数据）。
 ///
-/// 不再参与调用方 PG 事务——缓存与业务主存解耦（见 `infrastructure/cache`）；
+/// 不再参与调用方 PG 事务——缓存与业务主存解耦（见 `infrastructure/kv`）；
 /// 调用方保证先提交业务事务再调用本函数，缓存失败不影响登录（吊销延迟到 TTL 过期）。
 #[tracing::instrument(skip(kv, token_helper))]
 pub async fn issue_tokens(

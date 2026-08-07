@@ -1,6 +1,6 @@
-# 缓存后端（`cache`）
+# KV 缓存后端（`kv`）
 
-本文描述 `infrastructure/cache` 的语义、后端选型、边界与运维，与当前代码一致。
+本文描述 `infrastructure/kv` 的语义、后端选型、边界与运维，与当前代码一致。
 
 ## 1. 定位
 
@@ -9,7 +9,7 @@
 
 ## 2. 后端架构与选型
 
-`cache` 提供统一门面 `KvBackend` 枚举 + 方法 API，后端实现编译期按 feature 装配：
+`kv` 提供统一门面 `KvBackend` 枚举 + 方法 API，后端实现编译期按 feature 装配：
 
 | 后端 | feature | 实现 | 语义 |
 |------|---------|------|------|
@@ -19,7 +19,7 @@
 
 **选型规则**：
 
-- 默认（无显式选择）→ `PgCache`（cache crate 默认 feature；server 默认已切 `kv-redis`，见下）。
+- 默认（无显式选择）→ `PgCache`（kv crate 默认 feature；server 默认已切 `kv-redis`，见下）。
 - 单实例部署想解放 PG 连接池 → `kv-redb`（嵌入式本地文件）。
 - 多实例部署需要共享吊销/会话 → `kv-redis`（或保持 `kv-pg`）。
 
@@ -31,7 +31,7 @@
 | `cargo run -p server --no-default-features --features kv-pg,queue-pg,blob-fs` | `KvBackend::Pg` |
 | `cargo run -p server --no-default-features --features kv-redb,queue-pg,blob-fs` | `KvBackend::Redb`（配置 `CACHE_DB_PATH`） |
 
-`default = ["pg"]`（`cache` crate）保证任何依赖方无 feature 时也可独立编译；构造器按后端拆名（`try_new_pg` / `try_new_redb` / `try_new_redis`），pg 可与 redb/redis 并存，唯 redb+redis 互斥（见 §4）；server 默认 `kv-redis`，测试组装固定用 `new_for_test`（PG 池，见 §7）。
+`default = ["pg"]`（`kv` crate）保证任何依赖方无 feature 时也可独立编译；构造器按后端拆名（`try_new_pg` / `try_new_redb` / `try_new_redis`），pg 可与 redb/redis 并存，唯 redb+redis 互斥（见 §4）；server 默认 `kv-redis`，测试组装固定用 `new_for_test`（PG 池，见 §7）。
 
 ## 3. 数据模型
 
@@ -113,7 +113,7 @@ impl KvBackend {
 | `infrastructure/http_auth/middleware/authorize.rs` | 校验 access token 时 `get` 存储的 jti，与 JWT claims 比对，不匹配视为吊销。 |
 | `features/identity/endpoint/account_logout.rs` | 经 `token_ops::revoke_tokens` 清理缓存。 |
 | `bin/server/config.rs` | 按 feature 组装 `KvBackend`（kv-pg / kv-redb / kv-redis，互斥开启其一）。 |
-| `infrastructure/appctx/testing.rs` | 测试组装：固定 `KvBackend::new_for_test` 复用测试 PG 池（不随 kv-* 切换；各后端正确性由 cache crate 单测覆盖）。 |
+| `infrastructure/appctx/testing.rs` | 测试组装：固定 `KvBackend::new_for_test` 复用测试 PG 池（不随 kv-* 切换；各后端正确性由 kv crate 单测覆盖）。 |
 
 端点经 axum `State<KvBackend>` 提取（`AppCtx` 的 `FromRef`）。
 
@@ -121,10 +121,10 @@ impl KvBackend {
 
 | 路径 | 职责 |
 |------|------|
-| `infrastructure/cache/lib.rs` | `KvBackend` 枚举 + 方法门面 |
-| `infrastructure/cache/pg.rs` | `PgCache`（UNLOGGED 表） |
-| `infrastructure/cache/redb.rs` | `RedbCache`（redb 4） |
-| `infrastructure/cache/redis.rs` | `RedisCache`（bb8） |
+| `infrastructure/kv/lib.rs` | `KvBackend` 枚举 + 方法门面 |
+| `infrastructure/kv/pg.rs` | `PgCache`（UNLOGGED 表） |
+| `infrastructure/kv/redb.rs` | `RedbCache`（redb 4） |
+| `infrastructure/kv/redis.rs` | `RedisCache`（bb8） |
 | `bin/server/gc_jobs.rs` | `CacheGc` 过期清理 |
 | `features/identity/shared/token_ops.rs` | Token 与缓存协作 |
 | `.env.example` | `CACHE_DB_PATH` / `REDIS_URL` |
