@@ -11,6 +11,7 @@
 
 #[cfg(feature = "cos")]
 mod cos;
+mod error;
 #[cfg(feature = "fs")]
 mod fs;
 #[cfg(feature = "test-utils")]
@@ -38,14 +39,6 @@ pub use fs::{Fs, FsConfig};
 
 #[cfg(not(any(feature = "cos", feature = "fs")))]
 compile_error!("blob crate requires feature \"cos\" or \"fs\"");
-
-/// 对象存储后端错误（内部基础设施：永远 500，不进 locale，对齐 `libs/image_kit`）。
-#[derive(Debug, thiserror::Error)]
-pub enum BlobError {
-    /// 预签名直传仅 Cos 支持；fs / 内存后端无 HTTP 直传语义。
-    #[error("presigned upload is not supported by this blob backend")]
-    PresignUnsupported,
-}
 
 /// 对象存储后端句柄：克隆共享、方法即 API。
 #[derive(Clone)]
@@ -221,7 +214,6 @@ impl Blob {
 mod tests {
     use std::io::Cursor;
 
-    use futures_util::StreamExt as _;
     use tokio_util::io::ReaderStream;
 
     use super::*;

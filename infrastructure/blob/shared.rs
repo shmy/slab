@@ -15,9 +15,6 @@ use rootcause::Result;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
-#[cfg(any(feature = "fs", feature = "test-utils"))]
-use crate::BlobError;
-
 /// 后端共享内核：`opendal Operator` + 公网 `domain`。克隆共享。
 #[derive(Clone)]
 pub(crate) struct BackendCore {
@@ -120,6 +117,8 @@ impl BackendCore {
     /// 预签名直传仅对象存储（Cos）支持；供 fs / 内存后端返回明确错误（内部 500，不进 locale）。
     #[cfg(any(feature = "fs", feature = "test-utils"))]
     pub(crate) fn presign_unsupported() -> Result<String> {
+        use crate::error::BlobError;
+
         Err(BlobError::PresignUnsupported.into())
     }
 }
