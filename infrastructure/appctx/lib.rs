@@ -5,11 +5,11 @@ use std::fmt::Debug;
 
 use axum::extract::FromRef;
 pub use blob::Blob;
-pub use kv::KvBackend;
 pub use db::PgPool;
 pub use flow::Flow;
 pub use http_client::HttpClient;
 pub use jwt::{TokenBundle, TokenHelper, TokenRealm};
+pub use kv::KvBackend;
 pub use queue::QueueBackend;
 use tracing::info;
 

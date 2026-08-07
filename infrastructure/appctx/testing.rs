@@ -1,7 +1,7 @@
 use crate::{AppCtx, Blob, HttpClient, TokenBundle, TokenHelper, TokenRealm};
-use kv::KvBackend;
 use db::PgPool;
 use flow::Flow;
+use kv::KvBackend;
 use queue::QueueBackend;
 
 /// 构建用于集成测试的 `AppCtx`。

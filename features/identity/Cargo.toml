@@ -16,12 +16,12 @@ appctx = { workspace = true }
 audit_contract = { workspace = true }
 authn_kit = { workspace = true }
 axum = { workspace = true }
-kv = { workspace = true }
 db = { workspace = true }
 feature = { workspace = true }
 futures-util = { workspace = true }
 http_auth = { workspace = true }
 identity_contract = { workspace = true }
+kv = { workspace = true }
 queue = { workspace = true }
 rootcause = { workspace = true }
 sea-query = { workspace = true }

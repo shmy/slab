@@ -4,7 +4,7 @@
 //! - **TTL 自建**：值封装 `Entry { value, expires_at }`，`get` 惰性判活，`delete_expired` 扫表清理。
 //! - **原子 take**：get + remove 在同一写事务内（redb 写事务串行，天然原子）。
 //! - **单进程限制**：redb 数据库文件禁止多进程并行打开；多实例部署时每实例一份文件
-//!   （会话数据可丢，跨实例吊销语义见 `docs/CACHE.md` 演进记录——届时由 Redis 后端承担）。
+//!   （会话数据可丢，跨实例吊销语义见 `docs/KV.md` 演进记录——届时由 Redis 后端承担）。
 
 use std::{ops::Add, path::Path, sync::Arc, time::Duration};
 

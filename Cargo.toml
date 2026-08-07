@@ -94,7 +94,6 @@ axum_typed_multipart = { version = "0.16", default-features = false, features = 
 blake3 = { version = "1.8", default-features = false }
 blob = { path = "infrastructure/blob" }
 bytes = { version = "1", default-features = false }
-kv = { path = "infrastructure/kv" }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 clap = { version = "4.6", default-features = false, features = [
     "std",
@@ -133,6 +132,7 @@ jsonwebtoken = { version = "11", default-features = false, features = [
     "rust_crypto",
 ] }
 jwt = { path = "infrastructure/jwt" }
+kv = { path = "infrastructure/kv" }
 lazy-limit = { version = "1.0", default-features = false }
 locale = { path = "infrastructure/locale" }
 migration = { path = "infrastructure/migration" }

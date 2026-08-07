@@ -5,8 +5,8 @@ use blob::Blob;
 use blob::CosConfig;
 #[cfg(feature = "blob-fs")]
 use blob::FsConfig;
-use kv::KvBackend;
 use db::{DbConfig, PgPool, connect};
+use kv::KvBackend;
 use queue::QueueBackend;
 use rootcause::Result;
 use secrecy::ExposeSecret;
