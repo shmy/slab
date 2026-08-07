@@ -14,10 +14,11 @@ test-utils = [
     "jwt/test-utils",
     "blob/test-utils",
     "flow/test-utils",
-    "dep:tempfile",
-    "kv-pg",
+    "cache/test-utils",
+    "queue/test-utils",
 ]
-# 缓存后端转发（由 bin/server 的 kv-redb / kv-redis 统一开启；testing.rs 据此选择测试后端）
+# 缓存后端转发（由 bin/server 的 kv-redb / kv-redis 统一开启；testing.rs 固定用测试 PG 池，
+# 不随 kv-* 切换后端，各后端正确性由 cache crate 单测覆盖）
 kv-pg = ["cache/pg"]
 kv-redb = ["cache/redb"]
 kv-redis = ["cache/redis"]
@@ -32,4 +33,3 @@ tracing = { workspace = true }
 flow = { workspace = true }
 cache = { workspace = true }
 queue = { workspace = true }
-tempfile = { version = "3", optional = true }

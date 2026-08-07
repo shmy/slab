@@ -1,11 +1,11 @@
-//! 统一缓存后端：`Backend` 枚举 + 方法门面。
+//! 统一缓存后端：`KvBackend` 枚举 + 方法门面。
 //!
-//! 编译期按 feature 装配（可并存，AppCtx 组装处选择用哪个变体）：
+//! 编译期按 feature 装配（pg 可与 redb/redis 并存，唯 redb+redis 互斥；AppCtx 组装处选择用哪个变体）：
 //! - `PgCache`：feature `pg`（**默认**），PostgreSQL `caches` UNLOGGED 表
 //! - `RedbCache`：feature `redb`，redb 4 嵌入式 KV（可丢：`Durability::None`）
 //! - `RedisCache`：feature `redis`，bb8 连接池 + Redis（TTL 由 Redis 原生处理）
 //!
-//! 无 trait / 无 `dyn` / 无手动 Pin：`Backend` 内部 match 派发，方法签名稳定。
+//! 无 trait / 无 `dyn` / 无手动 Pin：`KvBackend` 内部 match 派发，方法签名稳定。
 
 #[cfg(feature = "pg")]
 mod pg;
@@ -34,7 +34,7 @@ pub use redis::RedisCache;
 
 #[cfg(not(any(feature = "pg", feature = "redb", feature = "redis")))]
 compile_error!("cache crate requires feature \"pg\", \"redb\" or \"redis\"");
-// redb/redis 后端互斥（`Backend::try_new` 同名不同签名，双开并集重复定义；与 server 的 kv-* 互斥声明一致）。
+// redb/redis 后端互斥（嵌入式单实例 vs 跨实例共享，语义二选一；与 server 的 kv-* 互斥声明一致）。
 #[cfg(all(feature = "redb", feature = "redis"))]
 compile_error!("cache: features \"redb\" and \"redis\" are mutually exclusive (开启其一)");
 
@@ -54,20 +54,27 @@ fn decode<T: DeserializeOwned>(raw: Option<String>) -> Option<T> {
 }
 
 impl KvBackend {
-    /// 仅当无 `redb` / `redis` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义。
-    #[cfg(all(feature = "pg", not(any(feature = "redb", feature = "redis"))))]
-    pub async fn try_new(pool: sqlx::PgPool) -> Result<Self> {
+    /// 各后端构造器独立命名：同名 `try_new` 在 feature 并集下会因方法重名冲突（Rust 无重载），
+    /// 拆名后 pg 可与 redb/redis 并存（唯 redb+redis 互斥，见上），测试 harness 因此能固定选用 `try_new_pg`。
+    #[cfg(feature = "pg")]
+    pub async fn try_new_pg(pool: sqlx::PgPool) -> Result<Self> {
         Ok(Self::Pg(PgCache::try_new(pool).await?))
     }
 
     #[cfg(feature = "redb")]
-    pub fn try_new(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn try_new_redb(path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self::Redb(RedbCache::try_new(path)?))
     }
 
     #[cfg(feature = "redis")]
-    pub async fn try_new(pool: Pool<RedisConnectionManager>) -> Result<Self> {
+    pub async fn try_new_redis(pool: Pool<RedisConnectionManager>) -> Result<Self> {
         Ok(Self::Redis(RedisCache::try_new(pool).await?))
+    }
+
+    /// 测试用后端：复用测试 PG 池（幂等建表）。与 `Blob::new_for_test` / `Flow::new_for_test` 同款测试构造。
+    #[cfg(feature = "test-utils")]
+    pub async fn new_for_test(pool: sqlx::PgPool) -> Result<Self> {
+        Self::try_new_pg(pool).await
     }
 
     /// 读缓存；未命中、已过期或反序列化失败返回 `None`（不区分）。

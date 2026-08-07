@@ -4,7 +4,7 @@
 
 ## 1. 后端架构与选型
 
-`queue` 提供统一门面 `Backend` 枚举 + 方法 API（模式与 `infrastructure/cache` 一致），后端编译期按 feature 装配：
+`queue` 提供统一门面 `QueueBackend` 枚举 + 方法 API（模式与 `infrastructure/cache` 一致），后端编译期按 feature 装配：
 
 | 后端 | feature | 实现 | 入队语义 | 消费 |
 |------|---------|------|---------|------|
@@ -126,7 +126,7 @@ WHERE message_id = <id> AND handler = '<name>';
 UPDATE queues SET next_attempt_at = NOW() WHERE id = <id>;
 ```
 
-## 7. 入队 API（`Backend` 方法门面）
+## 7. 入队 API（`QueueBackend` 方法门面）
 
 - `queue.enqueue_event(event)`：`event` 须实现 `Event` trait（携带 `TOPIC` 常量）。pg 写 outbox 表（内部自取连接）；nats 直发 JetStream。
 - `queue.enqueue_event_in_tx(tx, event)`：**强一致入队（pg 后端）**——与业务同一事务，回滚即不投递（Outbox 语义）。需要「业务提交成功则消息必落库」的可靠性时用（如创建类事件）；nats 后端无事务语义，等价于普通入队。
@@ -175,12 +175,12 @@ registrar.queue.register(BHandler);   // 同一 topic，同一消息两个监听
 
 | 路径                                                           | 职责                               |
 | -------------------------------------------------------------- | ---------------------------------- |
-| `infrastructure/queue/lib.rs`                     | `Backend` 枚举 + 方法门面 |
+| `infrastructure/queue/lib.rs`                     | `QueueBackend` 枚举 + 方法门面 |
 | `infrastructure/queue/pg.rs`                       | `PgBackend`（Outbox + dispatcher） |
 | `infrastructure/queue/nats.rs`                     | `NatsBackend`（JetStream 直发 + durable consumer） |
 | `infrastructure/migration/versions/0001_create_foundations.sql` | `fn_set_updated_at` 函数 |
 | `infrastructure/migration/versions/0009_create_queue_deliveries.sql` | 投递状态表与索引              |
-| `bin/server/config.rs`                             | 按 feature 组装 `queue::Backend`    |
+| `bin/server/config.rs`                             | 按 feature 组装 `queue::QueueBackend`    |
 | `bin/server/server.rs`                             | dispatcher 启动与 registry 构建    |
 | `bin/server/gc_jobs.rs`                            | 已投递行 GC（nats 后端为空操作）    |
 | `features/identity/subscriber/`                    | 各 topic 的 `QueueHandler` 实现    |

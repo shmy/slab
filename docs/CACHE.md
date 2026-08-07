@@ -9,7 +9,7 @@
 
 ## 2. 后端架构与选型
 
-`cache` 提供统一门面 `Backend` 枚举 + 方法 API，后端实现编译期按 feature 装配：
+`cache` 提供统一门面 `KvBackend` 枚举 + 方法 API，后端实现编译期按 feature 装配：
 
 | 后端 | feature | 实现 | 语义 |
 |------|---------|------|------|
@@ -19,19 +19,19 @@
 
 **选型规则**：
 
-- 默认（无显式选择）→ `PgCache`（零新增组件、与业务库同运维）。
+- 默认（无显式选择）→ `PgCache`（cache crate 默认 feature；server 默认已切 `kv-redis`，见下）。
 - 单实例部署想解放 PG 连接池 → `kv-redb`（嵌入式本地文件）。
 - 多实例部署需要共享吊销/会话 → `kv-redis`（或保持 `kv-pg`）。
 
-**feature 切换**（`bin/server`，互斥开启其一；未显式选择时默认 `kv-pg`）：
+**feature 切换**（`bin/server`，互斥开启其一；未显式选择时默认 `kv-redis`，切换后端用 `--no-default-features` 显式指定）：
 
 | 命令 | 后端 |
 |------|------|
-| `cargo run -p server`（默认） | `Backend::Pg` |
-| `cargo run -p server --features kv-redb` | `Backend::Redb`（配置 `CACHE_DB_PATH`） |
-| `cargo run -p server --features kv-redis` | `Backend::Redis`（配置 `REDIS_URL`） |
+| `cargo run -p server`（默认） | `KvBackend::Redis`（配置 `REDIS_URL`） |
+| `cargo run -p server --no-default-features --features kv-pg,queue-pg,blob-fs` | `KvBackend::Pg` |
+| `cargo run -p server --no-default-features --features kv-redb,queue-pg,blob-fs` | `KvBackend::Redb`（配置 `CACHE_DB_PATH`） |
 
-`default = ["pg"]`（`cache` crate）保证任何依赖方无 feature 时也可独立编译；`Backend` 变体共存，feature 并集不会冲突（`config.rs` / `testing.rs` 按优先级组装，见 §7）。
+`default = ["pg"]`（`cache` crate）保证任何依赖方无 feature 时也可独立编译；构造器按后端拆名（`try_new_pg` / `try_new_redb` / `try_new_redis`），pg 可与 redb/redis 并存，唯 redb+redis 互斥（见 §4）；server 默认 `kv-redis`，测试组装固定用 `new_for_test`（PG 池，见 §7）。
 
 ## 3. 数据模型
 
@@ -51,12 +51,12 @@
 
 - TTL 由 Redis 原生过期处理，`delete_expired` 返回 0（无需清扫）。
 
-## 4. API（`Backend` 方法门面）
+## 4. API（`KvBackend` 方法门面）
 
 ```rust
-pub enum Backend { Pg(PgCache), Redb(RedbCache), Redis(RedisCache) }
+pub enum KvBackend { Pg(PgCache), Redb(RedbCache), Redis(RedisCache) }
 
-impl Backend {
+impl KvBackend {
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>;
     pub async fn set_ex<T: Serialize + Send + Sync>(&self, key: &str, value: &T, period: Duration) -> Result<()>;
     pub async fn take<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>>;
@@ -73,7 +73,7 @@ impl Backend {
 | `del(key)` | 按 key 删除，不区分是否过期。 |
 | `delete_expired()` | 清理过期条目，返回删除条数（Redis 返回 0）。 |
 
-构造统一走 `Backend::try_new`（各后端同名，签名随 feature 变化：`PgPool` / 路径 / URL）或直接构造变体。
+构造走各后端独立构造器 `KvBackend::try_new_pg(pool)` / `try_new_redb(path)` / `try_new_redis(pool)`（签名随后端不同：`PgPool` / 路径 / bb8 Pool；拆名避免同名 `try_new` 在 feature 并集下的方法重名冲突），或直接构造变体；测试统一用 `KvBackend::new_for_test(pool)`（固定复用测试 PG 池）。
 
 ## 5. 运行时与 GC
 
@@ -112,16 +112,16 @@ impl Backend {
 | `features/identity/shared/token_ops.rs` | 签发 token 时写入 refresh / subject↔refresh / access jti；刷新时 `take` 消费 refresh；吊销时 `del`。 |
 | `infrastructure/http_auth/middleware/authorize.rs` | 校验 access token 时 `get` 存储的 jti，与 JWT claims 比对，不匹配视为吊销。 |
 | `features/identity/endpoint/account_logout.rs` | 经 `token_ops::revoke_tokens` 清理缓存。 |
-| `bin/server/config.rs` | 按 feature 组装 `Backend`（kv-pg / kv-redb / kv-redis，互斥）。 |
-| `infrastructure/appctx/testing.rs` | 测试组装：kv-redis > kv-redb > pg 兜底（默认 pg，复用测试 PG 池）。 |
+| `bin/server/config.rs` | 按 feature 组装 `KvBackend`（kv-pg / kv-redb / kv-redis，互斥开启其一）。 |
+| `infrastructure/appctx/testing.rs` | 测试组装：固定 `KvBackend::new_for_test` 复用测试 PG 池（不随 kv-* 切换；各后端正确性由 cache crate 单测覆盖）。 |
 
-端点经 axum `State<Backend>` 提取（`AppCtx` 的 `FromRef`）。
+端点经 axum `State<KvBackend>` 提取（`AppCtx` 的 `FromRef`）。
 
 ## 8. 相关路径速查
 
 | 路径 | 职责 |
 |------|------|
-| `infrastructure/cache/lib.rs` | `Backend` 枚举 + 方法门面 |
+| `infrastructure/cache/lib.rs` | `KvBackend` 枚举 + 方法门面 |
 | `infrastructure/cache/pg.rs` | `PgCache`（UNLOGGED 表） |
 | `infrastructure/cache/redb.rs` | `RedbCache`（redb 4） |
 | `infrastructure/cache/redis.rs` | `RedisCache`（bb8） |

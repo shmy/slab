@@ -1,4 +1,4 @@
-//! 队列后端：`Backend` 枚举 + 方法门面（模式与 `infrastructure/cache` 一致）。
+//! 队列后端：`QueueBackend` 枚举 + 方法门面（模式与 `infrastructure/cache` 一致）。
 //!
 //! - `PgBackend`：feature `pg`（**默认**），Outbox 表 + 进程内 dispatcher，入队与业务同事务。
 //! - `NatsBackend`：feature `nats`，JetStream 直发（延迟用 ADR-51 schedule），入队不参与 PG 事务。
@@ -19,7 +19,7 @@ mod status;
 
 use std::time::Duration;
 
-#[cfg(all(feature = "pg", not(feature = "nats")))]
+#[cfg(feature = "pg")]
 use db::PgPool;
 use rootcause::Result;
 #[cfg(feature = "pg")]
@@ -48,15 +48,22 @@ pub enum QueueBackend {
 }
 
 impl QueueBackend {
-    /// 仅当无 `nats` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义。
-    #[cfg(all(feature = "pg", not(feature = "nats")))]
-    pub async fn try_new(pg_pool: PgPool) -> Result<Self> {
+    /// 各后端构造器独立命名：同名 `try_new` 在 feature 并集下会因方法重名冲突（Rust 无重载），
+    /// 拆名后 pg 与 nats 可并存（与 cache 的 `try_new_pg/redb/redis` 同构）。
+    #[cfg(feature = "pg")]
+    pub async fn try_new_pg(pg_pool: PgPool) -> Result<Self> {
+        Ok(Self::Pg(PgBackend::try_new(pg_pool).await?))
+    }
+
+    /// 测试用后端：复用测试 PG 池（`PgBackend::try_new` 幂等建表，不依赖 NATS 实例）。
+    #[cfg(feature = "test-utils")]
+    pub async fn new_for_test(pg_pool: db::PgPool) -> Result<Self> {
         Ok(Self::Pg(PgBackend::try_new(pg_pool).await?))
     }
 
     /// NATS 后端：`config` 为 JetStream 连接参数；消费上下文（如 AppCtx）由 `run_dispatcher` 传入。
     #[cfg(feature = "nats")]
-    pub async fn try_new(config: NatsConfig) -> Result<Self> {
+    pub async fn try_new_nats(config: NatsConfig) -> Result<Self> {
         let nats = NatsBackend::try_new(config).await?;
         Ok(Self::Nats(Box::new(nats)))
     }

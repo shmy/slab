@@ -62,7 +62,6 @@ dependencies = [
  "http_client",
  "jwt",
  "queue",
- "tempfile",
  "tracing",
 ]
 

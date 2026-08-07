@@ -58,15 +58,15 @@ impl Debug for Blob {
 }
 
 impl Blob {
-    /// 仅当无 `fs` 时提供：避免与其它后端同名 `try_new` 在 feature 并集下重复定义
-    /// （cos 随 blob 默认特性恒在；fs 开启时 cos 分支让位，与 cache 的 pg / queue 的 pg 让位同构）。
-    #[cfg(all(feature = "cos", not(feature = "fs")))]
-    pub async fn try_new<'a>(config: CosConfig<'a>) -> Result<Self> {
+    /// 各后端构造器独立命名：同名 `try_new` 在 feature 并集下会因方法重名冲突（Rust 无重载），
+    /// 拆名后 cos 与 fs 可并存（与 cache 的 `try_new_pg/redb/redis` 同构）。
+    #[cfg(feature = "cos")]
+    pub async fn try_new_cos<'a>(config: CosConfig<'a>) -> Result<Self> {
         Ok(Self::Cos(Cos::try_new(config).await?))
     }
 
     #[cfg(feature = "fs")]
-    pub async fn try_new<'a>(config: FsConfig<'a>) -> Result<Self> {
+    pub async fn try_new_fs<'a>(config: FsConfig<'a>) -> Result<Self> {
         Ok(Self::Fs(Fs::try_new(config).await?))
     }
 

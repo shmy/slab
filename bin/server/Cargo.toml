@@ -10,15 +10,15 @@ path = "main.rs"
 [features]
 default = ["kv-redis", "queue-pg", "blob-fs"]
 # 缓存后端（互斥，开启其一）：
-#   kv-pg  → cache::Backend::Pg（PostgreSQL，跨实例共享）
-#   kv-redb  → cache::Backend::Redb（嵌入式，单实例）
-#   kv-redis → cache::Backend::Redis（bb8，跨实例共享）
+#   kv-pg  → cache::KvBackend::Pg（PostgreSQL，跨实例共享）
+#   kv-redb  → cache::KvBackend::Redb（嵌入式，单实例）
+#   kv-redis → cache::KvBackend::Redis（bb8，跨实例共享）
 kv-pg = ["cache/pg", "appctx/kv-pg"]
 kv-redb = ["cache/redb", "appctx/kv-redb"]
 kv-redis = ["cache/redis", "appctx/kv-redis"]
 # 队列后端（互斥，开启其一；默认 queue-pg）：
-#   queue-pg  → queue::Backend::Pg（Outbox 表 + 进程内 dispatcher，与业务同事务）
-#   queue-nats → queue::Backend::Nats（JetStream 直发，延迟用 ADR-51 schedule）
+#   queue-pg  → queue::QueueBackend::Pg（Outbox 表 + 进程内 dispatcher，与业务同事务）
+#   queue-nats → queue::QueueBackend::Nats（JetStream 直发，延迟用 ADR-51 schedule）
 queue-pg = ["queue/pg"]
 queue-nats = ["queue/nats"]
 # blob 后端（互斥，开启其一；默认 blob-cos）：

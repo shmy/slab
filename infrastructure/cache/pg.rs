@@ -20,8 +20,8 @@ pub struct PgCache {
 }
 
 impl PgCache {
-    /// 仅当 pg 为唯一后端时被 `Backend::try_new` 调用（并集下 pg 让位，避免 dead code）。
-    #[cfg(not(any(feature = "redb", feature = "redis")))]
+    /// 供 `KvBackend::try_new_pg` 调用；幂等建表（cache crate 自管表结构，不依赖 migration 版本）。
+    #[cfg(feature = "pg")]
     pub(crate) async fn try_new(pool: PgPool) -> Result<Self> {
         let mut conn = pool.acquire().await?;
         // 幂等建表：cache crate 自管表结构（不依赖 migration 版本）。
