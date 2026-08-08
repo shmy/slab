@@ -49,6 +49,7 @@ members = [
     "infrastructure/migration",
     "infrastructure/module",
     "infrastructure/web",
+    "infrastructure/worker",
     "libs/authn_kit",
     "libs/authz_kit",
     "libs/image_kit",
@@ -251,6 +252,7 @@ validify = { version = "2.0", default-features = false }
 warehouse = { path = "features/warehouse" }
 warehouse_contract = { path = "features/warehouse_contract" }
 web = { path = "infrastructure/web" }
+worker = { path = "infrastructure/worker" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
