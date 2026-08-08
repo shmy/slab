@@ -10,3 +10,5 @@
 |A级|Feature Flag|
 |B级|AI Agent|
 |B级|Workflow Designer|
+
+[ ] redis/redb/nats 环境变量整理
