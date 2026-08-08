@@ -1,6 +1,6 @@
 use appctx::AppCtx;
 use axum::extract::DefaultBodyLimit;
-use feature::FeatureModule;
+use module::DomainModule;
 use utoipa_axum::{
     router::{OpenApiRouter, UtoipaMethodRouterExt},
     routes,
@@ -13,7 +13,7 @@ const FILE_UPLOAD_BODY_LIMIT: usize = 3 * 1024 * 1024;
 
 pub struct Module;
 
-impl FeatureModule for Module {
+impl DomainModule for Module {
     fn name(&self) -> &'static str {
         "file"
     }

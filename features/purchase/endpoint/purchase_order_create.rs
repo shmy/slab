@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use purchase_contract::port::PurchasePort;
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ async fn execute(
     let id = ID::new();
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
-    let code = CodeGen::next_code(&mut txn, "seq_purchase_order", "PO").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_purchase_order", "PO").await?;
 
     let mut total_amount: i64 = 0;
     let mut lines: Vec<(ID, &CreateOrderLine)> = Vec::new();

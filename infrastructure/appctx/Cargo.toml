@@ -15,7 +15,7 @@ test-utils = [
     "blob/test-utils",
     "flow/test-utils",
     "kv/test-utils",
-    "queue/test-utils",
+    "event_bus/test-utils",
 ]
 # 缓存后端转发（由 bin/server 的 kv-redb / kv-redis 统一开启；testing.rs 固定用测试 PG 池，
 # 不随 kv-* 切换后端，各后端正确性由 kv crate 单测覆盖）
@@ -32,4 +32,4 @@ blob = { workspace = true }
 tracing = { workspace = true }
 flow = { workspace = true }
 kv = { workspace = true }
-queue = { workspace = true }
+event_bus = { workspace = true }

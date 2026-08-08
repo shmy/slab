@@ -1,4 +1,4 @@
-//! 统一对象存储后端：`Blob` 枚举 + 方法门面（模式与 `infrastructure/kv`、`infrastructure/queue` 一致）。
+//! 统一对象存储后端：`Blob` 枚举 + 方法门面（模式与 `infrastructure/kv`、`infrastructure/event_bus` 一致）。
 //!
 //! 编译期按 feature 装配（可并存，AppCtx 组装处选择用哪个变体）：
 //! - `Cos`：feature `cos`（**默认**），腾讯云 COS / S3 兼容对象存储

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::handler::QueueHandler;
+use crate::subscriber::Subscriber;
 
 /// topic → 监听者列表（广播：同一 topic 多个 handler）。
-type HandlerMap<C> = HashMap<&'static str, Vec<Arc<dyn QueueHandler<C>>>>;
+type HandlerMap<C> = HashMap<&'static str, Vec<Arc<dyn Subscriber<C>>>>;
 
 pub struct Registry<C: Send + Sync + 'static> {
     handlers: HandlerMap<C>,
@@ -25,14 +25,14 @@ impl<C: Send + Sync + 'static> Registry<C> {
     /// 投递行主键冲突、后者静默丢失），注册时立即 panic（fail fast）。
     pub fn register<H>(&mut self, handler: H) -> &mut Self
     where
-        H: QueueHandler<C>,
+        H: Subscriber<C>,
     {
         let topic = handler.topic();
         let name = handler.name();
         let entry = self.handlers.entry(topic).or_default();
         assert!(
             !entry.iter().any(|existing| existing.name() == name),
-            "queue handler name conflict: topic {topic:?} already has a handler named {name:?}"
+            "subscriber name conflict: topic {topic:?} already has a handler named {name:?}"
         );
         entry.push(Arc::new(handler));
         self
@@ -52,7 +52,7 @@ pub struct FrozenRegistry<C: Send + Sync + 'static> {
 
 impl<C: Send + Sync + 'static> FrozenRegistry<C> {
     /// 取某 topic 的所有监听者；无注册时返回 `None`（dispatcher 视为终态失败）。
-    pub(crate) fn get(&self, topic: &str) -> Option<&[Arc<dyn QueueHandler<C>>]> {
+    pub(crate) fn get(&self, topic: &str) -> Option<&[Arc<dyn Subscriber<C>>]> {
         self.handlers.get(topic).map(Vec::as_slice)
     }
 
@@ -60,7 +60,7 @@ impl<C: Send + Sync + 'static> FrozenRegistry<C> {
     #[cfg(feature = "nats")]
     pub(crate) fn iter(
         &self,
-    ) -> impl Iterator<Item = (&'static str, &Vec<Arc<dyn QueueHandler<C>>>)> {
+    ) -> impl Iterator<Item = (&'static str, &Vec<Arc<dyn Subscriber<C>>>)> {
         self.handlers.iter().map(|(k, v)| (*k, v))
     }
 }
@@ -75,7 +75,7 @@ mod tests {
 
     struct DummyHandler(&'static str, &'static str);
 
-    impl<C: Send + Sync + 'static> QueueHandler<C> for DummyHandler {
+    impl<C: Send + Sync + 'static> Subscriber<C> for DummyHandler {
         fn topic(&self) -> &'static str {
             self.0
         }

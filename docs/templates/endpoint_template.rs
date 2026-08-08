@@ -33,7 +33,7 @@
 // ====================================================================
 // -- 取消下面的注释块使用 --
 // use crate::repository::account_repository::AccountRepository;
-// use queue::enqueue_event;
+// use event_bus::publish;
 // #[derive(Debug, Deserialize, Validify, ToSchema)]
 // pub(crate) struct CreateResourceRequest {
 //     #[schema(example = "Tom")]
@@ -73,7 +73,7 @@
 //     let mut txn = conn.begin().await?;
 //     // let entity = SomeEntity { id, ... };
 //     // AccountRepository::create(&mut txn, &entity).await?;
-//     // enqueue_event(txn.as_mut(), &SomeEvent { id }).await?;
+//     // publish(txn.as_mut(), &SomeEvent { id }).await?;
 //     txn.commit().await?;
 //     Ok(CreateResourceResponse { id })
 // }

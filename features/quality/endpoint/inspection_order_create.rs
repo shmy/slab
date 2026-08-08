@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use quality_contract::entity::InspectionOrder;
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,7 @@ async fn execute(
     request: CreateInspectionOrderRequest,
 ) -> rootcause::Result<CreateInspectionOrderResponse> {
     let mut conn = pg_pool.acquire().await?;
-    let code = CodeGen::next_code(&mut conn, "seq_inspection_order", "IQC").await?;
+    let code = DocNumberer::next_number(&mut conn, "seq_inspection_order", "IQC").await?;
 
     let id = ID::new();
     sqlx::query!(

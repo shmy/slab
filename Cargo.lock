@@ -57,11 +57,11 @@ dependencies = [
  "axum",
  "blob",
  "db",
+ "event_bus",
  "flow",
  "http_client",
  "jwt",
  "kv",
- "queue",
  "tracing",
 ]
 
@@ -255,8 +255,8 @@ dependencies = [
  "axum",
  "chrono",
  "db",
- "feature",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -974,16 +974,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "code_gen"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rootcause",
- "sqlx 0.9.0",
- "tracing",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1214,12 +1204,12 @@ dependencies = [
  "appctx",
  "audit_contract",
  "axum",
- "code_gen",
  "customer_contract",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -1450,6 +1440,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc_numbering"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rootcause",
+ "sqlx 0.9.0",
+ "tracing",
+]
+
+[[package]]
 name = "docker_credential"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1676,6 +1676,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "event_bus"
+version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "bytes",
+ "chrono",
+ "db",
+ "futures-util",
+ "migration",
+ "rootcause",
+ "serde",
+ "serde_json",
+ "shared_contract",
+ "sqlx 0.9.0",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1691,18 +1711,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
-]
-
-[[package]]
-name = "feature"
-version = "0.1.0"
-dependencies = [
- "appctx",
- "futures-util",
- "queue",
- "rootcause",
- "sched_kit",
- "utoipa-axum",
 ]
 
 [[package]]
@@ -1740,10 +1748,10 @@ dependencies = [
  "axum",
  "axum_typed_multipart",
  "blob",
- "feature",
  "file_contract",
  "image_kit",
  "migration",
+ "module",
  "rootcause",
  "serde",
  "tempfile",
@@ -1773,12 +1781,12 @@ dependencies = [
  "audit_contract",
  "axum",
  "chrono",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "finance_contract",
  "http_auth",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -2232,7 +2240,7 @@ dependencies = [
  "appctx",
  "axum",
  "db",
- "feature",
+ "module",
  "serde",
  "sqlx 0.9.0",
  "tracing",
@@ -2628,13 +2636,13 @@ dependencies = [
  "authn_kit",
  "axum",
  "db",
- "feature",
+ "event_bus",
  "futures-util",
  "http_auth",
  "identity_contract",
  "kv",
  "migration",
- "queue",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -2816,10 +2824,10 @@ dependencies = [
  "axum",
  "chrono",
  "db",
- "feature",
  "http_auth",
  "item_contract",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -3404,6 +3412,18 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "module"
+version = "0.1.0"
+dependencies = [
+ "appctx",
+ "event_bus",
+ "futures-util",
+ "rootcause",
+ "sched_kit",
+ "utoipa-axum",
 ]
 
 [[package]]
@@ -4120,9 +4140,9 @@ dependencies = [
  "appctx",
  "axum",
  "db",
- "feature",
  "item_contract",
  "migration",
+ "module",
  "planning_contract",
  "rootcause",
  "serde",
@@ -4298,11 +4318,11 @@ dependencies = [
  "appctx",
  "audit_contract",
  "axum",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "migration",
+ "module",
  "product_contract",
  "rootcause",
  "serde",
@@ -4337,12 +4357,12 @@ dependencies = [
  "audit_contract",
  "axum",
  "chrono",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "inventory_ledger",
  "migration",
+ "module",
  "production_contract",
  "rootcause",
  "serde",
@@ -4439,13 +4459,13 @@ dependencies = [
  "audit_contract",
  "axum",
  "chrono",
- "code_gen",
  "costing",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "inventory_ledger",
  "migration",
+ "module",
  "purchase_contract",
  "rootcause",
  "sea-query",
@@ -4488,11 +4508,11 @@ dependencies = [
  "appctx",
  "audit_contract",
  "axum",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "migration",
+ "module",
  "quality_contract",
  "rootcause",
  "serde",
@@ -4518,26 +4538,6 @@ dependencies = [
  "sqlx 0.9.0",
  "thiserror 2.0.20",
  "utoipa",
-]
-
-[[package]]
-name = "queue"
-version = "0.1.0"
-dependencies = [
- "async-nats",
- "bytes",
- "chrono",
- "db",
- "futures-util",
- "migration",
- "rootcause",
- "serde",
- "serde_json",
- "shared_contract",
- "sqlx 0.9.0",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5227,12 +5227,12 @@ dependencies = [
  "audit_contract",
  "axum",
  "chrono",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "inventory_ledger",
  "migration",
+ "module",
  "rootcause",
  "sales_contract",
  "serde",
@@ -5622,7 +5622,7 @@ dependencies = [
  "customer",
  "db",
  "dotenvy",
- "feature",
+ "event_bus",
  "file",
  "finance",
  "health",
@@ -5635,12 +5635,12 @@ dependencies = [
  "locale",
  "migration",
  "mimalloc",
+ "module",
  "planning",
  "product",
  "production",
  "purchase",
  "quality",
- "queue",
  "rootcause",
  "sales",
  "sched_kit",
@@ -6371,11 +6371,11 @@ dependencies = [
  "appctx",
  "audit_contract",
  "axum",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",
@@ -7387,12 +7387,12 @@ dependencies = [
  "audit_contract",
  "axum",
  "chrono",
- "code_gen",
  "db",
- "feature",
+ "doc_numbering",
  "http_auth",
  "inventory_ledger",
  "migration",
+ "module",
  "rootcause",
  "sea-query",
  "sea-query-sqlx",

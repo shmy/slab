@@ -13,7 +13,7 @@
 | 文档 | 内容 | 读它的时候 |
 |------|------|-----------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 依赖方向、Port/Repository、endpoint 模式、开发约定 | 写复杂跨域逻辑前、新建业务域前 |
-| [QUEUE.md](QUEUE.md) | 可插拔队列后端（Pg Outbox / NATS JetStream）设计、at-least-once 语义 | 加新事件/订阅者、切换后端时 |
+| [EVENT_BUS.md](EVENT_BUS.md) | 事件总线（广播）设计、at-least-once 语义 | 加新事件/订阅者、切换后端时 |
 | [KV.md](KV.md) | 可插拔 KV 缓存后端（Pg / redb / redis）设计、Token 吊销实现 | 操作 token 吊销/缓存状态、切换后端时 |
 | [FLOW.md](FLOW.md) | sayiir 持久化工作流（信号/超时/分流编排）、适用场景与陷阱 | 加长流程/跨单据联动/审批超时升级前 |
 

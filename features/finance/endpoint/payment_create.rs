@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use finance_contract::entity::Payment;
 use finance_contract::error::FinanceError;
 use finance_contract::port::{InvoicePort, InvoiceType};
@@ -74,7 +74,7 @@ async fn execute(
     }
 
     // Generate code
-    let code = CodeGen::next_code(&mut txn, "seq_payment", "PAY").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_payment", "PAY").await?;
 
     let id = ID::new();
     let payment_date = request

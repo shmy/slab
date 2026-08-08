@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use sales_contract::entity::SalesDelivery;
@@ -72,7 +72,7 @@ async fn execute(
         return Err(SalesError::OrderNotApproved.into());
     }
 
-    let code = CodeGen::next_code(&mut txn, "seq_sales_delivery", "DLV").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_sales_delivery", "DLV").await?;
     let delivery_id = ID::new();
 
     sqlx::query!(

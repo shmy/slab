@@ -1,12 +1,12 @@
 use appctx::AppCtx;
-use feature::FeatureModule;
+use module::DomainModule;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod endpoint;
 
 pub struct Module;
 
-impl FeatureModule for Module {
+impl DomainModule for Module {
     fn name(&self) -> &'static str {
         "health"
     }

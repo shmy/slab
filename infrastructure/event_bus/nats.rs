@@ -1,11 +1,11 @@
 //! NATS JetStream 后端：事件直发（不经 outbox 表），延迟事件用 ADR-51 `Nats-Schedule` 头。
 //!
-//! - **入队**：`enqueue_event` 直接 `publish` 到 JetStream stream（subject = `Event::TOPIC`），
-//!   **不参与调用方 PG 事务**（与 pg 后端的同事务入队语义不同，消费端须幂等）。
-//! - **延迟**：`enqueue_event_with_delay` 发布到 schedule subject，带 `Nats-Schedule: @at …` +
+//! - **发布**：`publish` 直接写入 JetStream stream（subject = `Event::TOPIC`），
+//!   **不参与调用方 PG 事务**（与 pg 后端的同事务发布语义不同，消费端须幂等）。
+//! - **延迟**：`publish_with_delay` 发布到 schedule subject，带 `Nats-Schedule: @at …` +
 //!   `Nats-Schedule-Target` 头，由 JetStream 到期转投业务 subject。
 //! - **消费**：每个 handler 一个 durable pull consumer（durable = `handler.name()`，filter = topic），
-//!   同名 durable 多实例负载分摊；回调拿 PG 连接执行 `QueueHandler::handle`（可写投影）。
+//!   同名 durable 多实例负载分摊；回调拿 PG 连接执行 `Subscriber::handle`（可写投影）。
 //! - **可靠性**：handler 返回错误仅告警不终止；消息处理后再 ack（at-least-once，消费端幂等）。
 
 use std::{fmt, time::Duration};
@@ -159,21 +159,17 @@ impl NatsBackend {
 }
 
 impl NatsBackend {
-    pub(crate) async fn enqueue_event<T: Event>(&self, event: &T) -> Result<()> {
+    pub(crate) async fn publish<T: Event>(&self, event: &T) -> Result<()> {
         self.js.publish_json(T::TOPIC, event).await
     }
 
-    pub(crate) async fn enqueue_event_delayed<T: Event>(
-        &self,
-        event: &T,
-        delay: Duration,
-    ) -> Result<()> {
+    pub(crate) async fn publish_delayed<T: Event>(&self, event: &T, delay: Duration) -> Result<()> {
         self.js.publish_json_delayed(T::TOPIC, delay, event).await
     }
 }
 
 /// 每个 handler 一个 durable pull consumer；`durable` 同名多实例负载分摊。
-/// `ctx`（如 `AppCtx`）克隆进每个 consumer task，原样传给 `QueueHandler::handle`。
+/// `ctx`（如 `AppCtx`）克隆进每个 consumer task，原样传给 `Subscriber::handle`。
 pub(crate) async fn run_nats_dispatcher<C: Send + Sync + Clone + 'static>(
     backend: &NatsBackend,
     ctx: C,
@@ -316,7 +312,7 @@ mod tests {
 #[cfg(all(test, feature = "nats"))]
 mod e2e_tests {
     use super::*;
-    use crate::QueueHandler;
+    use crate::Subscriber;
     use crate::registry::Registry;
     use serde::{Deserialize, Serialize};
     use std::future::Future;
@@ -353,7 +349,7 @@ mod e2e_tests {
         name: &'static str,
         calls: Arc<AtomicUsize>,
     }
-    impl<C: Send + Sync + 'static> QueueHandler<C> for CountHandler {
+    impl<C: Send + Sync + 'static> Subscriber<C> for CountHandler {
         fn topic(&self) -> &'static str {
             self.topic
         }
@@ -405,8 +401,8 @@ mod e2e_tests {
         let registry = registry.freeze();
 
         // 发布 2 条 → 启动消费循环 → 等待 handler 计数到达。
-        backend.enqueue_event(&ConEvent { n: 1 }).await.unwrap();
-        backend.enqueue_event(&ConEvent { n: 2 }).await.unwrap();
+        backend.publish(&ConEvent { n: 1 }).await.unwrap();
+        backend.publish(&ConEvent { n: 2 }).await.unwrap();
 
         let (tx, rx) = watch::channel(false);
         // Box::leak：dispatcher task 需要 'static 借用（测试进程内泄漏无害）。
@@ -456,7 +452,7 @@ mod e2e_tests {
             attempts: Arc<AtomicUsize>,
             calls: Arc<AtomicUsize>,
         }
-        impl<C: Send + Sync + 'static> QueueHandler<C> for Flaky {
+        impl<C: Send + Sync + 'static> Subscriber<C> for Flaky {
             fn topic(&self) -> &'static str {
                 FlakyEvent::TOPIC
             }
@@ -491,7 +487,7 @@ mod e2e_tests {
         });
         let registry = registry.freeze();
 
-        backend.enqueue_event(&FlakyEvent { n: 9 }).await.unwrap();
+        backend.publish(&FlakyEvent { n: 9 }).await.unwrap();
 
         let (tx, rx) = watch::channel(false);
         let dispatcher = tokio::spawn(run_nats_dispatcher(
@@ -549,7 +545,7 @@ mod e2e_tests {
 
         // 1 秒后转投
         backend
-            .enqueue_event_delayed(&DelayEvent { n: 42 }, Duration::from_secs(1))
+            .publish_delayed(&DelayEvent { n: 42 }, Duration::from_secs(1))
             .await
             .unwrap();
 
@@ -611,10 +607,7 @@ mod e2e_tests {
             });
         let registry = registry.freeze();
 
-        backend
-            .enqueue_event(&BroadcastEvent { n: 7 })
-            .await
-            .unwrap();
+        backend.publish(&BroadcastEvent { n: 7 }).await.unwrap();
 
         let (tx, rx) = watch::channel(false);
         let dispatcher = tokio::spawn(run_nats_dispatcher(

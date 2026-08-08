@@ -28,8 +28,8 @@
 | 命令 | 后端 |
 |------|------|
 | `cargo run -p server`（默认） | `KvBackend::Redis`（配置 `REDIS_URL`） |
-| `cargo run -p server --no-default-features --features kv-pg,queue-pg,blob-fs` | `KvBackend::Pg` |
-| `cargo run -p server --no-default-features --features kv-redb,queue-pg,blob-fs` | `KvBackend::Redb`（配置 `CACHE_DB_PATH`） |
+| `cargo run -p server --no-default-features --features kv-pg,event-bus-pg,blob-fs` | `KvBackend::Pg` |
+| `cargo run -p server --no-default-features --features kv-redb,event-bus-pg,blob-fs` | `KvBackend::Redb`（配置 `CACHE_DB_PATH`） |
 
 `default = ["pg"]`（`kv` crate）保证任何依赖方无 feature 时也可独立编译；构造器按后端拆名（`try_new_pg` / `try_new_redb` / `try_new_redis`），pg 可与 redb/redis 并存，唯 redb+redis 互斥（见 §4）；server 默认 `kv-redis`，测试组装固定用 `new_for_test`（PG 池，见 §7）。
 
@@ -78,7 +78,7 @@ impl KvBackend {
 ## 5. 运行时与 GC
 
 - **后台任务**：`bin/server/gc_jobs.rs` 的 `CacheGc`，Cron **每 5 分钟**调用 `state.kv.delete_expired()`；Pg 后端为幂等 `DELETE WHERE expires_at < now()`（无 advisory lock，多实例并发无害），Redb 后端扫表清理，Redis 后端空操作。
-- **与 `queue` 并行**：queue 的 GC 独立于 cache，两者互不干扰。
+- **与 `event_bus` 并行**：event_bus 的 GC 独立于 cache，两者互不干扰。
 
 ## 6. 语义与实现注意点
 

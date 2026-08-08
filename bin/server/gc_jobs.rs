@@ -24,12 +24,12 @@ impl CronJob<AppCtx> for KvGc {
     }
 }
 
-/// 清理 pg_queue 中已投递的过期条目和孤儿 inbox。
-pub struct QueueGc;
+/// 清理事件总线（pg 后端）中已投递的过期条目和孤儿 inbox。
+pub struct BusGc;
 
-impl CronJob<AppCtx> for QueueGc {
+impl CronJob<AppCtx> for BusGc {
     fn name(&self) -> &'static str {
-        "queue_gc"
+        "bus_gc"
     }
     fn expr(&self) -> &'static str {
         "every 10 minutes"
@@ -37,13 +37,13 @@ impl CronJob<AppCtx> for QueueGc {
     fn run(&self, state: AppCtx) -> CronJobFuture {
         Box::pin(async move {
             let deleted = state
-                .queue
-                .delete_delivered_older_than(queue::DEFAULT_DELIVERED_RETENTION_DAYS)
+                .bus
+                .delete_delivered_older_than(event_bus::DEFAULT_DELIVERED_RETENTION_DAYS)
                 .await?;
             if deleted > 0 {
-                tracing::info!(deleted, "queue_gc completed");
+                tracing::info!(deleted, "bus_gc completed");
             } else {
-                tracing::debug!("queue_gc: no old delivered queue rows");
+                tracing::debug!("bus_gc: no old delivered event rows");
             }
             Ok(())
         })

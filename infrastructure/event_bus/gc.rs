@@ -7,7 +7,7 @@ pub const DEFAULT_DELIVERED_RETENTION_DAYS: i64 = 30;
 use rootcause::Result;
 use sqlx::PgConnection;
 
-use crate::status::QueueStatus;
+use crate::status::DeliveryStatus;
 
 /// 在**当前**事务内先拿 `pg_advisory_xact_lock`（与 `pg_cache` 不同 key，可同库并行 GC），
 /// 再删除 `delivered_at` 早于 `NOW() - retain_days` 的已投递行；返回删除行数。
@@ -30,7 +30,7 @@ pub async fn delete_delivered_older_than_in_transaction(
             "#,
     )
     .bind(days)
-    .bind(QueueStatus::Delivered.as_i16())
+    .bind(DeliveryStatus::Delivered.as_i16())
     .execute(&mut *conn)
     .await?;
     Ok(n.rows_affected())

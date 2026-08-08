@@ -1,16 +1,16 @@
 use appctx::AppCtx;
+use event_bus::Registry;
 use futures_util::future::BoxFuture;
-use queue::Registry;
 use rootcause::Result;
 use sched_kit::CronScheduler;
 use utoipa_axum::router::OpenApiRouter;
 
 /// 模块注册上下文：收集各域需要注册的后台任务。
 ///
-/// `FeatureModule::register` 中被域模块填充，随后由 server 消费。
+/// `DomainModule::register` 中被域模块填充，随后由 server 消费。
 pub struct ModuleRegistrar {
-    /// 队列消费 handler（消费上下文为 `AppCtx`）。
-    pub queue: Registry<AppCtx>,
+    /// 事件订阅者注册表（消费上下文为 `AppCtx`）。
+    pub bus: Registry<AppCtx>,
     /// 定时任务（cron）。
     pub scheduler: CronScheduler<AppCtx>,
 }
@@ -18,7 +18,7 @@ pub struct ModuleRegistrar {
 impl ModuleRegistrar {
     pub fn new(app_state: AppCtx) -> Self {
         Self {
-            queue: Registry::default(),
+            bus: Registry::default(),
             scheduler: CronScheduler::new(app_state),
         }
     }
@@ -28,7 +28,7 @@ impl ModuleRegistrar {
 /// 新增域只需实现 trait + 在列表加一行。
 ///
 /// 所有方法均有默认空实现，域按需覆盖。
-pub trait FeatureModule: Send + Sync {
+pub trait DomainModule: Send + Sync {
     /// 模块标识，用于日志和启动顺序。
     fn name(&self) -> &'static str;
 

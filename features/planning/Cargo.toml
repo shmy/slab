@@ -10,9 +10,9 @@ path = "lib.rs"
 appctx = { workspace = true, features = ["test-utils"] }
 axum = { workspace = true }
 db = { workspace = true }
-feature = { workspace = true }
 item_contract = { workspace = true }
 migration = { workspace = true }
+module = { workspace = true }
 planning_contract = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true }

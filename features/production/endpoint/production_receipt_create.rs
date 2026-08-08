@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use production_contract::entity::ProductionReceipt;
@@ -61,7 +61,7 @@ async fn execute(
     .await?
     .ok_or(ProductionError::NotFound)?;
 
-    let code = CodeGen::next_code(&mut txn, "seq_production_receipt", "PR").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_production_receipt", "PR").await?;
     let id = ID::new();
 
     sqlx::query!(

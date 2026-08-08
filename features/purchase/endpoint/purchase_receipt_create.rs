@@ -1,8 +1,8 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use costing::CostCalculator;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use purchase_contract::entity::PurchaseReceipt;
@@ -82,7 +82,7 @@ async fn execute(
     }
 
     // 生成编码
-    let code = CodeGen::next_code(&mut txn, "seq_purchase_receipt", "RCV").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_purchase_receipt", "RCV").await?;
 
     // 收货日期缺省为当天
     let receipt_date = request

@@ -1,4 +1,4 @@
-use feature::FeatureModule;
+use module::DomainModule;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
@@ -7,7 +7,7 @@ mod repository;
 
 pub struct Module;
 
-impl FeatureModule for Module {
+impl DomainModule for Module {
     fn name(&self) -> &'static str {
         "customer"
     }

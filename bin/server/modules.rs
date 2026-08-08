@@ -1,7 +1,7 @@
-use feature::FeatureModule;
+use module::DomainModule;
 
 /// 全部模块。health 仅提供公开端点，受保护遍历无副作用。
-pub(crate) const MODULES: &[&dyn FeatureModule] = &[
+pub(crate) const MODULES: &[&dyn DomainModule] = &[
     &audit::Module,
     &identity::Module,
     &file::Module,

@@ -8,9 +8,9 @@ use rootcause::{Result, report};
 use sqlx::{FromRow, PgConnection};
 use tokio::sync::watch::Receiver;
 
-use crate::handler::QueueHandler;
 use crate::registry::FrozenRegistry;
-use crate::status::{QueueStatus, RetryNextAttempt, RetryPlan};
+use crate::status::{DeliveryStatus, RetryNextAttempt, RetryPlan};
+use crate::subscriber::Subscriber;
 
 const DEFAULT_BACKOFF_MAX_SECS: i64 = 300;
 const DEFAULT_BATCH_SIZE: i64 = 32;
@@ -119,7 +119,7 @@ async fn run_one_cycle<C: Send + Sync + 'static>(
             LIMIT $2
             "#,
     )
-    .bind(QueueStatus::Pending.as_i16())
+    .bind(DeliveryStatus::Pending.as_i16())
     .bind(batch_size)
     .fetch_all(&mut *tx)
     .await?;
@@ -180,7 +180,7 @@ async fn process_message<C: Send + Sync + 'static>(
             "#,
     )
     .bind(id)
-    .bind(QueueStatus::Pending.as_i16())
+    .bind(DeliveryStatus::Pending.as_i16())
     .fetch_all(&mut *tx)
     .await?;
 
@@ -207,7 +207,7 @@ async fn process_message<C: Send + Sync + 'static>(
 async fn ensure_deliveries<C: Send + Sync + 'static>(
     tx: &mut PgConnection,
     id: i64,
-    handlers: &[Arc<dyn QueueHandler<C>>],
+    handlers: &[Arc<dyn Subscriber<C>>],
 ) -> Result<()> {
     let names: Vec<String> = handlers.iter().map(|h| h.name().to_string()).collect();
     sqlx::query(
@@ -232,7 +232,7 @@ async fn ensure_deliveries<C: Send + Sync + 'static>(
 async fn deliver_one<C: Send + Sync + 'static>(
     tx: &mut PgConnection,
     ctx: &C,
-    handler: &Arc<dyn QueueHandler<C>>,
+    handler: &Arc<dyn Subscriber<C>>,
     payload: &serde_json::Value,
     config: &DispatcherConfig,
     id: i64,
@@ -315,7 +315,7 @@ async fn mark_delivery_delivered(tx: &mut PgConnection, id: i64, handler: &str) 
     )
     .bind(id)
     .bind(handler)
-    .bind(QueueStatus::Delivered.as_i16())
+    .bind(DeliveryStatus::Delivered.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -340,7 +340,7 @@ async fn mark_delivery_terminal_failure(
     .bind(id)
     .bind(handler)
     .bind(error)
-    .bind(QueueStatus::Failed.as_i16())
+    .bind(DeliveryStatus::Failed.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -360,7 +360,7 @@ async fn mark_queues_terminal_failure(tx: &mut PgConnection, id: i64, error: &st
     )
     .bind(id)
     .bind(error)
-    .bind(QueueStatus::Failed.as_i16())
+    .bind(DeliveryStatus::Failed.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -473,9 +473,9 @@ async fn refresh_message_state(tx: &mut PgConnection, id: i64) -> Result<()> {
         "#,
     )
     .bind(id)
-    .bind(QueueStatus::Pending.as_i16())
-    .bind(QueueStatus::Failed.as_i16())
-    .bind(QueueStatus::Delivered.as_i16())
+    .bind(DeliveryStatus::Pending.as_i16())
+    .bind(DeliveryStatus::Failed.as_i16())
+    .bind(DeliveryStatus::Delivered.as_i16())
     .execute(&mut *tx)
     .await?;
     Ok(())
@@ -534,7 +534,7 @@ mod tests {
         }
     }
 
-    impl<C: Send + Sync + 'static> QueueHandler<C> for TestHandler {
+    impl<C: Send + Sync + 'static> Subscriber<C> for TestHandler {
         fn topic(&self) -> &'static str {
             self.topic
         }
@@ -555,7 +555,7 @@ mod tests {
         }
     }
 
-    async fn enqueue(pool: &PgPool, topic: &str, max_attempts: i32) -> i64 {
+    async fn publish(pool: &PgPool, topic: &str, max_attempts: i32) -> i64 {
         sqlx::query(
             "INSERT INTO _pg_queues (topic, payload, max_attempts) VALUES ($1, $2, $3) RETURNING id",
         )
@@ -613,7 +613,7 @@ mod tests {
         registry.register(handler_a).register(handler_b);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 5).await;
+        let id = publish(&pool, "slab.test.evt", 5).await;
 
         let processed = run_one_cycle(&pool, &(), &registry, &config())
             .await
@@ -629,7 +629,7 @@ mod tests {
     /// 测试监听者：handle 中直接 panic。
     struct PanicHandler;
 
-    impl<C: Send + Sync + 'static> QueueHandler<C> for PanicHandler {
+    impl<C: Send + Sync + 'static> Subscriber<C> for PanicHandler {
         fn topic(&self) -> &'static str {
             "slab.test.evt"
         }
@@ -652,7 +652,7 @@ mod tests {
         registry.register(PanicHandler);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 1).await;
+        let id = publish(&pool, "slab.test.evt", 1).await;
 
         // 订阅者 panic 被接缝处捕获：run_one_cycle 正常返回，不传播
         let processed = run_one_cycle(&pool, &(), &registry, &config())
@@ -687,7 +687,7 @@ mod tests {
         registry.register(ok).register(bad);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 1).await; // 1 次尝试即终态
+        let id = publish(&pool, "slab.test.evt", 1).await; // 1 次尝试即终态
 
         let processed = run_one_cycle(&pool, &(), &registry, &config())
             .await
@@ -714,7 +714,7 @@ mod tests {
         registry.register(ok).register(flaky);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 2).await;
+        let id = publish(&pool, "slab.test.evt", 2).await;
 
         // 第一轮：ok delivered，flaky 退避（pending, attempts=1）
         run_one_cycle(&pool, &(), &registry, &config())
@@ -763,7 +763,7 @@ mod tests {
         registry.register(a).register(b);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 2).await;
+        let id = publish(&pool, "slab.test.evt", 2).await;
 
         // 第一轮：双方都失败 → 各自退避（pending, attempts=1）
         run_one_cycle(&pool, &(), &registry, &config())
@@ -816,7 +816,7 @@ mod tests {
         registry.register(ok);
         let registry = registry.freeze();
 
-        let id = enqueue(&pool, "slab.test.evt", 2).await;
+        let id = publish(&pool, "slab.test.evt", 2).await;
         // 手工写入两个投递行：failed 终态（attempts=2, infinity）+ pending 到期
         sqlx::query(
             r#"
@@ -852,7 +852,7 @@ mod tests {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let registry = Registry::<()>::default().freeze();
 
-        let id = enqueue(&pool, "slab.no.subscriber", 5).await;
+        let id = publish(&pool, "slab.no.subscriber", 5).await;
 
         run_one_cycle(&pool, &(), &registry, &config())
             .await
@@ -873,22 +873,22 @@ mod tests {
     #[sqlx::test]
     async fn late_subscriber_backfills_pending_message(pool: PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
-        // 消息先入队，此时无人订阅 → 终态失败，不会投递给后到的监听者
-        let id = enqueue(&pool, "slab.late.evt", 5).await;
+        // 消息先发布，此时无人订阅 → 终态失败，不会投递给后到的监听者
+        let id = publish(&pool, "slab.late.evt", 5).await;
         let registry = Registry::<()>::default().freeze();
         run_one_cycle(&pool, &(), &registry, &config())
             .await
             .unwrap();
         assert_eq!(queue_status(&pool, id).await, 3);
 
-        // 监听者后注册，重新入队一条消息 → 正常投递
+        // 监听者后注册，重新发布一条消息 → 正常投递
         let handler = TestHandler::ok("slab.late.evt", "listener_late");
         let calls = handler.calls.clone();
         let mut registry = Registry::<()>::default();
         registry.register(handler);
         let registry = registry.freeze();
 
-        let id2 = enqueue(&pool, "slab.late.evt", 5).await;
+        let id2 = publish(&pool, "slab.late.evt", 5).await;
         run_one_cycle(&pool, &(), &registry, &config())
             .await
             .unwrap();

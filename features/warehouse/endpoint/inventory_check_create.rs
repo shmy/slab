@@ -3,8 +3,8 @@
 use crate::shared::snapshot::InventoryCheckSnapshot;
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -61,7 +61,7 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
 
-    let code = CodeGen::next_code(&mut txn, "seq_inventory_check", "CHK").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_inventory_check", "CHK").await?;
 
     let id = ID::new();
     sqlx::query!(

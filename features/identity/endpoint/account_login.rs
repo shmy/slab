@@ -1,7 +1,7 @@
 use crate::shared::token_ops;
 use std::time::Duration;
 
-use appctx::QueueBackend;
+use appctx::EventBus;
 use appctx::{KvBackend, PgPool, TokenBundle, TokenHelper};
 use axum::extract::State;
 use identity_contract::error::IdentityError;
@@ -56,24 +56,24 @@ impl LoginResponse {
     request_body = LoginRequest,
     responses((status = 200, body = JsonResponse<LoginResponse>))
 )]
-#[tracing::instrument(skip(pg_pool, kv, queue))]
+#[tracing::instrument(skip(pg_pool, kv, bus))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
     State(kv): State<KvBackend>,
-    State(queue): State<QueueBackend>,
+    State(bus): State<EventBus>,
     State(token_bundle): State<TokenBundle>,
     ValidJson(request): ValidJson<LoginRequest>,
 ) -> JsonResponseType<LoginResponse> {
-    let response = execute(&pg_pool, &kv, &queue, token_bundle.account(), request).await?;
+    let response = execute(&pg_pool, &kv, &bus, token_bundle.account(), request).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool, kv, queue))]
+#[tracing::instrument(skip(pg_pool, kv, bus))]
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
     kv: &KvBackend,
-    queue: &QueueBackend,
+    bus: &EventBus,
     token_helper: &TokenHelper,
     request: LoginRequest,
 ) -> rootcause::Result<LoginResponse> {
@@ -94,8 +94,7 @@ async fn execute(
 
     let id = row.id;
     let tokens = token_ops::issue_tokens(kv, token_helper, &id).await?;
-    queue
-        .enqueue_event_with_delay(&AccountLoggedInEvent { id }, Duration::from_secs(10))
+    bus.publish_with_delay(&AccountLoggedInEvent { id }, Duration::from_secs(10))
         .await?;
     Ok(LoginResponse::bearer(
         tokens.access_token,
@@ -126,7 +125,7 @@ mod tests {
         let response = execute(
             &state.pg_pool,
             &state.kv,
-            &state.queue,
+            &state.bus,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001102").unwrap(),
@@ -170,7 +169,7 @@ mod tests {
         let err = execute(
             &state.pg_pool,
             &state.kv,
-            &state.queue,
+            &state.bus,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001103").unwrap(),
@@ -189,7 +188,7 @@ mod tests {
         let err = execute(
             &state.pg_pool,
             &state.kv,
-            &state.queue,
+            &state.bus,
             state.token_bundle.account(),
             LoginRequest {
                 phone: PhoneNumber::try_new("13900001104").unwrap(),

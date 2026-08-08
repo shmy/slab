@@ -3,9 +3,9 @@
 
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use customer_contract::entity::Customer;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -74,7 +74,7 @@ async fn execute(
     let id = ID::new();
     let mut conn = pg_pool.acquire().await?;
     let mut txn = conn.begin().await?;
-    let seq = CodeGen::next_seq(txn.as_mut(), "seq_customer").await?;
+    let seq = DocNumberer::next_seq(txn.as_mut(), "seq_customer").await?;
     let code = format!("C-{:06}", seq);
     let customer = Customer {
         id,

@@ -8,7 +8,7 @@ name = "server"
 path = "main.rs"
 
 [features]
-default = ["kv-redis", "queue-pg", "blob-cos"]
+default = ["kv-redis", "event-bus-pg", "blob-cos"]
 # 缓存后端（互斥，开启其一）：
 #   kv-pg  → kv::KvBackend::Pg（PostgreSQL，跨实例共享）
 #   kv-redb  → kv::KvBackend::Redb（嵌入式，单实例）
@@ -16,15 +16,15 @@ default = ["kv-redis", "queue-pg", "blob-cos"]
 kv-pg = ["kv/pg", "appctx/kv-pg"]
 kv-redb = ["kv/redb", "appctx/kv-redb"]
 kv-redis = ["kv/redis", "appctx/kv-redis"]
-# 队列后端（互斥，开启其一；默认 queue-pg）：
-#   queue-pg  → queue::QueueBackend::Pg（Outbox 表 + 进程内 dispatcher，与业务同事务）
-#   queue-nats → queue::QueueBackend::Nats（JetStream 直发，延迟用 ADR-51 schedule）
-queue-pg = ["queue/pg"]
-queue-nats = ["queue/nats"]
+# 事件总线后端（互斥，开启其一；默认 event-bus-pg）：
+#   event-bus-pg  → event_bus::EventBus::Pg（Outbox 表 + 进程内 dispatcher，与业务同事务）
+#   event-bus-nats → event_bus::EventBus::Nats（JetStream 直发，延迟用 ADR-51 schedule）
+event-bus-pg = ["event_bus/pg"]
+event-bus-nats = ["event_bus/nats"]
 # blob 后端（互斥，开启其一；默认 blob-cos）：
 #   blob-cos → blob::Blob::Cos（腾讯云 COS / S3 兼容对象存储）
 #   blob-fs  → blob::Blob::Fs（本地文件系统，开发环境）
-# 注意：cos 随 blob 默认特性恒在；blob-fs 开启时 cos 分支让位（与 queue-pg/queue-nats 同构），
+# 注意：cos 随 blob 默认特性恒在；blob-fs 开启时 cos 分支让位（与 event-bus-pg/event-bus-nats 同构），
 # 双开时 config.rs 取 fs 分支、cli 的 s3 参数组消失。
 blob-cos = ["blob/cos"]
 blob-fs = ["blob/fs"]
@@ -33,7 +33,7 @@ blob-fs = ["blob/fs"]
 kv = { workspace = true }
 db = { workspace = true }
 blob = { workspace = true }
-queue = { workspace = true }
+event_bus = { workspace = true }
 axum = { workspace = true }
 axum-governor = { workspace = true }
 axum-tracing-opentelemetry = { workspace = true }
@@ -46,7 +46,7 @@ humantime = { workspace = true }
 locale = { workspace = true }
 lazy-limit = { workspace = true }
 migration = { workspace = true }
-feature = { workspace = true }
+module = { workspace = true }
 mimalloc = { workspace = true }
 rootcause = { workspace = true }
 sched_kit = { workspace = true }

@@ -6,8 +6,8 @@ use blob::CosConfig;
 #[cfg(feature = "blob-fs")]
 use blob::FsConfig;
 use db::{DbConfig, PgPool, connect};
+use event_bus::EventBus;
 use kv::KvBackend;
-use queue::QueueBackend;
 use rootcause::Result;
 use secrecy::ExposeSecret;
 
@@ -30,11 +30,11 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
         KvBackend::try_new_redis(pool).await?
     };
 
-    // 队列后端：默认（或 queue-pg）→ Outbox + 进程内 dispatcher；queue-nats → JetStream 直发。
-    #[cfg(all(feature = "queue-pg", not(feature = "queue-nats")))]
-    let queue = QueueBackend::try_new_pg(pg_pool.clone()).await?;
-    #[cfg(feature = "queue-nats")]
-    let queue = QueueBackend::try_new_nats(queue::NatsConfig {
+    // 事件总线后端：默认（或 event-bus-pg）→ Outbox + 进程内 dispatcher；event-bus-nats → JetStream 直发。
+    #[cfg(all(feature = "event-bus-pg", not(feature = "event-bus-nats")))]
+    let bus = EventBus::try_new_pg(pg_pool.clone()).await?;
+    #[cfg(feature = "event-bus-nats")]
+    let bus = EventBus::try_new_nats(event_bus::NatsConfig {
         url: cli.nats.url.clone(),
         username: cli.nats.username.clone(),
         password: cli.nats.password.clone(),
@@ -45,7 +45,7 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     Ok(AppCtx {
         pg_pool,
         kv,
-        queue,
+        bus,
         token_bundle: TokenBundle::new(
             TokenHelper::new(
                 TokenRealm::Customer,

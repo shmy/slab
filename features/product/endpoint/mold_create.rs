@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use product_contract::entity::Mold;
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ async fn execute(
 ) -> rootcause::Result<CreateMoldResponse> {
     let id = ID::new();
     let mut conn = pg_pool.acquire().await?;
-    let code = CodeGen::next_code(&mut conn, "seq_bom", "MOLD").await?;
+    let code = DocNumberer::next_number(&mut conn, "seq_bom", "MOLD").await?;
 
     sqlx::query!(
         r#"INSERT INTO molds (id, code, name, item_id, cavity_count, life_expectancy, maintenance_cycle, remark)

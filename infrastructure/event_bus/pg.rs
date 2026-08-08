@@ -1,6 +1,6 @@
 //! PostgreSQL 后端（默认）：Outbox 表 `queues` + 进程内 dispatcher 轮询投递。
 //!
-//! - **入队**：后端自取连接写入 `queues` 表（独立于调用方事务）。
+//! - **发布**：后端自取连接写入 `queues` 表（独立于调用方事务）。
 //! - **消费**：`run_dispatcher` 批事务轮询（FOR UPDATE SKIP LOCKED + SAVEPOINT + 指数退避），
 //!   投递状态在 `queue_deliveries`（消息 × 监听者）。
 //! - **GC**：`delete_delivered_older_than_in_transaction` 清理已投递消息。
@@ -16,7 +16,7 @@ use tokio::sync::watch::Receiver;
 
 use crate::event::Event;
 use crate::registry::FrozenRegistry;
-use crate::{dispatcher, enqueue, gc};
+use crate::{dispatcher, gc, publish};
 
 /// PG 后端句柄。
 #[derive(Clone)]
@@ -134,27 +134,23 @@ impl PgBackend {
 }
 
 impl PgBackend {
-    pub(crate) async fn enqueue_event<T: Event>(&self, event: &T) -> Result<()> {
+    pub(crate) async fn publish<T: Event>(&self, event: &T) -> Result<()> {
         let mut conn = self.pg_pool.acquire().await?;
-        enqueue::enqueue_event(&mut conn, event).await
+        publish::publish(&mut conn, event).await
     }
 
-    /// 事务内入队（强一致）：与业务同一事务，回滚即不投递（Outbox 语义）。
-    pub(crate) async fn enqueue_event_in_tx<T: Event>(
+    /// 事务内发布（强一致）：与业务同一事务，回滚即不投递（Outbox 语义）。
+    pub(crate) async fn publish_in_tx<T: Event>(
         &self,
         executor: &mut PgConnection,
         event: &T,
     ) -> Result<()> {
-        crate::enqueue::enqueue_event(executor, event).await
+        crate::publish::publish(executor, event).await
     }
 
-    pub(crate) async fn enqueue_event_delayed<T: Event>(
-        &self,
-        event: &T,
-        delay: Duration,
-    ) -> Result<()> {
+    pub(crate) async fn publish_delayed<T: Event>(&self, event: &T, delay: Duration) -> Result<()> {
         let mut conn = self.pg_pool.acquire().await?;
-        enqueue::enqueue_event_with_delay(&mut conn, event, delay).await
+        publish::publish_with_delay(&mut conn, event, delay).await
     }
 
     pub(crate) async fn run_dispatcher<C: Send + Sync + 'static>(
@@ -201,14 +197,14 @@ mod tests {
 
     /// 不跑 migration：验证 `try_new` 幂等自建表（queues + queue_deliveries）后可直接入队。
     #[sqlx::test]
-    async fn try_new_creates_schema_and_enqueues(pool: sqlx::PgPool) {
+    async fn try_new_creates_schema_and_publishes(pool: sqlx::PgPool) {
         let backend = PgBackend::try_new(pool.clone()).await.unwrap();
         // 幂等：重复调用不报错（表/索引/触发器已存在）。
         PgBackend::try_new(pool.clone()).await.unwrap();
 
-        backend.enqueue_event(&TestEvent { n: 7 }).await.unwrap();
+        backend.publish(&TestEvent { n: 7 }).await.unwrap();
         backend
-            .enqueue_event_delayed(&TestEvent { n: 8 }, Duration::from_secs(60))
+            .publish_delayed(&TestEvent { n: 8 }, Duration::from_secs(60))
             .await
             .unwrap();
 

@@ -1,12 +1,12 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i16)]
-pub(crate) enum QueueStatus {
+pub(crate) enum DeliveryStatus {
     Pending = 1,
     Delivered = 2,
     Failed = 3,
 }
 
-impl QueueStatus {
+impl DeliveryStatus {
     pub(crate) const fn as_i16(self) -> i16 {
         self as i16
     }
@@ -21,7 +21,7 @@ pub(crate) enum RetryNextAttempt {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct RetryPlan {
     pub(crate) attempts: i32,
-    pub(crate) status: QueueStatus,
+    pub(crate) status: DeliveryStatus,
     pub(crate) last_error: String,
     pub(crate) next_attempt_at: RetryNextAttempt,
 }
@@ -37,7 +37,7 @@ impl RetryPlan {
         if next_attempt >= max_attempts {
             return Self {
                 attempts: max_attempts,
-                status: QueueStatus::Failed,
+                status: DeliveryStatus::Failed,
                 last_error: format!(
                     "permanently_failed_after_{}_attempts: {}",
                     max_attempts, error
@@ -50,7 +50,7 @@ impl RetryPlan {
         let delay_secs = (1_i64 << shift).min(backoff_max_secs);
         Self {
             attempts: next_attempt,
-            status: QueueStatus::Pending,
+            status: DeliveryStatus::Pending,
             last_error: error.to_string(),
             next_attempt_at: RetryNextAttempt::DelaySecs(delay_secs),
         }
@@ -66,7 +66,7 @@ mod tests {
         let plan = RetryPlan::from_failure(4, 5, 300, "boom");
 
         assert_eq!(plan.attempts, 5);
-        assert_eq!(plan.status, QueueStatus::Failed);
+        assert_eq!(plan.status, DeliveryStatus::Failed);
         assert_eq!(plan.next_attempt_at, RetryNextAttempt::Terminal);
         assert_eq!(plan.last_error, "permanently_failed_after_5_attempts: boom");
     }
@@ -76,16 +76,16 @@ mod tests {
         let plan = RetryPlan::from_failure(1, 5, 300, "boom");
 
         assert_eq!(plan.attempts, 2);
-        assert_eq!(plan.status, QueueStatus::Pending);
+        assert_eq!(plan.status, DeliveryStatus::Pending);
         assert_eq!(plan.next_attempt_at, RetryNextAttempt::DelaySecs(4));
         assert_eq!(plan.last_error, "boom");
     }
 
     #[test]
     fn queue_status_uses_stable_smallint_values() {
-        assert_eq!(QueueStatus::Pending.as_i16(), 1);
-        assert_eq!(QueueStatus::Delivered.as_i16(), 2);
-        assert_eq!(QueueStatus::Failed.as_i16(), 3);
+        assert_eq!(DeliveryStatus::Pending.as_i16(), 1);
+        assert_eq!(DeliveryStatus::Delivered.as_i16(), 2);
+        assert_eq!(DeliveryStatus::Failed.as_i16(), 3);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::repository::account_repository::AccountRepository;
-use appctx::QueueBackend;
+use appctx::EventBus;
 use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
@@ -43,22 +43,22 @@ pub(crate) struct CreateAccountResponse {
     responses((status = 200, body = JsonResponse<CreateAccountResponse>)),
     security(("bearerAuth" = []))
 )]
-#[tracing::instrument(skip(pg_pool, queue))]
+#[tracing::instrument(skip(pg_pool, bus))]
 pub(crate) async fn handler(
     State(pg_pool): State<PgPool>,
-    State(queue): State<QueueBackend>,
+    State(bus): State<EventBus>,
     ctx: OperatorContext,
     ValidJson(request): ValidJson<CreateAccountRequest>,
 ) -> JsonResponseType<CreateAccountResponse> {
-    let response = execute(&pg_pool, &queue, ctx, request).await?;
+    let response = execute(&pg_pool, &bus, ctx, request).await?;
     JsonResponse::ok(response)
 }
 
-#[tracing::instrument(skip(pg_pool, queue))]
+#[tracing::instrument(skip(pg_pool, bus))]
 #[inline]
 async fn execute(
     pg_pool: &PgPool,
-    queue: &QueueBackend,
+    bus: &EventBus,
     ctx: OperatorContext,
     request: CreateAccountRequest,
 ) -> rootcause::Result<CreateAccountResponse> {
@@ -78,8 +78,7 @@ async fn execute(
     AccountRepository::create(&mut txn, &account).await?;
     AuditService::record_create(&mut txn, "account", &id, &ctx, &account).await?;
     // 强一致入队：与业务同事务，回滚即不投递（Outbox 语义）。
-    queue
-        .enqueue_event_in_tx(&mut txn, &AccountCreatedEvent { id })
+    bus.publish_in_tx(&mut txn, &AccountCreatedEvent { id })
         .await?;
     txn.commit().await?;
     Ok(CreateAccountResponse {
@@ -110,7 +109,7 @@ mod tests {
         };
         let response = execute(
             &state.pg_pool,
-            &state.queue,
+            &state.bus,
             tests::test_operator_context(),
             request,
         )

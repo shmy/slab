@@ -25,7 +25,7 @@ features/{domain} (切片)
 cross_domain/（共享业务件，跨域通道的例外栖息地）
     ├──→ 被 ≥2 个 feature 依赖的**业务规则**（非技术件）
     ├──→ 不走 contract 只读 Port / 事件（等同事务写 Port 例外，如 inventory_ledger 被 4 域直写）
-    └──→ 现状：approval / code_gen / costing / inventory_ledger
+    └──→ 现状：approval / doc_numbering / costing / inventory_ledger
 
 禁止：
 ✗ contract 之间互相依赖
@@ -94,7 +94,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 ├── 新建域 → contract（实体/Port/事件/错误）→ runtime（端点/仓储/lib.rs）→ workspace + modules.rs
 ├── 跨域读 → import {other}_contract::port::{Domain}Port（禁止 import features/{other}/*）
 ├── 写端点接入变更历史 → 同事务调 `audit_contract::AuditService`（`record_create` / `record_updated` / `record_deleted`，传 `txn` + `&Operator` + before/after 实体；漏接不报编译错，端点测试断言 `audit_logs` 兜底；identity 三端点作示范）
-├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + enqueue_event
+├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + publish
 ├── 加流程 → infrastructure/flow 定义 `#[task]` + `workflow!`，AppCtx.flow.run/resume（见 [docs/FLOW.md](docs/FLOW.md)）
 ├── 改 DB → infrastructure/migration/versions/ 新 .sql
 ```
@@ -104,7 +104,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | Crate | 用途 |
 |-------|------|
 | `infrastructure/db` | PgPool |
-| `infrastructure/queue` | 可插拔队列后端（Pg Outbox 默认 / NATS JetStream，feature 切换）→ [docs/QUEUE.md](docs/QUEUE.md) |
+| `infrastructure/event_bus` | 事件总线（广播事件投递；Pg Outbox 默认 / NATS JetStream，feature 切换）→ [docs/EVENT_BUS.md](docs/EVENT_BUS.md) |
 | `infrastructure/flow` | sayiir 持久化工作流（长流程/信号/超时编排）→ [docs/FLOW.md](docs/FLOW.md) |
 | `infrastructure/kv` | 可插拔 KV 缓存后端（Pg UNLOGGED 默认 / redb / redis，feature 切换）→ [docs/KV.md](docs/KV.md) |
 | `infrastructure/web` | ValidJson / ValidQuery / ValidPath + Problem Details |

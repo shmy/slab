@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
 
 use axum::Router;
-use feature::ModuleRegistrar;
 use lazy_limit::{Duration, RuleConfig};
+use module::ModuleRegistrar;
 use rootcause::{Report, Result, report};
 use tokio::net::TcpListener;
 use tokio::sync::watch::Receiver;
 
 use crate::cli::Cli;
 use crate::config::build_app_ctx;
-use crate::gc_jobs::{KvGc, QueueGc};
+use crate::gc_jobs::{BusGc, KvGc};
 use crate::modules::MODULES;
 use crate::router::build;
 use crate::shutdown::{ShutdownCoordinator, shutdown_signal};
@@ -35,17 +35,17 @@ pub async fn serve(cli: Cli) -> Result<()> {
     let registrar = {
         let mut registrar = ModuleRegistrar::new(state.clone());
         registrar.scheduler.add(KvGc);
-        registrar.scheduler.add(QueueGc);
+        registrar.scheduler.add(BusGc);
         for module in MODULES {
             module.register(&mut registrar);
         }
         registrar
     };
-    let frozen_registry = registrar.queue.freeze();
+    let frozen_registry = registrar.bus.freeze();
 
     let server_fut = tokio::spawn(start_http_server(listener, router, shutdown.subscribe()));
     let dispatcher_fut = tokio::spawn(start_dispatcher(
-        state.queue.clone(),
+        state.bus.clone(),
         state.clone(),
         frozen_registry,
         shutdown.subscribe(),
@@ -66,7 +66,7 @@ pub async fn serve(cli: Cli) -> Result<()> {
     let (http_join, dispatcher_join, scheduler_join) =
         tokio::join!(server_fut, dispatcher_fut, scheduler_fut);
     join_task("HTTP server", http_join)?;
-    join_task("pg_queue dispatcher", dispatcher_join)?;
+    join_task("event_bus dispatcher", dispatcher_join)?;
     join_task("cron scheduler", scheduler_join)?;
 
     state.clear().await;
@@ -95,9 +95,9 @@ async fn start_http_server(listener: TcpListener, app: Router, rx: Receiver<bool
 }
 
 async fn start_dispatcher(
-    backend: queue::QueueBackend,
+    backend: event_bus::EventBus,
     ctx: appctx::AppCtx,
-    registry: queue::FrozenRegistry<appctx::AppCtx>,
+    registry: event_bus::FrozenRegistry<appctx::AppCtx>,
     rx: Receiver<bool>,
 ) -> Result<()> {
     backend.run_dispatcher(ctx, registry, rx).await

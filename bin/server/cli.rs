@@ -176,7 +176,7 @@ pub struct CacheCli {
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct NatsCli {
-    /// NATS 服务器地址（queue-nats 后端）
+    /// NATS 服务器地址（event-bus-nats 后端）
     #[arg(
         id = "nats_url",
         long = "nats-url",

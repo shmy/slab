@@ -3,10 +3,7 @@ use std::time::Duration;
 
 use crate::event::Event;
 use sqlx::PgConnection;
-pub async fn enqueue_event<T: Event>(
-    executor: &mut PgConnection,
-    event: &T,
-) -> rootcause::Result<()> {
+pub async fn publish<T: Event>(executor: &mut PgConnection, event: &T) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
     sqlx::query("INSERT INTO _pg_queues (topic, payload) VALUES ($1, $2)")
         .bind(T::TOPIC)
@@ -16,7 +13,7 @@ pub async fn enqueue_event<T: Event>(
     Ok(())
 }
 
-pub async fn enqueue_event_with_delay<T: Event>(
+pub async fn publish_with_delay<T: Event>(
     executor: &mut PgConnection,
     event: &T,
     delay: Duration,
@@ -45,38 +42,36 @@ mod tests {
     }
 
     impl Event for TestEvent {
-        const TOPIC: &'static str = "slab.test.enqueue";
+        const TOPIC: &'static str = "slab.test.publish";
     }
 
     #[sqlx::test]
-    async fn test_enqueue_event_inserts_pending_row(pool: sqlx::PgPool) {
+    async fn test_publish_inserts_pending_row(pool: sqlx::PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
 
-        enqueue_event(&mut *conn, &TestEvent { n: 7 })
-            .await
-            .unwrap();
+        publish(&mut *conn, &TestEvent { n: 7 }).await.unwrap();
 
         let row = sqlx::query("SELECT topic, payload, status, attempts FROM _pg_queues")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert_eq!(row.get::<String, _>("topic"), "slab.test.enqueue");
+        assert_eq!(row.get::<String, _>("topic"), "slab.test.publish");
         assert_eq!(row.get::<i16, _>("status"), 1); // pending（依赖表默认值）
         assert_eq!(row.get::<i32, _>("attempts"), 0);
         assert!(row.get::<String, _>("payload").contains("\"n\":7"));
     }
 
     #[sqlx::test]
-    async fn test_enqueue_event_with_delay_sets_future_attempt(pool: sqlx::PgPool) {
+    async fn test_publish_with_delay_sets_future_attempt(pool: sqlx::PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
 
-        enqueue_event_with_delay(&mut *conn, &TestEvent { n: 7 }, Duration::from_secs(60))
+        publish_with_delay(&mut *conn, &TestEvent { n: 7 }, Duration::from_secs(60))
             .await
             .unwrap();
 
-        // 延迟入队：next_attempt_at 必须晚于当前时刻
+        // 延迟发布：next_attempt_at 必须晚于当前时刻
         let row = sqlx::query("SELECT (next_attempt_at > NOW()) AS is_future FROM _pg_queues")
             .fetch_one(&mut *conn)
             .await

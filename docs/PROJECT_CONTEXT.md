@@ -60,7 +60,7 @@
 | `infrastructure/web` | infrastructure/ | Axum 提取器（ValidJson/Query/Path）、Problem Details 响应 |
 | `infrastructure/http_auth` | infrastructure/ | Bearer JWT 鉴权中间件 + AuthedAccount |
 | `infrastructure/locale` | infrastructure/ | Fluent 本地化中间件 |
-| `infrastructure/queue` | infrastructure/ | PG 队列（Outbox + Inbox 幂等去重） |
+| `infrastructure/event_bus` | infrastructure/ | 事件总线（广播；Pg Outbox 默认 / NATS JetStream） |
 | `infrastructure/kv` | infrastructure/ | 可插拔 KV 缓存后端（Pg UNLOGGED 默认 / redb / redis） |
 | `infrastructure/jwt` | infrastructure/ | JWT 签发/验证（双域：Account + Customer） |
 | `infrastructure/blob` | infrastructure/ | 对象存储（S3/COS） |

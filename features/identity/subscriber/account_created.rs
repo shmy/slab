@@ -1,12 +1,12 @@
 use appctx::AppCtx;
+use event_bus::Subscriber;
 use identity_contract::events::AccountCreatedEvent;
-use queue::QueueHandler;
 use rootcause::Result;
 use shared_contract::event::Event as _;
 
-pub struct AccountCreatedHandler;
+pub struct AccountCreatedSubscriber;
 
-impl QueueHandler<AppCtx> for AccountCreatedHandler {
+impl Subscriber<AppCtx> for AccountCreatedSubscriber {
     fn topic(&self) -> &'static str {
         AccountCreatedEvent::TOPIC
     }

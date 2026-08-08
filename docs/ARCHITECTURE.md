@@ -4,7 +4,7 @@
 
 后端采用 **Rust Workspace + features 垂直切片**：
 
-- 业务切片：`features/<domain>`（HTTP 端点集中在 **`endpoint/`** 子目录；队列消费若有，集中在 **`subscriber/`**）
+- 业务切片：`features/<domain>`（HTTP 端点集中在 **`endpoint/`** 子目录；事件订阅若有，集中在 **`subscriber/`**）
 - 领域内核：`features/<domain>_contract`
 - 跨域共享：`features/shared_contract`
 - 技术适配：`infrastructure/*`
@@ -15,7 +15,7 @@
 ### 1.1 路径命名（集合与成员）
 
 - **复数**：仅用于「容纳多个 member crate 的顶层目录」，与常见 Workspace 习惯一致，例如 **`features/`**、**`libs/`**、**`infrastructure/`**。
-- **单数**：其下的 **crate 名**（如 `identity`、`queue`、`trace_kit`）以及 **域内模块目录**（如 **`endpoint/`**、**`repository/`**、**`subscriber/`**、**`shared/`**），表示一类能力或命名空间，不因目录内文件多而改为复数。
+- **单数**：其下的 **crate 名**（如 `identity`、`event_bus`、`trace_kit`）以及 **域内模块目录**（如 **`endpoint/`**、**`repository/`**、**`subscriber/`**、**`shared/`**），表示一类能力或命名空间，不因目录内文件多而改为复数。
 
 ## 2. 目录职责
 
@@ -53,7 +53,7 @@
 ### 2.3 技术适配层（infrastructure）
 
 - `db`：数据库连接与连接池（`PgPool`）
-- `queue`：可插拔队列后端——Pg Outbox（默认）/ NATS JetStream（`docs/QUEUE.md`）
+- `event_bus`：事件总线（广播语义）——Pg Outbox（默认）/ NATS JetStream（`docs/EVENT_BUS.md`）
 - `kv`：可插拔 KV 缓存后端——Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`docs/KV.md`）
 - `blob`：对象存储（腾讯云 COS / 本地 FS，opendal 可插拔后端）
 - `jwt`：JWT 令牌生成/验证
@@ -116,14 +116,14 @@
 | `0007_create_production_tables` | 生产（work_orders、production_receipts 等） |
 | `0008_create_p4_foundations` | 财务/计划（payments、item_costs 等） |
 
-另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/QUEUE.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/KV.md`）。
+另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/EVENT_BUS.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/KV.md`）。
 
 ### 5.2 事件消费现状
 
 - 事件定义：`identity_contract::events` 定义 `AccountCreatedEvent` / `AccountLoggedInEvent`（实现 `shared_contract::event::Event`）。
 - 入队：`identity` 域在 `account_create`（立即）与 `account_login`（延迟 10s）内与业务同事务入队。
 - 消费：`identity/subscriber/` 下 `AccountCreatedHandler` 与 `AccountLoggedInHandler` 各一个（当前仅观测打日志，无副作用），在 `identity::Module::register` 注册。
-- 队列系统（dispatcher + Inbox 幂等）就绪，dispatcher 在 server 进程内运行；后续业务域的消费端按需添加。
+- 事件总线（dispatcher + 订阅者幂等）就绪，dispatcher 在 server 进程内运行；后续业务域的消费端按需添加。
 
 ## 6. 开发约定（面向后续迭代）
 
@@ -146,7 +146,7 @@
 
 - 典型路径：**请求 DTO** → **`Validify` + `*_contract` 值对象** → **`execute` 编排** → **`crate::repository::*Repository`** 写库（或仅一处写库时 SQL 可暂留 `execute` 内，见下）。
 - **何时抽 `repository/`**：同一域内 **2 个及以上** 写端点共用同类 SQL / 变更逻辑时，抽到 **`features/{domain}/repository/{aggregate}_repository.rs`**；结构为 **`repository.rs`**（`pub(crate) mod …`）+ **`repository/`** 子目录（**不用** `repository/mod.rs`）。
-- **命名**：类型 **`{Aggregate}Repository`**（如 `AccountRepository`），方法仍用动词（`create` / `update` / `delete` / `update_status` 等）；**不含** HTTP、鉴权、发队列——这些留在 `execute`。
+- **命名**：类型 **`{Aggregate}Repository`**（如 `AccountRepository`），方法仍用动词（`create` / `update` / `delete` / `update_status` 等）；**不含** HTTP、鉴权、发布事件——这些留在 `execute`。
 - 失败映射到 **`*_contract` 领域错误**，再统一为 Problem Details。
 - 「走 domain」指 **用内核类型与不变量约束写入与业务错误**，不等于每笔都要上完整 DDD 聚合；**简单 CRUD** 保持 **校验 + 一次写库** 即可，复杂不变量再抽到 `*_contract` 的函数或实体逻辑。
 
@@ -196,7 +196,7 @@
 ### 7.4 代价与边界（避免误用）
 
 - Port / Repository 直接依赖 `sqlx` 的 `PgConnection`，**绑定 PostgreSQL**；业务以 PG 为主存，接受这一取舍。
-- **异步事件**（最终一致）仍优先 **`queue` + 他域 `subscriber/`**（见 **§5.2**）；**同步跨域** 用 **只读 Port + 同连接**，勿跨域调 Repository。
+- **异步事件**（最终一致）仍优先 **`event_bus` + 他域 `subscriber/`**（见 **§5.2**）；**同步跨域** 用 **只读 Port + 同连接**，勿跨域调 Repository。
 
 ### 7.5 抽象策略（少即是多）
 

@@ -1,10 +1,10 @@
 use crate::{
-    hook::before_starting::before_starting, subscriber::account_created::AccountCreatedHandler,
-    subscriber::account_logged_in::AccountLoggedInHandler,
+    hook::before_starting::before_starting, subscriber::account_created::AccountCreatedSubscriber,
+    subscriber::account_logged_in::AccountLoggedInSubscriber,
 };
 use appctx::AppCtx;
-use feature::{FeatureModule, ModuleRegistrar};
 use futures_util::future::BoxFuture;
+use module::{DomainModule, ModuleRegistrar};
 use rootcause::Result;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -16,7 +16,7 @@ mod subscriber;
 
 pub struct Module;
 
-impl FeatureModule for Module {
+impl DomainModule for Module {
     fn name(&self) -> &'static str {
         "identity"
     }
@@ -46,8 +46,8 @@ impl FeatureModule for Module {
     }
 
     fn register(&self, registrar: &mut ModuleRegistrar) {
-        registrar.queue.register(AccountCreatedHandler);
-        registrar.queue.register(AccountLoggedInHandler);
+        registrar.bus.register(AccountCreatedSubscriber);
+        registrar.bus.register(AccountLoggedInSubscriber);
     }
 
     fn on_start<'a>(&'a self, state: &'a AppCtx) -> BoxFuture<'a, Result<()>> {

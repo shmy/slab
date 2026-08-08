@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use purchase_contract::entity::PurchaseInvoice;
 use purchase_contract::error::PurchaseError;
@@ -67,7 +67,7 @@ async fn execute(
     .await?
     .ok_or(PurchaseError::NotFound)?;
 
-    let code = CodeGen::next_code(&mut txn, "seq_purchase_invoice", "INV").await?;
+    let code = DocNumberer::next_number(&mut txn, "seq_purchase_invoice", "INV").await?;
 
     let id = ID::new();
     let total = request.amount + request.tax_amount.unwrap_or(0);

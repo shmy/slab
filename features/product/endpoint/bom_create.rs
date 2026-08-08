@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use product_contract::entity::Bom;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ async fn execute(
 ) -> rootcause::Result<CreateBomResponse> {
     let id = ID::new();
     let mut conn = pg_pool.acquire().await?;
-    let code = CodeGen::next_code(&mut conn, "seq_bom", "BOM").await?;
+    let code = DocNumberer::next_number(&mut conn, "seq_bom", "BOM").await?;
 
     let mut txn = conn.begin().await?;
 

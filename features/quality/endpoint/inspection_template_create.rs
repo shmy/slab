@@ -1,7 +1,7 @@
 use audit_contract::AuditService;
 use axum::extract::State;
-use code_gen::CodeGen;
 use db::PgPool;
+use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use quality_contract::entity::InspectionTemplate;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ async fn execute(
 ) -> rootcause::Result<CreateTemplateResponse> {
     let id = ID::new();
     let mut conn = pg_pool.acquire().await?;
-    let seq = CodeGen::next_seq(&mut conn, "seq_inspection_order").await?;
+    let seq = DocNumberer::next_seq(&mut conn, "seq_inspection_order").await?;
     let prefix = match request.category {
         2 => "IPQC",
         3 => "OQC",

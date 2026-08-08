@@ -5,7 +5,7 @@ use rootcause::Result;
 
 /// 队列消费监听者。`C` 为消费上下文（如 `AppCtx`），`handle` 直接持有 `&C`——
 /// handler 需要连接/其它能力时从上下文获取（如 `ctx.pg_pool.acquire()`）。
-pub trait QueueHandler<C: Send + Sync + 'static>: Send + Sync + 'static {
+pub trait Subscriber<C: Send + Sync + 'static>: Send + Sync + 'static {
     fn topic(&self) -> &'static str;
 
     /// 监听者标识：同一 topic 下可注册多个 handler（广播），用 `name()` 区分。

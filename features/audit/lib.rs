@@ -5,7 +5,7 @@
 //! （git diff 风格展示的输入）见 [`diff`]。
 
 use appctx::AppCtx;
-use feature::FeatureModule;
+use module::DomainModule;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 mod diff;
@@ -13,7 +13,7 @@ mod endpoint;
 
 pub struct Module;
 
-impl FeatureModule for Module {
+impl DomainModule for Module {
     fn name(&self) -> &'static str {
         "audit"
     }

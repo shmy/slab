@@ -13,7 +13,7 @@ impl Module for identity::Module {
     fn protected_routing(&self) -> OpenApiRouter<AppState> { ... }
     fn unprotected_routing(&self) -> OpenApiRouter<AppState> { ... }
     fn register(&self, registrar: &mut Registrar) {
-        registrar.queue.register(AccountCreatedHandler);
+        registrar.bus.register(AccountCreatedSubscriber);
         registrar.scheduler.add(MyCronJob);
     }
 }
@@ -34,7 +34,7 @@ features/
 
 infrastructure/
 ├── db/                    ← PgPool
-├── queue/                 ← 可插拔队列后端：Pg Outbox（默认）/ NATS JetStream
+├── event_bus/             ← 事件总线（广播）：Pg Outbox（默认）/ NATS JetStream
 ├── cache/                 ← 可插拔缓存后端：Pg（默认）/ Redb / Redis
 ├── flow/                  ← sayiir 持久化工作流引擎
 ├── web/                   ← 提取器、响应封装、Problem Details
@@ -55,7 +55,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 
 **单文件端点。** 一个动作一个文件：DTO + `#[utoipa::path]` + `handler` + `execute` + 测试。复制 `account_create.rs` 就是新端点模板。
 
-**Outbox 模式。** 领域事件和业务写在同一个事务里入队。消费通过 `infrastructure/queue` dispatcher，将来拆微服务可以无缝切到 Kafka/Debezium。
+**Outbox 模式。** 领域事件和业务写在同一个事务里发布（Outbox 语义）。消费通过 `infrastructure/event_bus` dispatcher，将来拆微服务可以无缝切到 Kafka/Debezium。
 
 ## 技术栈
 
@@ -64,7 +64,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 运行时 | Tokio multi-thread |
 | HTTP | Axum 0.8 |
 | 数据库 | PostgreSQL + sqlx 0.9 |
-| 消息队列 | 可插拔：Pg Outbox（默认）/ NATS JetStream（`infrastructure/queue`） |
+| 事件总线（广播） | Pg Outbox（默认）/ NATS JetStream（`infrastructure/event_bus`） |
 | 流程编排 | sayiir 持久化工作流（`infrastructure/flow`） |
 | 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/kv`） |
 | 鉴权 | JWT（access + refresh，双 realm） |
@@ -117,10 +117,22 @@ cargo test -p server arch_test
 
 - `docs/ARCHITECTURE.md` — 完整架构说明
 - `docs/FLOW.md` — 流程引擎（sayiir 工作流）设计
-- `docs/QUEUE.md` — 队列设计
+- `docs/EVENT_BUS.md` — 事件总线（广播）设计
 - `docs/KV.md` — KV 缓存设计
 - `docs/E2E_HURL.md` — E2E 测试约定
 - `AGENTS.md` — AI 助手上下文
+
+Event:
+Pg/NATS
+
+Workflow:
+sayiir / Temporal
+
+Job:
+Apalis / Faktory / Redis Queue
+
+State:
+Postgres + Redis
 
 ## License
 
