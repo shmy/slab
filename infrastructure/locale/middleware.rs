@@ -20,9 +20,7 @@ pub async fn l10n_middleware(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
     if let Some(err) = response.extensions().get::<WebError>() {
         let info = match err {
-            WebError::InvalidRequestBody { key, field }
-            | WebError::InvalidQueryParams { key, field }
-            | WebError::InvalidPathParams { key, field } => match field {
+            WebError::InvalidParams { key, field, .. } => match field {
                 Some(f) => translate_with_args(&locale, key, &[("field", f.clone())]),
                 None => translate(&locale, key),
             },
@@ -82,8 +80,9 @@ mod tests {
     use super::l10n_middleware;
 
     async fn handler() -> Result<&'static str, WebError> {
-        Err(WebError::InvalidRequestBody {
-            key: "json_body_missing_field".to_string(),
+        Err(WebError::InvalidParams {
+            kind: web::error::InvalidParamsKind::Body,
+            key: web::l10n_keys::JSON_BODY_MISSING_FIELD.to_string(),
             field: Some("phone".to_string()),
         })
     }

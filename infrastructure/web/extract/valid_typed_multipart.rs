@@ -3,10 +3,10 @@ use std::ops::Deref;
 use axum::extract::{FromRequest, Request};
 use axum_typed_multipart::{TryFromMultipartWithState, TypedMultipart, TypedMultipartError};
 
-use crate::error::WebError;
+use crate::error::{InvalidParamsKind, WebError};
 
 /// `multipart/form-data`：与 [`axum_typed_multipart::TypedMultipart`] 相同解析流程，
-/// 失败时按结构化 [`TypedMultipartError`] 映射为 [`WebError::InvalidRequestBody`]
+/// 失败时按结构化 [`TypedMultipartError`] 映射为 [`WebError::InvalidParams`]（kind = Body）
 /// （l10n key + 字段名），走统一 l10n 路径。
 #[derive(Debug)]
 pub struct ValidTypedMultipart<T>(pub T);
@@ -38,39 +38,44 @@ where
 fn multipart_error_to_web(e: TypedMultipartError) -> WebError {
     let (key, field) = match e {
         TypedMultipartError::MissingField { field_name } => {
-            ("multipart_missing_field", Some(field_name))
+            (crate::l10n_keys::MULTIPART_MISSING_FIELD, Some(field_name))
         }
-        TypedMultipartError::WrongFieldType { field_name, .. } => {
-            ("multipart_wrong_field_type", Some(field_name))
-        }
-        TypedMultipartError::DuplicateField { field_name } => {
-            ("multipart_duplicate_field", Some(field_name))
-        }
+        TypedMultipartError::WrongFieldType { field_name, .. } => (
+            crate::l10n_keys::MULTIPART_WRONG_FIELD_TYPE,
+            Some(field_name),
+        ),
+        TypedMultipartError::DuplicateField { field_name } => (
+            crate::l10n_keys::MULTIPART_DUPLICATE_FIELD,
+            Some(field_name),
+        ),
         TypedMultipartError::UnknownField { field_name } => {
-            ("multipart_unknown_field", Some(field_name))
+            (crate::l10n_keys::MULTIPART_UNKNOWN_FIELD, Some(field_name))
         }
-        TypedMultipartError::InvalidEnumValue { field_name, .. } => {
-            ("multipart_invalid_enum_value", Some(field_name))
-        }
-        TypedMultipartError::FieldTooLarge { field_name, .. } => {
-            ("multipart_field_too_large", Some(field_name))
-        }
+        TypedMultipartError::InvalidEnumValue { field_name, .. } => (
+            crate::l10n_keys::MULTIPART_INVALID_ENUM_VALUE,
+            Some(field_name),
+        ),
+        TypedMultipartError::FieldTooLarge { field_name, .. } => (
+            crate::l10n_keys::MULTIPART_FIELD_TOO_LARGE,
+            Some(field_name),
+        ),
         // multipart 语法层错误 / 内部错误：无字段语义，兜底 key。
         TypedMultipartError::InvalidRequest { source } => {
             tracing::debug!(error = %source, "multipart body rejected");
-            ("invalid_request_body", None)
+            (crate::l10n_keys::INVALID_REQUEST_BODY, None)
         }
         TypedMultipartError::InvalidRequestBody { source } => {
             tracing::debug!(error = %source, "multipart body rejected");
-            ("invalid_request_body", None)
+            (crate::l10n_keys::INVALID_REQUEST_BODY, None)
         }
         TypedMultipartError::NamelessField | TypedMultipartError::Other { .. } => {
-            ("invalid_request_body", None)
+            (crate::l10n_keys::INVALID_REQUEST_BODY, None)
         }
         // non_exhaustive 枚举兜底。
-        _ => ("invalid_request_body", None),
+        _ => (crate::l10n_keys::INVALID_REQUEST_BODY, None),
     };
-    WebError::InvalidRequestBody {
+    WebError::InvalidParams {
+        kind: InvalidParamsKind::Body,
         key: key.to_string(),
         field,
     }
@@ -79,12 +84,16 @@ fn multipart_error_to_web(e: TypedMultipartError) -> WebError {
 #[cfg(test)]
 mod tests {
     use super::multipart_error_to_web;
-    use crate::error::WebError;
+    use crate::error::{InvalidParamsKind, WebError};
     use axum_typed_multipart::TypedMultipartError;
 
     fn expect_key_field(web: WebError) -> (String, Option<String>) {
         match web {
-            WebError::InvalidRequestBody { key, field } => (key, field),
+            WebError::InvalidParams {
+                kind: InvalidParamsKind::Body,
+                key,
+                field,
+            } => (key, field),
             other => panic!("unexpected variant: {other:?}"),
         }
     }
@@ -95,7 +104,7 @@ mod tests {
             expect_key_field(multipart_error_to_web(TypedMultipartError::MissingField {
                 field_name: "avatar".to_string(),
             }));
-        assert_eq!(key, "multipart_missing_field");
+        assert_eq!(key, crate::l10n_keys::MULTIPART_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("avatar"));
     }
 
@@ -106,7 +115,7 @@ mod tests {
                 field_name: "tags".to_string(),
             },
         ));
-        assert_eq!(key, "multipart_duplicate_field");
+        assert_eq!(key, crate::l10n_keys::MULTIPART_DUPLICATE_FIELD);
         assert_eq!(field.as_deref(), Some("tags"));
     }
 
@@ -116,7 +125,7 @@ mod tests {
             expect_key_field(multipart_error_to_web(TypedMultipartError::UnknownField {
                 field_name: "extra".to_string(),
             }));
-        assert_eq!(key, "multipart_unknown_field");
+        assert_eq!(key, crate::l10n_keys::MULTIPART_UNKNOWN_FIELD);
         assert_eq!(field.as_deref(), Some("extra"));
     }
 
@@ -128,7 +137,7 @@ mod tests {
                 value: "x".to_string(),
             },
         ));
-        assert_eq!(key, "multipart_invalid_enum_value");
+        assert_eq!(key, crate::l10n_keys::MULTIPART_INVALID_ENUM_VALUE);
         assert_eq!(field.as_deref(), Some("status"));
     }
 
@@ -139,7 +148,7 @@ mod tests {
                 field_name: "image".to_string(),
                 limit_bytes: 1024,
             }));
-        assert_eq!(key, "multipart_field_too_large");
+        assert_eq!(key, crate::l10n_keys::MULTIPART_FIELD_TOO_LARGE);
         assert_eq!(field.as_deref(), Some("image"));
     }
 
@@ -147,7 +156,7 @@ mod tests {
     fn nameless_field_maps_to_fallback() {
         let (key, field) =
             expect_key_field(multipart_error_to_web(TypedMultipartError::NamelessField));
-        assert_eq!(key, "invalid_request_body");
+        assert_eq!(key, crate::l10n_keys::INVALID_REQUEST_BODY);
         assert_eq!(field, None);
     }
 }

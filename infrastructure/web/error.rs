@@ -4,28 +4,64 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use rootcause::Report;
 
+use crate::l10n_keys;
+
 #[derive(Debug, Clone)]
 pub enum WebError {
-    /// JSON 请求体语法错误、类型不匹配、或 DTO 校验失败（含自定义 Deserialize）。
-    /// `key` 为 l10n key（serde 错误由 [`crate::extract::valid_json`] 分类映射，validify 错误由 `errors_to_key` 产出），
-    /// `field` 为出错字段的完整路径（serde_path_to_error 提供，可 None）。
-    InvalidRequestBody { key: String, field: Option<String> },
-    /// Path 参数无法反序列化到目标类型（如 `{id}` 与路径参数类型不匹配）。
-    /// `key` 为 l10n key，`field` 为出错的路径参数名（可 None）。
-    InvalidPathParams { key: String, field: Option<String> },
-    /// Query 字符串无法反序列化到目标类型。
-    /// `key` 为 l10n key，`field` 为出错的查询字段路径（可 None）。
-    InvalidQueryParams { key: String, field: Option<String> },
+    /// 参数解析失败（请求体 / 查询字符串 / 路径参数）：`key` 为 l10n key
+    /// （serde 错误由 extract 层分类映射，validify 错误由 `errors_to_key` 产出），
+    /// `field` 为出错字段（serde_path_to_error / ErrorKind / multipart 结构化错误提供，可 None）。
+    InvalidParams {
+        kind: InvalidParamsKind,
+        key: String,
+        field: Option<String>,
+    },
     /// 本地化 KEY
     L10n(String),
+}
+
+/// 参数错误来源：决定 problem_type / problem_title / error_code 契约。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidParamsKind {
+    /// JSON / multipart 请求体。
+    Body,
+    /// URL 查询字符串。
+    Query,
+    /// 路径参数。
+    Path,
+}
+
+impl InvalidParamsKind {
+    fn problem_type(self) -> &'static str {
+        match self {
+            InvalidParamsKind::Body => "urn:slab:problem:invalid-request-body",
+            InvalidParamsKind::Query => "urn:slab:problem:invalid-query-params",
+            InvalidParamsKind::Path => "urn:slab:problem:invalid-path-params",
+        }
+    }
+
+    fn problem_title(self) -> &'static str {
+        match self {
+            InvalidParamsKind::Body => "Invalid request body",
+            InvalidParamsKind::Query => "Invalid query parameters",
+            InvalidParamsKind::Path => "Invalid path parameters",
+        }
+    }
+
+    fn error_code(self) -> &'static str {
+        match self {
+            InvalidParamsKind::Body => l10n_keys::INVALID_REQUEST_BODY,
+            // error_code 是机器可读契约，不渲染 detail，非 l10n key。
+            InvalidParamsKind::Query => "invalid_query_params",
+            InvalidParamsKind::Path => "invalid_path_params",
+        }
+    }
 }
 
 impl fmt::Display for WebError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WebError::InvalidRequestBody { key, .. }
-            | WebError::InvalidPathParams { key, .. }
-            | WebError::InvalidQueryParams { key, .. } => write!(f, "{key}"),
+            WebError::InvalidParams { key, .. } => write!(f, "{key}"),
             WebError::L10n(s) => write!(f, "{s}"),
         }
     }
@@ -36,18 +72,14 @@ impl std::error::Error for WebError {}
 impl WebError {
     pub fn status_code(&self) -> StatusCode {
         match self {
-            WebError::InvalidRequestBody { .. }
-            | WebError::InvalidPathParams { .. }
-            | WebError::InvalidQueryParams { .. } => StatusCode::BAD_REQUEST,
+            WebError::InvalidParams { .. } => StatusCode::BAD_REQUEST,
             WebError::L10n(key) => l10n_status_code(key),
         }
     }
 
     pub fn problem_type(&self) -> &'static str {
         match self {
-            WebError::InvalidRequestBody { .. } => "urn:slab:problem:invalid-request-body",
-            WebError::InvalidPathParams { .. } => "urn:slab:problem:invalid-path-params",
-            WebError::InvalidQueryParams { .. } => "urn:slab:problem:invalid-query-params",
+            WebError::InvalidParams { kind, .. } => kind.problem_type(),
             WebError::L10n(key) => match l10n_status_code(key) {
                 StatusCode::UNAUTHORIZED => "urn:slab:problem:unauthorized",
                 StatusCode::INTERNAL_SERVER_ERROR => "urn:slab:problem:internal-server-error",
@@ -58,9 +90,7 @@ impl WebError {
 
     pub fn problem_title(&self) -> &'static str {
         match self {
-            WebError::InvalidRequestBody { .. } => "Invalid request body",
-            WebError::InvalidPathParams { .. } => "Invalid path parameters",
-            WebError::InvalidQueryParams { .. } => "Invalid query parameters",
+            WebError::InvalidParams { kind, .. } => kind.problem_title(),
             WebError::L10n(key) => match l10n_status_code(key) {
                 StatusCode::UNAUTHORIZED => "Unauthorized",
                 StatusCode::INTERNAL_SERVER_ERROR => "Internal server error",
@@ -71,9 +101,7 @@ impl WebError {
 
     pub fn error_code(&self) -> &str {
         match self {
-            WebError::InvalidRequestBody { .. } => "invalid_request_body",
-            WebError::InvalidPathParams { .. } => "invalid_path_params",
-            WebError::InvalidQueryParams { .. } => "invalid_query_params",
+            WebError::InvalidParams { kind, .. } => kind.error_code(),
             WebError::L10n(key) => key.as_str(),
         }
     }

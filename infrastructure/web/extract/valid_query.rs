@@ -5,12 +5,12 @@ use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
 use validify::Validify;
 
-use crate::error::WebError;
+use crate::error::{InvalidParamsKind, WebError};
 
 use super::classify::{SerdeErrorKind, classify_serde_message};
 
 /// Query 提取器：反序列化后执行 **validify** 校验。
-/// 反序列化失败 → [`WebError::InvalidQueryParams`]（l10n key + 字段路径）；校验失败 → 同上（l10n key）。
+/// 反序列化失败 → [`WebError::InvalidParams`]（kind = Query，l10n key + 字段路径）；校验失败 → 同上（l10n key）。
 /// 反序列化走 serde_urlencoded + serde_path_to_error（与 Axum `Query` 内部同构，但保留字段路径）。
 #[derive(Debug, Clone)]
 pub struct ValidQuery<T>(pub T);
@@ -36,7 +36,8 @@ where
             serde_urlencoded::Deserializer::new(form_urlencoded::parse(query.as_bytes()));
         let mut inner = serde_path_to_error::deserialize::<_, T>(deserializer)
             .map_err(|e| query_error_to_web(&e))?;
-        inner.validify().map_err(|e| WebError::InvalidQueryParams {
+        inner.validify().map_err(|e| WebError::InvalidParams {
+            kind: InvalidParamsKind::Query,
             key: super::validify_util::errors_to_key(e),
             field: None,
         })?;
@@ -50,13 +51,14 @@ fn query_error_to_web(e: &serde_path_to_error::Error<serde_urlencoded::de::Error
     tracing::debug!(path = %path, error = %msg, "query string rejected");
     let (kind, field) = classify_serde_message(&path, &msg);
     let key = match kind {
-        SerdeErrorKind::MissingField => "query_missing_field",
-        SerdeErrorKind::InvalidType => "query_invalid_type",
-        SerdeErrorKind::UnknownField => "query_unknown_field",
-        SerdeErrorKind::DuplicateField => "query_duplicate_field",
-        SerdeErrorKind::Other => "query_invalid",
+        SerdeErrorKind::MissingField => crate::l10n_keys::QUERY_MISSING_FIELD,
+        SerdeErrorKind::InvalidType => crate::l10n_keys::QUERY_INVALID_TYPE,
+        SerdeErrorKind::UnknownField => crate::l10n_keys::QUERY_UNKNOWN_FIELD,
+        SerdeErrorKind::DuplicateField => crate::l10n_keys::QUERY_DUPLICATE_FIELD,
+        SerdeErrorKind::Other => crate::l10n_keys::QUERY_INVALID,
     };
-    WebError::InvalidQueryParams {
+    WebError::InvalidParams {
+        kind: InvalidParamsKind::Query,
         key: key.to_string(),
         field,
     }
@@ -65,13 +67,15 @@ fn query_error_to_web(e: &serde_path_to_error::Error<serde_urlencoded::de::Error
 #[cfg(test)]
 mod tests {
     use super::query_error_to_web;
-    use crate::error::WebError;
+    use crate::error::{InvalidParamsKind, WebError};
     use serde::Deserialize;
     use serde::de::DeserializeOwned;
 
     #[derive(Debug, Deserialize)]
     struct QueryDto {
+        #[allow(unused)]
         phone: String,
+        #[allow(unused)]
         page: u32,
     }
 
@@ -84,7 +88,11 @@ mod tests {
 
     fn expect_key_field(web: WebError) -> (String, Option<String>) {
         match web {
-            WebError::InvalidQueryParams { key, field } => (key, field),
+            WebError::InvalidParams {
+                kind: InvalidParamsKind::Query,
+                key,
+                field,
+            } => (key, field),
             other => panic!("unexpected variant: {other:?}"),
         }
     }
@@ -93,7 +101,7 @@ mod tests {
     fn missing_field_maps_to_key_with_field() {
         let e = parse_query::<QueryDto>("page=1");
         let (key, field) = expect_key_field(query_error_to_web(&e));
-        assert_eq!(key, "query_missing_field");
+        assert_eq!(key, crate::l10n_keys::QUERY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -101,7 +109,7 @@ mod tests {
     fn invalid_type_maps_to_key_with_field() {
         let e = parse_query::<QueryDto>("phone=1&page=abc");
         let (key, field) = expect_key_field(query_error_to_web(&e));
-        assert_eq!(key, "query_invalid_type");
+        assert_eq!(key, crate::l10n_keys::QUERY_INVALID_TYPE);
         assert_eq!(field.as_deref(), Some("page"));
     }
 
@@ -109,7 +117,7 @@ mod tests {
     fn empty_query_missing_field() {
         let e = parse_query::<QueryDto>("");
         let (key, field) = expect_key_field(query_error_to_web(&e));
-        assert_eq!(key, "query_missing_field");
+        assert_eq!(key, crate::l10n_keys::QUERY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 }

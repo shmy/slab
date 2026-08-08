@@ -170,45 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn test_web_json_body_keys_exist_in_both_locales() {
-        // web 层反序列化分类 key（`WebError::Invalid*Params` / `InvalidRequestBody` 携带，非 L10n 字面量，
-        // 结构性测试扫不到，这里显式钉死双语言翻译存在性）。
-        for key in [
-            "invalid_request_body",
-            "json_body_syntax",
-            "json_body_missing_field",
-            "json_body_invalid_type",
-            "json_body_unknown_field",
-            "json_body_duplicate_field",
-            "json_body_trailing",
-            "query_missing_field",
-            "query_invalid_type",
-            "query_unknown_field",
-            "query_duplicate_field",
-            "query_invalid",
-            "path_params_invalid_type",
-            "path_params_parse_error",
-            "path_params_wrong_count",
-            "invalid_path_params",
-            "multipart_missing_field",
-            "multipart_wrong_field_type",
-            "multipart_duplicate_field",
-            "multipart_unknown_field",
-            "multipart_invalid_enum_value",
-            "multipart_field_too_large",
-        ] {
-            assert!(
-                try_translate("en-US", key).is_some(),
-                "missing key `{key}` in en-US locales"
-            );
-            assert!(
-                try_translate("zh-CN", key).is_some(),
-                "missing key `{key}` in zh-CN locales"
-            );
-        }
-    }
-
-    #[test]
     fn test_query_and_path_keys_interpolate_field() {
         let args = [("field", "page".to_string())];
         assert_eq!(
@@ -251,6 +212,10 @@ mod tests {
             Regex::new(r#"#\[error\("([^"]*)"\)\]"#).expect("compile thiserror regex");
         let web_error_re = Regex::new(r#"WebError::L10n\("([a-zA-Z0-9_-]+)"\.to_string\(\)\)"#)
             .expect("compile web error regex");
+        // web 层 l10n key 常量（infrastructure/web/l10n_keys.rs 的 `pub const X: &str = "key";` 行），
+        // extract 层分类映射引用这些常量；只扫 web crate 路径，避免误捕其他 crate 的 &str 常量。
+        let l10n_const_re = Regex::new(r#"pub const \w+: &str = "([a-z0-9_]+)";"#)
+            .expect("compile l10n const regex");
         let mut keys = HashSet::new();
         let mut violations = Vec::new();
 
@@ -287,6 +252,12 @@ mod tests {
             }
             for cap in web_error_re.captures_iter(&content) {
                 keys.insert(cap[1].to_string());
+            }
+            let p = path.display().to_string();
+            if p.contains("infrastructure/web") {
+                for cap in l10n_const_re.captures_iter(&content) {
+                    keys.insert(cap[1].to_string());
+                }
             }
         });
 

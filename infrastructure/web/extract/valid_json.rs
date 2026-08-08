@@ -6,12 +6,12 @@ use serde::de::DeserializeOwned;
 use serde_path_to_error::Error as PathError;
 use validify::Validify;
 
-use crate::error::WebError;
+use crate::error::{InvalidParamsKind, WebError};
 
 /// JSON 请求体：先按 serde 反序列化（经 `serde_path_to_error` 保留字段路径），
 /// 再执行 **validify**（`#[modify]` + `#[validate]`）。
 ///
-/// 失败时返回 [`WebError::InvalidRequestBody`]：`key` 为 l10n key，`field` 为出错字段的
+/// 失败时返回 [`WebError::InvalidParams`]（kind = Body）：`key` 为 l10n key，`field` 为出错字段的
 /// 完整路径（如 `items.0.quantity`），由 locale 中间件参数化渲染进 detail。
 /// 反序列化走 serde_path_to_error 而非 Axum `Json`，以便把字段路径带出错误上下文。
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,19 +39,20 @@ where
             .get(axum::http::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok());
         if !content_type.is_some_and(|ct| ct.starts_with("application/json")) {
-            return Err(WebError::InvalidRequestBody {
-                key: "invalid_request_body".to_string(),
+            return Err(WebError::InvalidParams {
+                kind: InvalidParamsKind::Body,
+                key: crate::l10n_keys::INVALID_REQUEST_BODY.to_string(),
                 field: None,
             });
         }
 
-        let bytes =
-            Bytes::from_request(req, state)
-                .await
-                .map_err(|_| WebError::InvalidRequestBody {
-                    key: "invalid_request_body".to_string(),
-                    field: None,
-                })?;
+        let bytes = Bytes::from_request(req, state)
+            .await
+            .map_err(|_| WebError::InvalidParams {
+                kind: InvalidParamsKind::Body,
+                key: crate::l10n_keys::INVALID_REQUEST_BODY.to_string(),
+                field: None,
+            })?;
 
         let mut de = serde_json::Deserializer::from_slice(&bytes);
         let mut inner = match serde_path_to_error::deserialize::<_, T>(&mut de) {
@@ -61,12 +62,14 @@ where
         if let Err(e) = de.end() {
             tracing::debug!(error = %e, "json request body rejected");
             let (key, field) = l10n_key_and_field("", &e);
-            return Err(WebError::InvalidRequestBody {
+            return Err(WebError::InvalidParams {
+                kind: InvalidParamsKind::Body,
                 key: key.to_string(),
                 field,
             });
         }
-        inner.validify().map_err(|e| WebError::InvalidRequestBody {
+        inner.validify().map_err(|e| WebError::InvalidParams {
+            kind: InvalidParamsKind::Body,
             key: super::validify_util::errors_to_key(e),
             field: None,
         })?;
@@ -86,12 +89,12 @@ fn l10n_key_and_field(path: &str, inner: &serde_json::Error) -> (&'static str, O
         serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
             // TrailingCharacters 在 classify 里归为 Syntax，需文本细分。
             if msg.contains("trailing characters") {
-                ("json_body_trailing", None)
+                (crate::l10n_keys::JSON_BODY_TRAILING, None)
             } else {
-                ("json_body_syntax", None)
+                (crate::l10n_keys::JSON_BODY_SYNTAX, None)
             }
         }
-        serde_json::error::Category::Io => ("invalid_request_body", None),
+        serde_json::error::Category::Io => (crate::l10n_keys::INVALID_REQUEST_BODY, None),
         serde_json::error::Category::Data => {
             let (kind, field) = super::classify::classify_serde_message(path, &msg);
             (serde_body_key(kind), field)
@@ -102,11 +105,11 @@ fn l10n_key_and_field(path: &str, inner: &serde_json::Error) -> (&'static str, O
 fn serde_body_key(kind: super::classify::SerdeErrorKind) -> &'static str {
     use super::classify::SerdeErrorKind;
     match kind {
-        SerdeErrorKind::MissingField => "json_body_missing_field",
-        SerdeErrorKind::InvalidType => "json_body_invalid_type",
-        SerdeErrorKind::UnknownField => "json_body_unknown_field",
-        SerdeErrorKind::DuplicateField => "json_body_duplicate_field",
-        SerdeErrorKind::Other => "invalid_request_body",
+        SerdeErrorKind::MissingField => crate::l10n_keys::JSON_BODY_MISSING_FIELD,
+        SerdeErrorKind::InvalidType => crate::l10n_keys::JSON_BODY_INVALID_TYPE,
+        SerdeErrorKind::UnknownField => crate::l10n_keys::JSON_BODY_UNKNOWN_FIELD,
+        SerdeErrorKind::DuplicateField => crate::l10n_keys::JSON_BODY_DUPLICATE_FIELD,
+        SerdeErrorKind::Other => crate::l10n_keys::INVALID_REQUEST_BODY,
     }
 }
 
@@ -115,7 +118,8 @@ fn serde_error_to_web(e: &PathError<serde_json::Error>) -> WebError {
     let inner = e.inner();
     tracing::debug!(path = %path, error = %inner, "json request body rejected");
     let (key, field) = l10n_key_and_field(&path, inner);
-    WebError::InvalidRequestBody {
+    WebError::InvalidParams {
+        kind: InvalidParamsKind::Body,
         key: key.to_string(),
         field,
     }
@@ -129,22 +133,26 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     struct Dto {
+        #[allow(unused)]
         phone: String,
     }
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct StrictDto {
+        #[allow(unused)]
         phone: String,
     }
 
     #[derive(Debug, Deserialize)]
     struct Outer {
+        #[allow(unused)]
         address: Address,
     }
 
     #[derive(Debug, Deserialize)]
     struct Address {
+        #[allow(unused)]
         city: String,
     }
 
@@ -156,7 +164,7 @@ mod tests {
     fn missing_field_extracts_field_name() {
         let err = json_err::<Dto>("{}");
         let (key, field) = l10n_key_and_field("", &err);
-        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -166,7 +174,7 @@ mod tests {
         // 否则 field_path 会拼出 "..phone"。
         let err = json_err::<Dto>("{}");
         let (key, field) = l10n_key_and_field(".", &err);
-        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -174,7 +182,7 @@ mod tests {
     fn dot_empty_path_yields_no_field_for_invalid_type() {
         let err = json_err::<Dto>("123");
         let (key, field) = l10n_key_and_field(".", &err);
-        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_INVALID_TYPE);
         assert_eq!(field, None);
     }
 
@@ -182,7 +190,7 @@ mod tests {
     fn missing_field_joins_parent_path() {
         let err = json_err::<Address>("{}");
         let (key, field) = l10n_key_and_field("address", &err);
-        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("address.city"));
     }
 
@@ -190,7 +198,7 @@ mod tests {
     fn invalid_type_uses_path() {
         let err = json_err::<Dto>(r#"{"phone": 123}"#);
         let (key, field) = l10n_key_and_field("phone", &err);
-        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_INVALID_TYPE);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -198,7 +206,7 @@ mod tests {
     fn unknown_field_extracts_field_name() {
         let err = json_err::<StrictDto>(r#"{"phone": "1", "xyz": 1}"#);
         let (key, field) = l10n_key_and_field("", &err);
-        assert_eq!(key, "json_body_unknown_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_UNKNOWN_FIELD);
         assert_eq!(field.as_deref(), Some("xyz"));
     }
 
@@ -206,7 +214,7 @@ mod tests {
     fn duplicate_field_extracts_field_name() {
         let err = json_err::<Dto>(r#"{"phone": "a", "phone": "b"}"#);
         let (key, field) = l10n_key_and_field("", &err);
-        assert_eq!(key, "json_body_duplicate_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_DUPLICATE_FIELD);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -214,7 +222,7 @@ mod tests {
     fn syntax_error_has_no_field() {
         let err = json_err::<Dto>("{");
         let (key, field) = l10n_key_and_field("", &err);
-        assert_eq!(key, "json_body_syntax");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_SYNTAX);
         assert_eq!(field, None);
     }
 
@@ -222,7 +230,7 @@ mod tests {
     fn trailing_characters_has_no_field() {
         let err = json_err::<Dto>(r#"{"phone": "1"} extra"#);
         let (key, field) = l10n_key_and_field("", &err);
-        assert_eq!(key, "json_body_trailing");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_TRAILING);
         assert_eq!(field, None);
     }
 
@@ -232,7 +240,7 @@ mod tests {
         let err = serde_path_to_error::deserialize::<_, Outer>(&mut de).unwrap_err();
         assert_eq!(err.path().to_string(), "address");
         let (key, field) = l10n_key_and_field(&err.path().to_string(), err.inner());
-        assert_eq!(key, "json_body_missing_field");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_MISSING_FIELD);
         assert_eq!(field.as_deref(), Some("address.city"));
     }
 
@@ -242,7 +250,7 @@ mod tests {
         let err = serde_path_to_error::deserialize::<_, Dto>(&mut de).unwrap_err();
         assert_eq!(err.path().to_string(), "phone");
         let (key, field) = l10n_key_and_field(&err.path().to_string(), err.inner());
-        assert_eq!(key, "json_body_invalid_type");
+        assert_eq!(key, crate::l10n_keys::JSON_BODY_INVALID_TYPE);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 }

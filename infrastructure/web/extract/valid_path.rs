@@ -7,10 +7,10 @@ use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
 use validify::Validify;
 
-use crate::error::WebError;
+use crate::error::{InvalidParamsKind, WebError};
 
 /// Path 参数提取器：反序列化后执行 **validify** 校验。
-/// 反序列化失败 → [`WebError::InvalidPathParams`]（l10n key + 字段路径）；校验失败 → 同上（l10n key）。
+/// 反序列化失败 → [`WebError::InvalidParams`]（kind = Path，l10n key + 字段路径）；校验失败 → 同上（l10n key）。
 /// 继续用 Axum `Path`（路径参数匹配/解码在其内部），错误经结构化 `ErrorKind` 分类。
 #[derive(Debug)]
 pub struct ValidPath<T>(pub T);
@@ -34,7 +34,8 @@ where
         let Path(mut inner) = Path::<T>::from_request_parts(parts, state)
             .await
             .map_err(path_rejection_to_web)?;
-        inner.validify().map_err(|e| WebError::InvalidPathParams {
+        inner.validify().map_err(|e| WebError::InvalidParams {
+            kind: InvalidParamsKind::Path,
             key: super::validify_util::errors_to_key(e),
             field: None,
         })?;
@@ -47,15 +48,17 @@ fn path_rejection_to_web(r: PathRejection) -> WebError {
         PathRejection::FailedToDeserializePathParams(e) => {
             let (key, field) = error_kind_to_l10n(e.kind());
             tracing::debug!(path_err = %e.kind(), "path params rejected");
-            WebError::InvalidPathParams {
+            WebError::InvalidParams {
+                kind: InvalidParamsKind::Path,
                 key: key.to_string(),
                 field,
             }
         }
         _ => {
             tracing::debug!("path params rejected: missing path params");
-            WebError::InvalidPathParams {
-                key: "invalid_path_params".to_string(),
+            WebError::InvalidParams {
+                kind: InvalidParamsKind::Path,
+                key: crate::l10n_keys::INVALID_PATH_PARAMS.to_string(),
                 field: None,
             }
         }
@@ -65,16 +68,24 @@ fn path_rejection_to_web(r: PathRejection) -> WebError {
 /// axum `ErrorKind`（结构化）→ (l10n key, 字段路径)。
 fn error_kind_to_l10n(kind: &ErrorKind) -> (&'static str, Option<String>) {
     match kind {
-        ErrorKind::ParseErrorAtKey { key, .. } => ("path_params_invalid_type", Some(key.clone())),
+        ErrorKind::ParseErrorAtKey { key, .. } => (
+            crate::l10n_keys::PATH_PARAMS_INVALID_TYPE,
+            Some(key.clone()),
+        ),
         ErrorKind::ParseErrorAtIndex { .. } | ErrorKind::ParseError { .. } => {
-            ("path_params_invalid_type", None)
+            (crate::l10n_keys::PATH_PARAMS_INVALID_TYPE, None)
         }
-        ErrorKind::InvalidUtf8InPathParam { key } => {
-            ("path_params_invalid_type", Some(key.clone()))
+        ErrorKind::InvalidUtf8InPathParam { key } => (
+            crate::l10n_keys::PATH_PARAMS_INVALID_TYPE,
+            Some(key.clone()),
+        ),
+        ErrorKind::DeserializeError { key, .. } => {
+            (crate::l10n_keys::PATH_PARAMS_PARSE_ERROR, Some(key.clone()))
         }
-        ErrorKind::DeserializeError { key, .. } => ("path_params_parse_error", Some(key.clone())),
-        ErrorKind::WrongNumberOfParameters { .. } => ("path_params_wrong_count", None),
-        _ => ("invalid_path_params", None),
+        ErrorKind::WrongNumberOfParameters { .. } => {
+            (crate::l10n_keys::PATH_PARAMS_WRONG_COUNT, None)
+        }
+        _ => (crate::l10n_keys::INVALID_PATH_PARAMS, None),
     }
 }
 
@@ -91,7 +102,7 @@ mod tests {
             expected_type: "u64",
         };
         let (key, field) = error_kind_to_l10n(&kind);
-        assert_eq!(key, "path_params_invalid_type");
+        assert_eq!(key, crate::l10n_keys::PATH_PARAMS_INVALID_TYPE);
         assert_eq!(field.as_deref(), Some("id"));
     }
 
@@ -103,7 +114,7 @@ mod tests {
             message: "bad".into(),
         };
         let (key, field) = error_kind_to_l10n(&kind);
-        assert_eq!(key, "path_params_parse_error");
+        assert_eq!(key, crate::l10n_keys::PATH_PARAMS_PARSE_ERROR);
         assert_eq!(field.as_deref(), Some("code"));
     }
 
@@ -114,7 +125,7 @@ mod tests {
             expected_type: "u64",
         };
         let (key, field) = error_kind_to_l10n(&kind);
-        assert_eq!(key, "path_params_invalid_type");
+        assert_eq!(key, crate::l10n_keys::PATH_PARAMS_INVALID_TYPE);
         assert_eq!(field, None);
     }
 
@@ -125,7 +136,7 @@ mod tests {
             expected: 2,
         };
         let (key, field) = error_kind_to_l10n(&kind);
-        assert_eq!(key, "path_params_wrong_count");
+        assert_eq!(key, crate::l10n_keys::PATH_PARAMS_WRONG_COUNT);
         assert_eq!(field, None);
     }
 }
