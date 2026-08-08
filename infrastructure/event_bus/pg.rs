@@ -1,10 +1,10 @@
-//! PostgreSQL 后端（默认）：Outbox 表 `queues` + 进程内 dispatcher 轮询投递。
+//! PostgreSQL 后端（默认）：Outbox 表 `events` + 进程内 dispatcher 轮询投递。
 //!
-//! - **发布**：后端自取连接写入 `queues` 表（独立于调用方事务）。
+//! - **发布**：后端自取连接写入 `events` 表（独立于调用方事务）。
 //! - **消费**：`run_dispatcher` 批事务轮询（FOR UPDATE SKIP LOCKED + SAVEPOINT + 指数退避），
-//!   投递状态在 `queue_deliveries`（消息 × 监听者）。
+//!   投递状态在 `event_deliveries`（事件 × 订阅者）。
 //! - **GC**：`delete_delivered_older_than_in_transaction` 清理已投递消息。
-//! - **建表**：`try_new` 幂等自建全部队列表（`queues` / `queue_deliveries` + 索引 + 触发器），
+//! - **建表**：`try_new` 幂等自建全部队列表（`events` / `event_deliveries` + 索引 + 触发器），
 //!   不依赖 migration 版本；使用运行时 `sqlx::query`（非宏），初次编译即可通过。
 
 use std::time::Duration;
@@ -25,7 +25,7 @@ pub struct PgBackend {
 }
 
 impl PgBackend {
-    /// 建立后端并幂等建表（`queues` / `queue_deliveries` + 索引 + 触发器）。
+    /// 建立后端并幂等建表（`events` / `event_deliveries` + 索引 + 触发器）。
     pub async fn try_new(pg_pool: PgPool) -> Result<Self> {
         let mut conn = pg_pool.acquire().await?;
         sqlx::query(
@@ -44,7 +44,7 @@ impl PgBackend {
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS _pg_queues (
+            CREATE TABLE IF NOT EXISTS _pg_events (
                 id BIGSERIAL PRIMARY KEY,
                 topic VARCHAR(255) NOT NULL,
                 payload TEXT NOT NULL,
@@ -63,12 +63,12 @@ impl PgBackend {
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_pg_queues_pending ON _pg_queues (next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_pg_events_pending ON _pg_events (next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_pg_queues_topic_pending ON _pg_queues (topic, next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_pg_events_topic_pending ON _pg_events (topic, next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
@@ -76,8 +76,8 @@ impl PgBackend {
         sqlx::query(
             r#"
             DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_queues') THEN
-                    CREATE TRIGGER set_updated_at_queues BEFORE UPDATE ON _pg_queues
+                IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_events') THEN
+                    CREATE TRIGGER set_updated_at_events BEFORE UPDATE ON _pg_events
                     FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
                 END IF;
             END $$
@@ -88,8 +88,8 @@ impl PgBackend {
 
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS _pg_queue_deliveries (
-                message_id      BIGINT NOT NULL REFERENCES _pg_queues(id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS _pg_event_deliveries (
+                event_id      BIGINT NOT NULL REFERENCES _pg_events(id) ON DELETE CASCADE,
                 handler         TEXT NOT NULL,
                 -- 1=pending, 2=delivered, 3=failed
                 status          SMALLINT NOT NULL DEFAULT 1 CHECK (status IN (1, 2, 3)),
@@ -100,7 +100,7 @@ impl PgBackend {
                 delivered_at    TIMESTAMPTZ,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (message_id, handler)
+                PRIMARY KEY (event_id, handler)
             )
             "#,
         )
@@ -109,8 +109,8 @@ impl PgBackend {
         sqlx::query(
             r#"
             DO $$ BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_queue_deliveries') THEN
-                    CREATE TRIGGER set_updated_at_queue_deliveries BEFORE UPDATE ON _pg_queue_deliveries
+                IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_event_deliveries') THEN
+                    CREATE TRIGGER set_updated_at_event_deliveries BEFORE UPDATE ON _pg_event_deliveries
                     FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
                 END IF;
             END $$
@@ -119,12 +119,12 @@ impl PgBackend {
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_pending ON _pg_queue_deliveries (next_attempt_at, message_id) WHERE status = 1 AND attempts < max_attempts",
+            "CREATE INDEX IF NOT EXISTS idx_event_deliveries_pending ON _pg_event_deliveries (next_attempt_at, event_id) WHERE status = 1 AND attempts < max_attempts",
         )
         .execute(&mut *conn)
         .await?;
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_queue_deliveries_delivered ON _pg_queue_deliveries (delivered_at) WHERE status = 2 AND delivered_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_event_deliveries_delivered ON _pg_event_deliveries (delivered_at) WHERE status = 2 AND delivered_at IS NOT NULL",
         )
         .execute(&mut *conn)
         .await?;
@@ -195,7 +195,7 @@ mod tests {
         const TOPIC: &'static str = "slab.pg_backend.evt";
     }
 
-    /// 不跑 migration：验证 `try_new` 幂等自建表（queues + queue_deliveries）后可直接入队。
+    /// 不跑 migration：验证 `try_new` 幂等自建表（events + event_deliveries）后可直接入队。
     #[sqlx::test]
     async fn try_new_creates_schema_and_publishes(pool: sqlx::PgPool) {
         let backend = PgBackend::try_new(pool.clone()).await.unwrap();
@@ -209,7 +209,7 @@ mod tests {
             .unwrap();
 
         let mut conn = pool.acquire().await.unwrap();
-        let count = sqlx::query("SELECT COUNT(*) FROM _pg_queues")
+        let count = sqlx::query("SELECT COUNT(*) FROM _pg_events")
             .fetch_one(&mut *conn)
             .await
             .unwrap();

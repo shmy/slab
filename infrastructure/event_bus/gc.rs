@@ -1,6 +1,6 @@
 /// 与 `bin/server/background` 中队列 GC 成对使用；勿与 `pg_cache` 的 advisory key 重复。
-const QUEUE_GC_ADVISORY_KEY_1: i32 = 884_423;
-const QUEUE_GC_ADVISORY_KEY_2: i32 = 1;
+const EVENT_BUS_GC_ADVISORY_KEY_1: i32 = 884_423;
+const EVENT_BUS_GC_ADVISORY_KEY_2: i32 = 1;
 /// 已投递行按 `delivered_at` 保留的最少天数（小于 1 时按 1 处理，避免误删过新数据）。
 pub const DEFAULT_DELIVERED_RETENTION_DAYS: i64 = 30;
 
@@ -17,13 +17,13 @@ pub async fn delete_delivered_older_than_in_transaction(
 ) -> Result<u64> {
     let days = retain_days.max(1);
     sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
-        .bind(QUEUE_GC_ADVISORY_KEY_1)
-        .bind(QUEUE_GC_ADVISORY_KEY_2)
+        .bind(EVENT_BUS_GC_ADVISORY_KEY_1)
+        .bind(EVENT_BUS_GC_ADVISORY_KEY_2)
         .fetch_one(&mut *conn)
         .await?;
     let n = sqlx::query(
         r#"
-            DELETE FROM _pg_queues
+            DELETE FROM _pg_events
             WHERE status = $2
               AND delivered_at IS NOT NULL
               AND delivered_at < NOW() - ($1::bigint * interval '1 day')
@@ -42,14 +42,14 @@ mod tests {
     use sqlx::{Acquire, PgPool, Row};
 
     /// 插入一条指定状态的队列消息，delivered_at 可指定；返回 id。
-    async fn seed_queue(
+    async fn seed_event(
         pool: &PgPool,
         status: i16,
         delivered_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> i64 {
         let mut conn = pool.acquire().await.unwrap();
         let row = sqlx::query(
-            r#"INSERT INTO _pg_queues (topic, payload, status, delivered_at)
+            r#"INSERT INTO _pg_events (topic, payload, status, delivered_at)
                VALUES ('gc.test', '{}', $1, $2) RETURNING id"#,
         )
         .bind(status)
@@ -63,14 +63,14 @@ mod tests {
     #[sqlx::test]
     async fn test_gc_deletes_old_delivered_keeps_recent(pool: PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
-        let old = seed_queue(
+        let old = seed_event(
             &pool,
             2,
             Some(chrono::Utc::now() - chrono::Duration::days(30)),
         )
         .await;
-        let recent = seed_queue(&pool, 2, Some(chrono::Utc::now())).await;
-        let pending = seed_queue(&pool, 1, None).await;
+        let recent = seed_event(&pool, 2, Some(chrono::Utc::now())).await;
+        let pending = seed_event(&pool, 1, None).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -80,7 +80,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         assert_eq!(n, 1);
-        let remaining = sqlx::query("SELECT id FROM _pg_queues ORDER BY id")
+        let remaining = sqlx::query("SELECT id FROM _pg_events ORDER BY id")
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -94,13 +94,13 @@ mod tests {
     #[sqlx::test]
     async fn test_gc_retain_days_floored_at_one(pool: PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
-        let old = seed_queue(
+        let old = seed_event(
             &pool,
             2,
             Some(chrono::Utc::now() - chrono::Duration::days(30)),
         )
         .await;
-        let very_new = seed_queue(
+        let very_new = seed_event(
             &pool,
             2,
             Some(chrono::Utc::now() - chrono::Duration::hours(2)),
@@ -116,7 +116,7 @@ mod tests {
         txn.commit().await.unwrap();
 
         assert_eq!(n, 1);
-        let remaining = sqlx::query("SELECT id FROM _pg_queues")
+        let remaining = sqlx::query("SELECT id FROM _pg_events")
             .fetch_all(&pool)
             .await
             .unwrap()

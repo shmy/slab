@@ -116,13 +116,13 @@
 | `0007_create_production_tables` | 生产（work_orders、production_receipts 等） |
 | `0008_create_p4_foundations` | 财务/计划（payments、item_costs 等） |
 
-另含基础设施表：`queues` + `queue_deliveries`（域外广播队列，消息本体 + 监听者投递状态，默认队列后端 `PgBackend` 使用，见 `docs/EVENT_BUS.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/KV.md`）。
+另含基础设施表：`_pg_events` + `_pg_event_deliveries`（域外广播事件：事件本体 + 订阅者分发状态，事件总线后端 `PgBackend` 使用，见 `docs/EVENT_BUS.md`）、`caches`（`UNLOGGED` 热点 KV + TTL，默认缓存后端 `PgCache` 使用，见 `docs/KV.md`）。
 
 ### 5.2 事件消费现状
 
 - 事件定义：`identity_contract::events` 定义 `AccountCreatedEvent` / `AccountLoggedInEvent`（实现 `shared_contract::event::Event`）。
-- 入队：`identity` 域在 `account_create`（立即）与 `account_login`（延迟 10s）内与业务同事务入队。
-- 消费：`identity/subscriber/` 下 `AccountCreatedHandler` 与 `AccountLoggedInHandler` 各一个（当前仅观测打日志，无副作用），在 `identity::Module::register` 注册。
+- 发布：`identity` 域在 `account_create`（立即）与 `account_login`（延迟 10s）内与业务同事务发布。
+- 消费：`identity/subscriber/` 下 `AccountCreatedSubscriber` 与 `AccountLoggedInSubscriber` 各一个（当前仅观测打日志，无副作用），在 `identity::Module::register` 注册。
 - 事件总线（dispatcher + 订阅者幂等）就绪，dispatcher 在 server 进程内运行；后续业务域的消费端按需添加。
 
 ## 6. 开发约定（面向后续迭代）
@@ -173,7 +173,7 @@
 |------|------|------|----------|
 | **只读 Port** | `{domain}_contract::port`（如 `AccountPort::by_id`） | 跨域 **SELECT / 存在性校验** | 他域 feature crate |
 | **Repository** | `features/{domain}/repository/`（如 `AccountRepository`） | 本域 **持久化变更**（CRUD、改状态、归档等） | **仅** 本域 `features/{domain}` 内 `endpoint` / `shared` |
-| **编排** | `features/{domain}/endpoint/*` 的 `execute` | DTO 校验、调 Port/Repository、事务、入队 | — |
+| **编排** | `features/{domain}/endpoint/*` 的 `execute` | DTO 校验、调 Port/Repository、事务、发布事件 | — |
 
 ### 7.2 核心原则
 

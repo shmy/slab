@@ -143,7 +143,7 @@ mod tests {
         let row = sqlx::query!(
             r#"
                 SELECT topic, payload
-                FROM _pg_queues
+                FROM _pg_events
                 WHERE topic = $1 AND status = 1
                 ORDER BY id DESC
                 LIMIT 1

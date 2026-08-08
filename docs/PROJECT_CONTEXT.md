@@ -118,7 +118,7 @@ inspection_templates   — 检验模板 + inspection_template_items
 inspection_orders      — 检验单 + inspection_results
 non_conformances       — 不合格处理
 payments               — 收/付款记录
-queues / queue_deliveries — 域外广播队列（消息本体 + 监听者投递状态）
+_pg_events / _pg_event_deliveries — 域外广播事件（事件本体 + 订阅者分发状态）
 caches                 — 热点 KV（UNLOGGED）
 ```
 

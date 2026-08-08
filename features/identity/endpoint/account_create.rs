@@ -77,7 +77,7 @@ async fn execute(
     let mut txn = conn.begin().await?;
     AccountRepository::create(&mut txn, &account).await?;
     AuditService::record_create(&mut txn, "account", &id, &ctx, &account).await?;
-    // 强一致入队：与业务同事务，回滚即不投递（Outbox 语义）。
+    // 强一致发布：与业务同事务，回滚即不投递（Outbox 语义）。
     bus.publish_in_tx(&mut txn, &AccountCreatedEvent { id })
         .await?;
     txn.commit().await?;
@@ -119,7 +119,7 @@ mod tests {
 
         let mut conn = state.pg_pool.acquire().await.unwrap();
         let row = sqlx::query!(
-            r#"SELECT topic, payload FROM _pg_queues WHERE status = 1 ORDER BY id DESC LIMIT 1"#
+            r#"SELECT topic, payload FROM _pg_events WHERE status = 1 ORDER BY id DESC LIMIT 1"#
         )
         .fetch_one(&mut *conn)
         .await

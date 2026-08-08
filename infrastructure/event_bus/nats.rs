@@ -261,7 +261,7 @@ mod tests {
         const TOPIC: &'static str = "slab.nats_test.evt";
     }
 
-    /// 需要本地 NATS（默认跳过）：`NATS_TEST_URL=... cargo test -p queue --features nats -- --ignored`
+    /// 需要本地 NATS（默认跳过）：`NATS_TEST_URL=... cargo test -p event_bus --features nats -- --ignored`
     fn test_url() -> Option<String> {
         std::env::var("NATS_TEST_URL").ok()
     }
@@ -374,7 +374,7 @@ mod e2e_tests {
     }
 
     /// 端到端：publish → durable consumer 消费（真实 nats-server，需 `-js`）。
-    /// `NATS_TEST_URL=... cargo test -p queue --features nats -- --ignored`
+    /// `NATS_TEST_URL=... cargo test -p event_bus --features nats -- --ignored`
     #[tokio::test]
     #[ignore]
     async fn publish_consume_roundtrip() {

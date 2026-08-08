@@ -82,7 +82,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_status_uses_stable_smallint_values() {
+    fn event_status_uses_stable_smallint_values() {
         assert_eq!(DeliveryStatus::Pending.as_i16(), 1);
         assert_eq!(DeliveryStatus::Delivered.as_i16(), 2);
         assert_eq!(DeliveryStatus::Failed.as_i16(), 3);

@@ -5,7 +5,7 @@
 ## 1. 定位
 
 - **用途**：基于 [sayiir](https://docs.sayiir.dev) 1.0 的**持久化工作流引擎**封装。`CheckpointingRunner` + Postgres 后端：每个 task 完成后自动存快照，进程崩溃后可 `resume` 续跑；测试环境通过 `test-utils` 特性切换为 in-memory backend。
-- **不是**：不是消息队列（那是 `infrastructure/event_bus`）；不替代审批状态机（`cross_domain/approval`）；未启用分布式 worker（sayiir 的 `PooledWorker` 预留，单进程够用）。
+- **不是**：不是事件总线（那是 `infrastructure/event_bus`）；不替代审批状态机（`cross_domain/approval`）；未启用分布式 worker（sayiir 的 `PooledWorker` 预留，单进程够用）。
 - **职责边界**：只做**编排真相**（等待、超时、分流、联动），不做**业务真相**（单据状态列仍由同步端点维护）。
 
 ## 2. 核心概念

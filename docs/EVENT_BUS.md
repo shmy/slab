@@ -8,7 +8,7 @@
 
 | 后端 | feature | 实现 | 发布语义 | 消费 |
 |------|---------|------|---------|------|
-| **Pg**（默认） | `pg` | `PgBackend`（Outbox 表 `queues` + 进程内 dispatcher） | 后端自取连接发布（独立于调用方事务） | 批事务轮询 + 每订阅者分发状态/重试 |
+| **Pg**（默认） | `pg` | `PgBackend`（Outbox 表 `_pg_events` + 进程内 dispatcher） | 后端自取连接发布（独立于调用方事务） | 批事务轮询 + 每订阅者分发状态/重试 |
 | **Nats** | `nats` | `NatsBackend`（JetStream 直发） | 直发（不参与 PG 事务；延迟用 ADR-51 `@at` 调度） | 每订阅者一个 durable pull consumer |
 
 **选型规则**：
@@ -34,18 +34,17 @@
 
 ## 2.1 数据模型
 
-> 建表：`PgBackend::try_new` 幂等自建全部事件总线表（`queues` / `queue_deliveries` + 索引 + 触发器），
+> 建表：`PgBackend::try_new` 幂等自建全部事件总线表（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器），
 > 不依赖 migration 版本；migration 0001/0009 中的同款定义保持兼容（IF NOT EXISTS 双保险）。
-> **表名保留 `queue` 前缀为历史兼容**（存储细节，对 Rust API 不可见）。
 
-### `queues` — 事件本体（一行一个事件）
+### `_pg_events` — 事件本体（一行一个事件）
 
 | 列                          | 说明                                                                                                                   |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `topic`                     | 路由键，与 `Subscriber::topic()` 一致；同一 topic 可注册**多个**订阅者                                            |
 | `payload`                   | **`TEXT`**，存 **JSON 文本**（`serde_json::to_string`）；库内不做 JSON 校验，由 `publish` / dispatcher `from_str` 保证 |
 | `status`                    | 1=pending，2=delivered，3=failed；**聚合语义**：pending=还有订阅者未完成，delivered=全部成功，failed=存在终态失败或无人订阅 |
-| `attempts` / `max_attempts` | 兼容保留（广播下重试计数迁移到 `queue_deliveries`，本列不再更新）                                                        |
+| `attempts` / `max_attempts` | 兼容保留（广播下重试计数迁移到 `_pg_event_deliveries`，本列不再更新）                                                        |
 | `next_attempt_at`           | 行级拉取时间：由 dispatcher 聚合刷新为「最早未完成分发的时间」                                                          |
 | `last_error`                | 最近一次终态失败说明（有分发失败时汇总最近一条）                                                                       |
 | `delivered_at`              | 全部分发成功的时间；GC 依赖                                                                                            |
@@ -53,11 +52,11 @@
 
 **部分索引**：`status=1` 且 `attempts < max_attempts` 上的 `(next_attempt_at, id)` 与 `(topic, next_attempt_at, id)`。
 
-### `queue_deliveries` — 分发状态（事件 × 订阅者，一行一次分发）
+### `_pg_event_deliveries` — 分发状态（事件 × 订阅者，一行一次分发）
 
 | 列             | 说明                                                          |
 | -------------- | ------------------------------------------------------------- |
-| `message_id`   | 外键 → `queues(id)`，`ON DELETE CASCADE`                       |
+| `event_id`   | 外键 → `_pg_events(id)`，`ON DELETE CASCADE`                       |
 | `handler`      | 订阅者标识（`Subscriber::name()`），与 `message_id` 组成主键 |
 | `status`       | 1=pending，2=delivered，3=failed                              |
 | `attempts`     | 该订阅者的重试计数                                              |
@@ -73,7 +72,7 @@
 ```
 HTTP / 其它入口
   └── 业务 execute 内 sqlx 事务（`sqlx::Transaction<Postgres>` 或同一 `PgConnection`）
-        └── publish / publish_with_delay  → INSERT queues（一行事件）
+        └── publish / publish_with_delay  → INSERT _pg_events（一个事件一行）
   └── COMMIT 后行对下游可见
 
 bin/server/server.rs
@@ -86,11 +85,11 @@ features/{domain}（`lib.rs` 中 `register`）
 ```
 
 - **注册表**：`Registry::register` 为**追加**（同 topic 多个订阅者全部保留）→ `freeze()` → `FrozenRegistry`，启动时一次性构建。
-- **GC**：`bin/server/gc_jobs.rs` 调用 `delete_delivered_older_than_in_transaction`，带 `pg_advisory_xact_lock`，避免多实例同时删。删除事件行时 `queue_deliveries` 由外键级联清理。
+- **GC**：`bin/server/gc_jobs.rs` 调用 `delete_delivered_older_than_in_transaction`，带 `pg_advisory_xact_lock`，避免多实例同时删。删除事件行时 `_pg_event_deliveries` 由外键级联清理。
 
 ## 4. 分发语义
 
-- **广播**：一个事件对同一 topic 的每个注册订阅者各生成一行分发，**全部**执行（`queue_deliveries` 主键 `(message_id, handler)` 保证每个订阅者至多一份）。
+- **广播**：一个事件对同一 topic 的每个注册订阅者各生成一行分发，**全部**执行（`_pg_event_deliveries` 主键 `(event_id, handler)` 保证每个订阅者至多一份）。
 - **At-least-once**：同一个事件在崩溃、重试后可能再次进入 `handle`；**实现 `Subscriber` 时必须幂等**。
 - **订阅者隔离**：每个订阅者独立 SAVEPOINT、独立重试、独立终态；一个失败不影响其它订阅者，也不阻塞同批其它事件。
 - **无独立「处理中」状态**：靠 `FOR UPDATE SKIP LOCKED` 在事件行上锁定，提交后锁释放；进程崩溃未提交则分发仍为 pending，可被其它 worker 拉取。
@@ -99,7 +98,7 @@ features/{domain}（`lib.rs` 中 `register`）
 
 1. `BEGIN`，拉取「有待处理分发」的事件行（**行级状态不参与拉取**，纯聚合/告警语义）：
    - 从未生成过分发（新事件 / 旧事件迁移）**或**
-   - 存在到期未完成的分发（`queue_deliveries` 中 status=pending、attempts 未耗尽、`next_attempt_at` 已到）
+   - 存在到期未完成的分发（`_pg_event_deliveries` 中 status=pending、attempts 未耗尽、`next_attempt_at` 已到）
    - 因此部分失败 + 部分退避的事件仍可被拉取，直到所有分发终态；`FOR UPDATE SKIP LOCKED LIMIT n`。
 2. 对每条事件：
    - 无订阅者订阅该 topic → 事件行终态失败（`no_handler_for_topic:…`，防呆告警）。
@@ -114,17 +113,17 @@ features/{domain}（`lib.rs` 中 `register`）
 
 ## 6. 行级状态机（聚合，**终态失败优先**）
 
-- 存在终态失败分发 → `queues.status=3`，`last_error` 汇总最近一条失败；**即使还有 pending 分发**（拉取仍会继续，直到所有分发终态）。
-- 无失败但还有 pending 分发 → `queues.status=1`，`next_attempt_at` = 最早未完成分发的到期时间。
-- 全部分发成功 → `queues.status=2` + `delivered_at`（GC 依据）。
+- 存在终态失败分发 → `_pg_events.status=3`，`last_error` 汇总最近一条失败；**即使还有 pending 分发**（拉取仍会继续，直到所有分发终态）。
+- 无失败但还有 pending 分发 → `_pg_events.status=1`，`next_attempt_at` = 最早未完成分发的到期时间。
+- 全部分发成功 → `_pg_events.status=2` + `delivered_at`（GC 依据）。
 - 全部分发终态后 `next_attempt_at=infinity`，行不再被拉取。
 
 **人工修复路径**：将失败分发行改回 `status=1`、重置 `attempts` 与 `next_attempt_at`，**同时**把事件行 `next_attempt_at` 拨回过去（行状态由下次处理自动刷新）：
 
 ```sql
-UPDATE queue_deliveries SET status = 1, attempts = 0, next_attempt_at = NOW()
-WHERE message_id = <id> AND handler = '<name>';
-UPDATE queues SET next_attempt_at = NOW() WHERE id = <id>;
+UPDATE _pg_event_deliveries SET status = 1, attempts = 0, next_attempt_at = NOW()
+WHERE event_id = <id> AND handler = '<name>';
+UPDATE _pg_events SET next_attempt_at = NOW() WHERE id = <id>;
 ```
 
 ## 7. 发布 API（`EventBus` 方法门面）
@@ -168,9 +167,9 @@ registrar.bus.register(BSubscriber);   // 同一 topic，同一事件两个订�
 
 ## 11. 运维与可观测性
 
-- **告警**：建议对 `SELECT count(*) FROM queue_deliveries WHERE status = 3` > 0 或持续增长配置告警（比 `queues.status=3` 更细粒度，能定位到具体订阅者）。
+- **告警**：建议对 `SELECT count(*) from _pg_event_deliveries WHERE status = 3` > 0 或持续增长配置告警（比 `_pg_events.status=3` 更细粒度，能定位到具体订阅者）。
 - **追踪**：dispatcher / cycle 已挂 `tracing`；周期失败会 `warn` 日志。
-- **清理**：仅删除**已分发**且超过保留天数的事件行（`queue_deliveries` 级联删除）；failed 行需人工策略（导出、修复、删）。
+- **清理**：仅删除**已分发**且超过保留天数的事件行（`_pg_event_deliveries` 级联删除）；failed 行需人工策略（导出、修复、删）。
 
 ## 12. 相关路径速查
 
@@ -180,7 +179,7 @@ registrar.bus.register(BSubscriber);   // 同一 topic，同一事件两个订�
 | `infrastructure/event_bus/pg.rs`                       | `PgBackend`（Outbox + dispatcher） |
 | `infrastructure/event_bus/nats.rs`                     | `NatsBackend`（JetStream 直发 + durable consumer） |
 | `infrastructure/migration/versions/0001_create_foundations.sql` | `fn_set_updated_at` 函数 |
-| `infrastructure/migration/versions/0009_create_queue_deliveries.sql` | 分发状态表与索引              |
+| `infrastructure/event_bus/pg.rs` | `PgBackend` 运行时自建全部事件总线表（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器） |
 | `bin/server/config.rs`                             | 按 feature 组装 `event_bus::EventBus`    |
 | `bin/server/server.rs`                             | dispatcher 启动与 registry 构建    |
 | `bin/server/gc_jobs.rs`                            | 已分发行 GC（nats 后端为空操作）    |

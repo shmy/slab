@@ -79,7 +79,7 @@
 #       - name: Test file
 #         run: cargo test -p file
 #       - name: Test pg_queue
-#         run: cargo test -p pg_queue
+#         run: cargo test -p event_bus
 #       - name: Test pg_cache
 #         run: cargo test -p pg_cache
 

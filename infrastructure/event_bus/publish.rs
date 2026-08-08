@@ -1,11 +1,11 @@
-//! 与 dispatcher 匹配的入队：`_pg_queues`，依赖表上 `status` 默认值（pending）。
+//! 与 dispatcher 匹配的入队：`_pg_events`，依赖表上 `status` 默认值（pending）。
 use std::time::Duration;
 
 use crate::event::Event;
 use sqlx::PgConnection;
 pub async fn publish<T: Event>(executor: &mut PgConnection, event: &T) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
-    sqlx::query("INSERT INTO _pg_queues (topic, payload) VALUES ($1, $2)")
+    sqlx::query("INSERT INTO _pg_events (topic, payload) VALUES ($1, $2)")
         .bind(T::TOPIC)
         .bind(&payload_json)
         .execute(executor)
@@ -20,7 +20,7 @@ pub async fn publish_with_delay<T: Event>(
 ) -> rootcause::Result<()> {
     let payload_json = serde_json::to_string(event)?;
     sqlx::query(
-        "INSERT INTO _pg_queues (topic, payload, next_attempt_at) VALUES ($1, $2, NOW() + ($3 * interval '1 second'))",
+        "INSERT INTO _pg_events (topic, payload, next_attempt_at) VALUES ($1, $2, NOW() + ($3 * interval '1 second'))",
     )
     .bind(T::TOPIC)
     .bind(&payload_json)
@@ -52,7 +52,7 @@ mod tests {
 
         publish(&mut *conn, &TestEvent { n: 7 }).await.unwrap();
 
-        let row = sqlx::query("SELECT topic, payload, status, attempts FROM _pg_queues")
+        let row = sqlx::query("SELECT topic, payload, status, attempts FROM _pg_events")
             .fetch_one(&mut *conn)
             .await
             .unwrap();
@@ -72,7 +72,7 @@ mod tests {
             .unwrap();
 
         // 延迟发布：next_attempt_at 必须晚于当前时刻
-        let row = sqlx::query("SELECT (next_attempt_at > NOW()) AS is_future FROM _pg_queues")
+        let row = sqlx::query("SELECT (next_attempt_at > NOW()) AS is_future FROM _pg_events")
             .fetch_one(&mut *conn)
             .await
             .unwrap();

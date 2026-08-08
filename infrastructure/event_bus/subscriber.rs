@@ -9,7 +9,7 @@ pub trait Subscriber<C: Send + Sync + 'static>: Send + Sync + 'static {
     fn topic(&self) -> &'static str;
 
     /// 监听者标识：同一 topic 下可注册多个 handler（广播），用 `name()` 区分。
-    /// 是 `queue_deliveries.handler` 主键的一部分，也用于日志/告警。
+    /// 是 `event_deliveries.handler` 主键的一部分，也用于日志/告警。
     /// 默认取类型名；若类型名不可读（嵌套泛型等），可显式覆盖。
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
