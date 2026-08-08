@@ -1,19 +1,28 @@
 //! serde 风格反序列化错误 → l10n key 分类的共享工具（`ValidJson` / `ValidQuery` 共用）。
 
-/// 将 serde 风格错误消息分类为（分类名, 展示字段路径）。
-/// 分类名：`missing_field` / `invalid_type` / `unknown_field` / `duplicate_field` / `other`。
-/// 调用方把分类名映射到各自的 key 前缀（`json_body_*` / `query_*`）。
-pub(super) fn classify_serde_message(path: &str, msg: &str) -> (&'static str, Option<String>) {
+/// 反序列化错误分类（枚举而非字符串判别器，拼错编译期报错）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SerdeErrorKind {
+    MissingField,
+    InvalidType,
+    UnknownField,
+    DuplicateField,
+    Other,
+}
+
+/// 将 serde 风格错误消息分类为（分类, 展示字段路径）。
+/// 调用方把分类映射到各自的 key 前缀（`json_body_*` / `query_*`）。
+pub(super) fn classify_serde_message(path: &str, msg: &str) -> (SerdeErrorKind, Option<String>) {
     if msg.contains("missing field") {
-        ("missing_field", field_path(path, msg))
+        (SerdeErrorKind::MissingField, field_path(path, msg))
     } else if is_invalid_type_msg(msg) {
-        ("invalid_type", non_empty(path))
+        (SerdeErrorKind::InvalidType, non_empty(path))
     } else if msg.contains("unknown field") {
-        ("unknown_field", field_path(path, msg))
+        (SerdeErrorKind::UnknownField, field_path(path, msg))
     } else if msg.contains("duplicate field") {
-        ("duplicate_field", field_path(path, msg))
+        (SerdeErrorKind::DuplicateField, field_path(path, msg))
     } else {
-        ("other", non_empty(path))
+        (SerdeErrorKind::Other, non_empty(path))
     }
 }
 
@@ -55,12 +64,12 @@ fn normalize_path(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_serde_message;
+    use super::{SerdeErrorKind, classify_serde_message};
 
     #[test]
     fn missing_field_with_dot_path_produces_plain_name() {
         let (kind, field) = classify_serde_message(".", "missing field `phone` at line 3 column 1");
-        assert_eq!(kind, "missing_field");
+        assert_eq!(kind, SerdeErrorKind::MissingField);
         assert_eq!(field.as_deref(), Some("phone"));
     }
 
@@ -68,21 +77,21 @@ mod tests {
     fn invalid_type_uses_path() {
         let (kind, field) =
             classify_serde_message("page", "invalid type: string \"abc\", expected u32");
-        assert_eq!(kind, "invalid_type");
+        assert_eq!(kind, SerdeErrorKind::InvalidType);
         assert_eq!(field.as_deref(), Some("page"));
     }
 
     #[test]
     fn nested_missing_joins_path() {
         let (kind, field) = classify_serde_message("items.0", "missing field `quantity`");
-        assert_eq!(kind, "missing_field");
+        assert_eq!(kind, SerdeErrorKind::MissingField);
         assert_eq!(field.as_deref(), Some("items.0.quantity"));
     }
 
     #[test]
     fn unknown_field_extracts_name() {
         let (kind, field) = classify_serde_message(".", "unknown field `xyz`, expected one of `a`");
-        assert_eq!(kind, "unknown_field");
+        assert_eq!(kind, SerdeErrorKind::UnknownField);
         assert_eq!(field.as_deref(), Some("xyz"));
     }
 
@@ -90,18 +99,18 @@ mod tests {
     fn std_parse_error_counts_as_invalid_type() {
         // serde_urlencoded 的字符串→数字失败是 ParseIntError 消息（无 "invalid type" 前缀）。
         let (kind, field) = classify_serde_message("page", "invalid digit found in string");
-        assert_eq!(kind, "invalid_type");
+        assert_eq!(kind, SerdeErrorKind::InvalidType);
         assert_eq!(field.as_deref(), Some("page"));
         let (kind, field) =
             classify_serde_message("rate", "provided string was not `true` or `false`");
-        assert_eq!(kind, "invalid_type");
+        assert_eq!(kind, SerdeErrorKind::InvalidType);
         assert_eq!(field.as_deref(), Some("rate"));
     }
 
     #[test]
     fn unclassified_keeps_path() {
         let (kind, field) = classify_serde_message("id", "something else entirely");
-        assert_eq!(kind, "other");
+        assert_eq!(kind, SerdeErrorKind::Other);
         assert_eq!(field.as_deref(), Some("id"));
     }
 }

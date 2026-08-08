@@ -7,7 +7,7 @@ use validify::Validify;
 
 use crate::error::WebError;
 
-use super::classify::classify_serde_message;
+use super::classify::{SerdeErrorKind, classify_serde_message};
 
 /// Query 提取器：反序列化后执行 **validify** 校验。
 /// 反序列化失败 → [`WebError::InvalidQueryParams`]（l10n key + 字段路径）；校验失败 → 同上（l10n key）。
@@ -50,11 +50,11 @@ fn query_error_to_web(e: &serde_path_to_error::Error<serde_urlencoded::de::Error
     tracing::debug!(path = %path, error = %msg, "query string rejected");
     let (kind, field) = classify_serde_message(&path, &msg);
     let key = match kind {
-        "missing_field" => "query_missing_field",
-        "invalid_type" => "query_invalid_type",
-        "unknown_field" => "query_unknown_field",
-        "duplicate_field" => "query_duplicate_field",
-        _ => "query_invalid",
+        SerdeErrorKind::MissingField => "query_missing_field",
+        SerdeErrorKind::InvalidType => "query_invalid_type",
+        SerdeErrorKind::UnknownField => "query_unknown_field",
+        SerdeErrorKind::DuplicateField => "query_duplicate_field",
+        SerdeErrorKind::Other => "query_invalid",
     };
     WebError::InvalidQueryParams {
         key: key.to_string(),

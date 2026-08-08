@@ -190,6 +190,12 @@ mod tests {
             "path_params_parse_error",
             "path_params_wrong_count",
             "invalid_path_params",
+            "multipart_missing_field",
+            "multipart_wrong_field_type",
+            "multipart_duplicate_field",
+            "multipart_unknown_field",
+            "multipart_invalid_enum_value",
+            "multipart_field_too_large",
         ] {
             assert!(
                 try_translate("en-US", key).is_some(),
@@ -221,6 +227,15 @@ mod tests {
         assert_eq!(
             translate_with_args("en-US", "path_params_parse_error", &args),
             "Failed to parse path parameter: id"
+        );
+        let args = [("field", "avatar".to_string())];
+        assert_eq!(
+            translate_with_args("zh-CN", "multipart_missing_field", &args),
+            "缺少必填字段：avatar"
+        );
+        assert_eq!(
+            translate_with_args("en-US", "multipart_field_too_large", &args),
+            "Field avatar is too large"
         );
     }
 

@@ -57,7 +57,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 - `#[error("...")]` 消息必须是 **snake_case key**（`^[a-z0-9_]+$`），如 `#[error("purchase_order_not_found")]`；句子风格、空格、冒号一律禁止（locale 测试结构性扫描强制）
 - 每个 key 必须在 `infrastructure/locale/locales/{en-US,zh-CN}/` 有翻译；跨域共享的 key（如 `invalid_status_transition`）只放 `shared.ftl`，**禁止**在多个 ftl 重复定义（Fluent bundle 重复 key 会 panic）
 - **禁止参数化消息**（含 `{`）：参数细节进字段供日志/调试，不进 Display；仅内部库（`libs/image_kit`、`libs/authz_kit`）豁免（内部故障永远 500，不进 locale）
-  - 例外：web 层 serde rejection 的 detail 允许 Fluent 参数（`{ $field }`，字段路径来自 `serde_path_to_error`），属 locale 渲染层插值，不违反 Rust Display 参数化禁令
+  - 例外：web 层参数解析 rejection 的 detail 允许 Fluent 参数（`{ $field }`，字段路径来自 `serde_path_to_error`（body/query）/ axum `ErrorKind`（path）/ 结构化 multipart 错误），属 locale 渲染层插值，不违反 Rust Display 参数化禁令
 - **禁止字符串参数当错误区分器**：`InvalidStatus("need at least one line")` 是反模式——一个语义一个变体（拆成 `EmptyOrder` 等）
 - HTTP 语义（`web::error` 自动处理）：key → 400（特例：`access_token_*` → 401、`*_version_conflict` → 409、`internal_server_error` → 500）；非 key（内部故障）→ 500
 - **禁止 `#[allow(clippy::expect_used)]` / `#[allow(clippy::unwrap_used)]` 等 lint 豁免注解**：用构造期校验（`Result` 上下文）、无 Option 的 API、或字段缓存替代

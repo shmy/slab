@@ -99,13 +99,14 @@ fn l10n_key_and_field(path: &str, inner: &serde_json::Error) -> (&'static str, O
     }
 }
 
-fn serde_body_key(kind: &str) -> &'static str {
+fn serde_body_key(kind: super::classify::SerdeErrorKind) -> &'static str {
+    use super::classify::SerdeErrorKind;
     match kind {
-        "missing_field" => "json_body_missing_field",
-        "invalid_type" => "json_body_invalid_type",
-        "unknown_field" => "json_body_unknown_field",
-        "duplicate_field" => "json_body_duplicate_field",
-        _ => "invalid_request_body",
+        SerdeErrorKind::MissingField => "json_body_missing_field",
+        SerdeErrorKind::InvalidType => "json_body_invalid_type",
+        SerdeErrorKind::UnknownField => "json_body_unknown_field",
+        SerdeErrorKind::DuplicateField => "json_body_duplicate_field",
+        SerdeErrorKind::Other => "invalid_request_body",
     }
 }
 
