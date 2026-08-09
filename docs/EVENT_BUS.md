@@ -35,7 +35,8 @@
 ## 2.1 数据模型
 
 > 建表：`PgBackend::try_new` 幂等自建全部事件总线表（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器），
-> 不依赖 migration 版本；migration 0001/0009 中的同款定义保持兼容（IF NOT EXISTS 双保险）。
+> 不依赖 migration 版本——基础设施自管表不进 migration（`infrastructure/migration/versions/` 中无其定义），
+> 与 `infrastructure/worker` 的 `worker_jobs` 表同一模式（crate 内自建为唯一事实源）。
 
 ### `_pg_events` — 事件本体（一行一个事件）
 

@@ -10,6 +10,7 @@ use event_bus::EventBus;
 use kv::KvBackend;
 use rootcause::Result;
 use secrecy::ExposeSecret;
+use worker::JobBus;
 
 use crate::cli::Cli;
 
@@ -42,10 +43,13 @@ pub async fn build_app_ctx(cli: &Cli) -> Result<AppCtx> {
     })
     .await?;
 
+    let jobs = build_job_bus(cli, pg_pool.clone()).await?;
+
     Ok(AppCtx {
         pg_pool,
         kv,
         bus,
+        jobs,
         token_bundle: TokenBundle::new(
             TokenHelper::new(
                 TokenRealm::Customer,
@@ -98,5 +102,22 @@ async fn connect_blob(cli: &Cli) -> Result<Blob> {
             domain: &cli.fs.domain,
         })
         .await
+    }
+}
+
+async fn build_job_bus(_cli: &Cli, _pg_pool: PgPool) -> Result<JobBus> {
+    // 队列后端（互斥，开启其一；双开时非默认的 worker-pg 让 sqlite 让位，同 blob 惯例）：
+    //   worker-pg      → worker_jobs 表在业务 PG（生产；显式指定时优先）；
+    //   worker-sqlite  → worker_jobs 表在本地 sqlite 文件（单机部署，默认）。
+    // 语义见 docs/JOB_QUEUE.md。
+    #[cfg(feature = "worker-pg")]
+    {
+        JobBus::try_new_pg(_pg_pool).await
+    }
+    #[cfg(all(feature = "worker-sqlite", not(feature = "worker-pg")))]
+    {
+        use worker::sqlite_helper::new_sqlite_pool;
+        let pool = new_sqlite_pool(&_cli.queue.sqlite_path).await?;
+        JobBus::try_new_sqlite(pool).await
     }
 }

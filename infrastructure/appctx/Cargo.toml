@@ -33,3 +33,4 @@ tracing = { workspace = true }
 flow = { workspace = true }
 kv = { workspace = true }
 event_bus = { workspace = true }
+worker = { workspace = true }

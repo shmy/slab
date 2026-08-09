@@ -3,6 +3,7 @@ use db::PgPool;
 use event_bus::EventBus;
 use flow::Flow;
 use kv::KvBackend;
+use worker::JobBus;
 
 /// 构建用于集成测试的 `AppCtx`。
 ///
@@ -25,10 +26,14 @@ pub async fn build(pg_pool: PgPool) -> AppCtx {
     let bus = EventBus::new_for_test(pg_pool.clone())
         .await
         .expect("create test event bus backend");
+    let jobs = JobBus::try_new_pg(pg_pool.clone())
+        .await
+        .expect("create test job queue backend");
     AppCtx {
         pg_pool,
         kv,
         bus,
+        jobs,
         token_bundle,
         http_client: HttpClient::default(),
         blob,

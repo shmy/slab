@@ -10,27 +10,24 @@ path = "lib.rs"
 workspace = true
 
 [features]
-default = ["sqlite"]
-sqlite = ["apalis-sql/sqlite", "sqlx/sqlite"]
-postgres = ["apalis-sql/postgres"]
+# 队列后端（互斥开启其一；默认 pg）：
+#   pg      → worker_jobs 表落在业务 Postgres（生产）
+#   sqlite  → worker_jobs 表落在本地 sqlite 文件（单机部署 / 不想跑 Postgres 的场景，
+#             仅支持单进程消费）
+default = ["pg"]
+pg = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
 
 [dependencies]
-apalis = { version = "0.7", default-features = false, features = [
-    "limit",
-    "tracing",
-    "retry",
-] }
-apalis-core = { version = "0.7", default-features = false }
-apalis-sql = { version = "0.7", default-features = false, features = [
-    "migrate",
-] }
+chrono = { workspace = true, features = ["clock", "std"] }
+futures-util = { workspace = true }
+rootcause = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-rootcause = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -96,6 +96,9 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 ├── 写端点接入变更历史 → 同事务调 `audit_contract::AuditService`（`record_create` / `record_updated` / `record_deleted`，传 `txn` + `&Operator` + before/after 实体；漏接不报编译错，端点测试断言 `audit_logs` 兜底；identity 三端点作示范）
 ├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + publish
 ├── 加流程 → infrastructure/flow 定义 `#[task]` + `workflow!`，AppCtx.flow.run/resume（见 [docs/FLOW.md](docs/FLOW.md)）
+├── 加 Job → 域内定义 `Job` trait 实现（payload 即类型）+ handler `async fn(T, &AppCtx)`，
+│   在 `DomainModule::register` 里 `r.jobs.register::<T>(|job, ctx| Box::pin(handler(job, ctx)))`，
+│   端点入队 `state.jobs.enqueue(T { .. }).await?`（见 [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md)）
 ├── 改 DB → infrastructure/migration/versions/ 新 .sql
 ```
 
@@ -107,6 +110,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `infrastructure/event_bus` | 事件总线（广播事件投递；Pg Outbox 默认 / NATS JetStream，feature 切换）→ [docs/EVENT_BUS.md](docs/EVENT_BUS.md) |
 | `infrastructure/flow` | sayiir 持久化工作流（长流程/信号/超时编排）→ [docs/FLOW.md](docs/FLOW.md) |
 | `infrastructure/kv` | 可插拔 KV 缓存后端（Pg UNLOGGED 默认 / redb / redis，feature 切换）→ [docs/KV.md](docs/KV.md) |
+| `infrastructure/worker` | 后台任务队列（点对点命令式 Job：入队/延迟/重试退避/超时/终态；pg 默认 / sqlite 单机，feature 切换；自研 sqlx 0.9，无 Apalis）→ [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md) |
 | `infrastructure/web` | ValidJson / ValidQuery / ValidPath + Problem Details |
 | `infrastructure/http_auth` | Bearer JWT 鉴权中间件 |
 | `infrastructure/locale` | Fluent 本地化中间件 |

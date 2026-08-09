@@ -4,6 +4,7 @@ use futures_util::future::BoxFuture;
 use rootcause::Result;
 use sched_kit::CronScheduler;
 use utoipa_axum::router::OpenApiRouter;
+use worker::JobRegistry;
 
 /// 模块注册上下文：收集各域需要注册的后台任务。
 ///
@@ -13,6 +14,8 @@ pub struct ModuleRegistrar {
     pub bus: Registry<AppCtx>,
     /// 定时任务（cron）。
     pub scheduler: CronScheduler<AppCtx>,
+    /// 后台任务（Job Queue）消费 handler 注册表（消费上下文为 `AppCtx`）。
+    pub jobs: JobRegistry<AppCtx>,
 }
 
 impl ModuleRegistrar {
@@ -20,6 +23,7 @@ impl ModuleRegistrar {
         Self {
             bus: Registry::default(),
             scheduler: CronScheduler::new(app_state),
+            jobs: JobRegistry::default(),
         }
     }
 }

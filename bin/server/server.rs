@@ -13,6 +13,7 @@ use crate::gc_jobs::{BusGc, KvGc};
 use crate::modules::MODULES;
 use crate::router::build;
 use crate::shutdown::{ShutdownCoordinator, shutdown_signal};
+use worker::WorkerManager;
 
 pub async fn serve(cli: Cli) -> Result<()> {
     let listener = TcpListener::bind(&cli.server.listen_addr).await?;
@@ -43,6 +44,10 @@ pub async fn serve(cli: Cli) -> Result<()> {
     };
     let frozen_registry = registrar.bus.freeze();
 
+    // 后台任务 worker：收编域模块注册的 Job handler，进程内消费（同 dispatcher）。
+    let mut worker_manager = WorkerManager::new(state.jobs.clone(), state.clone());
+    worker_manager.register_all(&registrar.jobs);
+
     let server_fut = tokio::spawn(start_http_server(listener, router, shutdown.subscribe()));
     let dispatcher_fut = tokio::spawn(start_dispatcher(
         state.bus.clone(),
@@ -58,16 +63,20 @@ pub async fn serve(cli: Cli) -> Result<()> {
             .await
     });
 
+    let worker_shutdown = shutdown.subscribe();
+    let worker_fut = tokio::spawn(async move { worker_manager.run(worker_shutdown).await });
+
     tracing::info!("🚀 Server is running on http://{addr}");
 
     shutdown_signal().await;
     shutdown.broadcast_shutdown();
 
-    let (http_join, dispatcher_join, scheduler_join) =
-        tokio::join!(server_fut, dispatcher_fut, scheduler_fut);
+    let (http_join, dispatcher_join, scheduler_join, worker_join) =
+        tokio::join!(server_fut, dispatcher_fut, scheduler_fut, worker_fut);
     join_task("HTTP server", http_join)?;
     join_task("event_bus dispatcher", dispatcher_join)?;
     join_task("cron scheduler", scheduler_join)?;
+    join_task("job worker", worker_join)?;
 
     state.clear().await;
     tracing::info!("👋 Goodbye!");

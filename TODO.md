@@ -12,3 +12,6 @@
 |B级|Workflow Designer|
 
 [ ] redis/redb/nats 环境变量整理
+
+[ ] poll这种模式是否高效，pg 可以listen/notify sqlite 可以update_hook？
+[ ] cache event_bus worker 使用sqlx.toml来迁移

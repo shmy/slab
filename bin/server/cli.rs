@@ -40,6 +40,9 @@ pub struct Cli {
     pub cache: CacheCli,
 
     #[command(flatten)]
+    pub queue: QueueCli,
+
+    #[command(flatten)]
     pub nats: NatsCli,
 
     #[command(flatten)]
@@ -172,6 +175,18 @@ pub struct CacheCli {
         env = "REDIS_URL"
     )]
     pub url: String,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct QueueCli {
+    /// worker-sqlite 后端使用的本地队列文件路径（单机部署，默认 worker.db）
+    #[arg(
+        id = "queue_sqlite_path",
+        long = "queue-sqlite-path",
+        default_value = "worker.db",
+        env = "QUEUE_SQLITE_PATH"
+    )]
+    pub sqlite_path: String,
 }
 
 #[derive(Clone, Debug, clap::Args)]

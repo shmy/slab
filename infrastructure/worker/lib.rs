@@ -1,92 +1,910 @@
-pub mod error;
-use apalis::layers::WorkerBuilderExt as _;
-use apalis::layers::retry::RetryPolicy;
-pub use apalis::prelude::{BackendExpose, Stat, State, Storage};
-use apalis::prelude::{Data, Monitor, WorkerBuilder, WorkerFactoryFn as _};
-use apalis_core::codec::json::JsonCodec;
-use rootcause::Result;
-use serde::{Serialize, de::DeserializeOwned};
-use std::time::Duration;
+//! 后台任务队列（Job Queue）：点对点命令式后台任务的强类型抽象。
+//!
+//! # 架构定位
+//!
+//! 与 `event_bus`（广播事实）和 `flow`（编排真相）正交：**Job = 命令式、一次性、
+//! 点对点消费**（含延迟投递），重试退避 / 超时 / 终态（DLQ-in-table）由本 crate 负责。
+//! 业务代码只接触 [`Job`] / [`JobBus`] / [`JobRegistry`]，不接触任何后端细节。
+//!
+//! ```text
+//! 业务代码（features/{domain}）
+//!     │  enqueue(GenerateReport {...})      register::<GenerateReport>(handler)
+//!     ▼                                        ▼
+//!   JobBus（入队，独立连接）              JobRegistry<C>（注册表）
+//!     │                                        │
+//!     └──────────┬─────────────────────────────┘
+//!                ▼
+//!         WorkerManager（消费侧运行时，进程内）
+//!                │
+//!         worker_jobs 表（pg 默认 / sqlite 单机，feature 切换）
+//! ```
+//!
+//! # 语义契约
+//!
+//! - **at-least-once**：拉取置 `Running` 后若进程崩溃，孤儿恢复（`lock_at` 超龄）会
+//!   重新投递——handler 必须幂等；
+//! - **重试**：失败后 `attempts` 自增，未达 `max_attempts`（= `RETRIES + 1`）则按
+//!   指数退避（默认 base 1s、×2、cap 60s，可通过 [`WorkerOptions`] 覆盖）重新入队；
+//! - **超时**：单次执行超过 `Job::TIMEOUT` 按一次失败计（`job_timeout`）；
+//! - **终态**：重试耗尽 → `Failed` 留表（`last_error` 记录原因），可查询、可审计，
+//!   不做显式 DLQ 搬运。
 
-use crate::error::WorkerError;
-#[cfg(feature = "sqlite")]
-pub type Pool = apalis_sql::sqlite::SqlitePool;
-#[cfg(feature = "postgres")]
-pub type Pool = apalis_sql::postgres::PgPool;
-#[cfg(feature = "sqlite")]
-pub type StorageBackend<T, C = JsonCodec<String>> = apalis_sql::sqlite::SqliteStorage<T, C>;
-#[cfg(feature = "postgres")]
-pub type StorageBackend<T, C = JsonCodec<serde_json::Value>> =
-    apalis_sql::postgres::PostgresStorage<T, C>;
+pub mod error;
+
+mod backend;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite_helper;
 
-pub struct WorkerManager {
-    pool: Pool,
-    monitor: Monitor,
-}
+use std::sync::Arc;
+use std::time::Duration;
 
-impl WorkerManager {
-    pub async fn try_new(pool: Pool) -> Result<Self> {
-        let instance = Self {
-            pool: pool.clone(),
-            monitor: Monitor::new(),
-        };
-        instance.setup().await?;
-        Ok(instance)
-    }
-}
+use chrono::Utc;
+use futures_util::future::BoxFuture;
+use rootcause::{Result, report};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use tokio::sync::{Semaphore, watch};
 
-impl WorkerManager {
-    async fn setup(&self) -> Result<()> {
-        #[cfg(feature = "sqlite")]
-        tracing::info!("Choosing database backend: SQLite");
-        #[cfg(feature = "postgres")]
-        tracing::info!("Choosing database backend: PosgreSQL");
-        StorageBackend::setup(&self.pool).await?;
-        Ok(())
-    }
+#[cfg(feature = "pg")]
+use sqlx::PgPool;
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
 
-    pub fn register<T>(mut self, data: T::State) -> (Self, StorageBackend<T>)
-    where
-        T: WorkerTrait,
-    {
-        let backend = StorageBackend::new(self.pool.clone());
-        let worker = WorkerBuilder::new(T::NAME)
-            .enable_tracing()
-            .concurrency(T::CONCURRENCY)
-            .retry(RetryPolicy::retries(T::RETRIES))
-            .data(data)
-            .backend(backend.clone())
-            .build_fn(|job: T, data: Data<T::State>| async move {
-                match tokio::time::timeout(T::TIMEOUT, T::execute(job, &data)).await {
-                    Ok(res) => res,
-                    Err(_) => Err(WorkerError::Timeout)?,
-                }
-            });
-        self.monitor = self.monitor.register(worker);
-        (self, backend)
-    }
+use backend::{FetchJob, JobMeta};
 
-    pub async fn run_with_signal<S>(self, signal: S) -> Result<()>
-    where
-        S: Send + Future<Output = std::io::Result<()>>,
-    {
-        self.monitor.run_with_signal(signal).await?;
-        self.pool.close().await;
-        Ok(())
-    }
-}
+pub use crate::error::WorkerError;
 
-pub trait WorkerTrait:
-    Serialize + DeserializeOwned + Clone + Send + Sync + Unpin + 'static
-{
-    type State: Clone + Send + Sync + Unpin + 'static;
+/// 后台任务定义：**payload 即类型本身**（无关联 type 间接层）。
+///
+/// 入队侧：`bus.enqueue(GenerateReport { ... })` —— 类型擦除发生在 `JobBus` 内部
+/// （序列化为 `(NAME, JSON)`），业务代码不知道任何队列后端。
+///
+/// 配置项为编译期常量（可覆盖默认值），消费侧按 `job_type = NAME` 竞争消费：
+/// - [`Job::RETRIES`]：失败后允许的追加重试次数（总执行次数上限 = `RETRIES + 1`）；
+/// - [`Job::CONCURRENCY`]：该 job_type 的最大并行执行数；
+/// - [`Job::TIMEOUT`]：单次执行超时（按一次失败计入重试）。
+pub trait Job: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// 注册表键 + 队列路由键（`job_type` 列，蛇形命名，如 `generate_report`）。
     const NAME: &'static str;
-    const CONCURRENCY: usize;
-    const RETRIES: usize;
-    const TIMEOUT: Duration;
 
-    fn execute(job: Self, state: &Self::State) -> impl Future<Output = Result<()>> + Send;
+    /// 失败后允许的追加重试次数（默认 3，总执行 ≤ 4 次）。
+    const RETRIES: usize = 3;
+
+    /// 该 job_type 的最大并行执行数（默认 1，串行）。
+    const CONCURRENCY: usize = 1;
+
+    /// 单次执行超时（默认 60s）。
+    const TIMEOUT: Duration = Duration::from_secs(60);
+}
+
+/// 队列后端：`pg`（生产，worker_jobs 表在业务库）/ `sqlite`（单机部署，本地文件）。
+#[derive(Clone)]
+pub enum JobBus {
+    #[cfg(feature = "pg")]
+    Pg { pool: PgPool },
+    #[cfg(feature = "sqlite")]
+    Sqlite { pool: SqlitePool },
+}
+
+impl JobBus {
+    /// pg 后端：自建 `worker_jobs` 表（幂等，与 migration 0012 同款定义双保险）。
+    #[cfg(feature = "pg")]
+    pub async fn try_new_pg(pool: PgPool) -> Result<Self> {
+        backend::pg::create_table(&pool).await?;
+        Ok(Self::Pg { pool })
+    }
+
+    /// sqlite 后端：自建 `worker_jobs` 表（幂等）。仅支持单进程消费。
+    #[cfg(feature = "sqlite")]
+    pub async fn try_new_sqlite(pool: SqlitePool) -> Result<Self> {
+        backend::sqlite::create_table(&pool).await?;
+        Ok(Self::Sqlite { pool })
+    }
+
+    /// 立即入队。
+    pub async fn enqueue<T: Job>(&self, job: T) -> Result<()> {
+        self.enqueue_after(job, Duration::ZERO).await
+    }
+
+    /// 延迟入队：`delay` 之后才可被消费（`run_at = now + delay`，投递参数不进 payload）。
+    pub async fn enqueue_after<T: Job>(&self, job: T, delay: Duration) -> Result<()> {
+        let max_attempts = T::RETRIES + 1;
+        match self {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { pool } => {
+                let payload = serde_json::to_value(&job).map_err(|e| report!("{e}"))?;
+                let run_at = Utc::now() + chrono::Duration::milliseconds(delay.as_millis() as i64);
+                backend::pg::insert(pool, T::NAME, payload, run_at, max_attempts as i32).await
+            }
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { pool } => {
+                let payload = serde_json::to_string(&job).map_err(|e| report!("{e}"))?;
+                let run_at = (Utc::now()
+                    + chrono::Duration::milliseconds(delay.as_millis() as i64))
+                .timestamp_millis();
+                backend::sqlite::insert(pool, T::NAME, &payload, run_at, max_attempts as i32).await
+            }
+        }
+    }
+}
+
+/// 消费侧注册表（泛型上下文，与 `event_bus::Registry<C>` 同构——crate 自身不依赖
+/// `appctx`，由 `module` crate 实例化为 `JobRegistry<AppCtx>`，避免循环依赖）。
+pub struct JobRegistry<C> {
+    specs: Vec<Arc<dyn JobSpec<C>>>,
+}
+
+impl<C: Send + Sync + 'static> Default for JobRegistry<C> {
+    fn default() -> Self {
+        Self { specs: Vec::new() }
+    }
+}
+
+impl<C: Send + Sync + 'static> JobRegistry<C> {
+    /// 注册一个 job 的消费 handler（纯函数：`async fn(T, &C) -> rootcause::Result<()>`）。
+    ///
+    /// 调用方以闭包形态提供：`register(|job, ctx| Box::pin(handle(job, ctx)))`
+    /// （async fn 的 future 借用 `&C`，须装箱为 `BoxFuture` 才能对象安全存储）。
+    ///
+    /// **同名冲突是编程错误**（同一 `Job::NAME` 注册两个 handler 会导致一个永远不被
+    /// 消费），注册时立即 panic（fail fast，同 `event_bus::Registry` 约定）。
+    pub fn register<T, F>(&mut self, handler: F) -> &mut Self
+    where
+        T: Job,
+        F: for<'a> Fn(T, &'a C) -> BoxFuture<'a, Result<()>> + Send + Sync + 'static,
+    {
+        assert!(
+            !self.specs.iter().any(|s| s.name() == T::NAME),
+            "job name conflict: {} is already registered",
+            T::NAME
+        );
+        self.specs.push(Arc::new(TypedJob::<T, C> {
+            handler: Arc::new(handler),
+        }));
+        self
+    }
+
+    pub(crate) fn specs(&self) -> &[Arc<dyn JobSpec<C>>] {
+        &self.specs
+    }
+}
+
+/// 消费侧运行时参数（测试可覆盖以加速）。
+#[derive(Clone, Debug)]
+pub struct WorkerOptions {
+    /// 轮询间隔（默认 200ms；延迟投递的最小精度即此值）。
+    pub poll_interval: Duration,
+    /// 退避基数（默认 1s；第 n 次失败后延迟 = `base * 2^(n-1)`）。
+    pub backoff_base: Duration,
+    /// 退避封顶（默认 60s）。
+    pub backoff_cap: Duration,
+    /// 孤儿扫描间隔（默认 60s）。
+    pub orphan_interval: Duration,
+    /// `Running` 超过该时长视为孤儿（默认 10 分钟）。
+    pub orphan_timeout: Duration,
+}
+
+impl Default for WorkerOptions {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_millis(200),
+            backoff_base: Duration::from_secs(1),
+            backoff_cap: Duration::from_secs(60),
+            orphan_interval: Duration::from_secs(60),
+            orphan_timeout: Duration::from_secs(600),
+        }
+    }
+}
+
+/// 消费侧运行时：持有后端 + 上下文，`register_all` 收编注册表后 `run` 启动
+/// 每 job_type 一个轮询循环 + 一个孤儿扫描任务（进程内，随 server 生命周期）。
+pub struct WorkerManager<C> {
+    bus: JobBus,
+    ctx: C,
+    specs: Vec<Arc<dyn JobSpec<C>>>,
+    options: WorkerOptions,
+}
+
+impl<C: Clone + Send + Sync + 'static> WorkerManager<C> {
+    pub fn new(bus: JobBus, ctx: C) -> Self {
+        Self {
+            bus,
+            ctx,
+            specs: Vec::new(),
+            options: WorkerOptions::default(),
+        }
+    }
+
+    pub fn with_options(mut self, options: WorkerOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// 收编注册表（clone 语义，注册表仍可复用）。
+    pub fn register_all(&mut self, registry: &JobRegistry<C>) {
+        self.specs.extend(registry.specs().iter().cloned());
+    }
+
+    /// 启动消费（每 job_type 一个轮询循环 + 一个孤儿扫描），`shutdown` 为 true 时优雅退出。
+    pub async fn run(self, shutdown: watch::Receiver<bool>) -> Result<()> {
+        let mut handles = Vec::with_capacity(self.specs.len() + 1);
+        for spec in self.specs {
+            let bus = self.bus.clone();
+            let ctx = self.ctx.clone();
+            let options = self.options.clone();
+            let rx = shutdown.clone();
+            handles.push(tokio::spawn(async move {
+                run_job_loop(spec, bus, ctx, options, rx).await;
+            }));
+        }
+        {
+            let bus = self.bus.clone();
+            let options = self.options.clone();
+            let rx = shutdown.clone();
+            handles.push(tokio::spawn(async move {
+                run_orphan_sweep(bus, options, rx).await;
+            }));
+        }
+        for handle in handles {
+            handle
+                .await
+                .map_err(|e| report!("worker task join failed: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+/// 擦除后的 job 规格：注册时类型化、消费时在 trait object 内部还原 `T`。
+pub(crate) trait JobSpec<C>: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn concurrency(&self) -> usize;
+    fn timeout(&self) -> Duration;
+    fn handle<'a>(&'a self, payload: Value, ctx: &'a C) -> BoxFuture<'a, Result<()>>;
+}
+
+struct TypedJob<T: Job, C> {
+    handler: Arc<dyn for<'a> Fn(T, &'a C) -> BoxFuture<'a, Result<()>> + Send + Sync>,
+}
+
+impl<T: Job, C: Send + Sync + 'static> JobSpec<C> for TypedJob<T, C> {
+    fn name(&self) -> &'static str {
+        T::NAME
+    }
+
+    fn concurrency(&self) -> usize {
+        T::CONCURRENCY
+    }
+
+    fn timeout(&self) -> Duration {
+        T::TIMEOUT
+    }
+
+    fn handle<'a>(&'a self, payload: Value, ctx: &'a C) -> BoxFuture<'a, Result<()>> {
+        match serde_json::from_value::<T>(payload) {
+            Ok(job) => (self.handler)(job, ctx),
+            Err(e) => Box::pin(async move { Err(report!("{e}")) }),
+        }
+    }
+}
+
+/// 每 job_type 一个轮询循环：并发受 `Semaphore(CONCURRENCY)` 约束，
+/// 拉取 → 逐任务 spawn（占位符即并发许可）。shutdown 后等待全部 in-flight 完成
+/// （handler 受 `TIMEOUT` 约束，等待有界），即优雅退出。
+async fn run_job_loop<C: Clone + Send + Sync + 'static>(
+    spec: Arc<dyn JobSpec<C>>,
+    bus: JobBus,
+    ctx: C,
+    options: WorkerOptions,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let semaphore = Arc::new(Semaphore::new(spec.concurrency()));
+    let mut in_flight = tokio::task::JoinSet::new();
+    let mut ticker = tokio::time::interval(options.poll_interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            _ = ticker.tick() => {}
+        }
+        let permits = semaphore.available_permits() as i32;
+        if permits <= 0 {
+            continue;
+        }
+        let jobs = match fetch_due(&bus, spec.name(), permits).await {
+            Ok(jobs) => jobs,
+            Err(e) => {
+                tracing::error!(job_type = spec.name(), error = %e, "worker fetch failed");
+                continue;
+            }
+        };
+        if jobs.is_empty() {
+            continue;
+        }
+        for job in jobs {
+            let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                break;
+            };
+            let spec = spec.clone();
+            let bus = bus.clone();
+            let ctx = ctx.clone();
+            let options = options.clone();
+            in_flight.spawn(async move {
+                let _permit = permit;
+                run_one_job(spec, bus, ctx, job, options).await;
+            });
+        }
+    }
+    // 优雅退出：等待全部 in-flight 任务落终态（Done / Failed / 退避重入队）。
+    while in_flight.join_next().await.is_some() {}
+}
+
+/// 单任务执行（一次）：成功 → Done；失败 → 未达上限退避重入队 / 已达上限 Failed。
+/// 重试调度持久化在 DB（`run_at` 后移），进程崩溃不丢退避进度。
+async fn run_one_job<C: Send + Sync + 'static>(
+    spec: Arc<dyn JobSpec<C>>,
+    bus: JobBus,
+    ctx: C,
+    job: FetchJob,
+    options: WorkerOptions,
+) {
+    let job_type = spec.name();
+    let FetchJob { payload, meta } = job;
+    let outcome = tokio::time::timeout(spec.timeout(), spec.handle(payload, &ctx)).await;
+    match outcome {
+        Ok(Ok(())) => {
+            if let Err(e) = mark_done(&bus, meta.id).await {
+                tracing::error!(job_type, job_id = meta.id, error = %e, "mark job done failed");
+            }
+        }
+        Ok(Err(e)) => finish_failure(&bus, &meta, job_type, &format!("{e}"), &options).await,
+        Err(_) => {
+            finish_failure(
+                &bus,
+                &meta,
+                job_type,
+                &WorkerError::Timeout.to_string(),
+                &options,
+            )
+            .await
+        }
+    }
+}
+
+async fn finish_failure(
+    bus: &JobBus,
+    meta: &JobMeta,
+    job_type: &str,
+    last_error: &str,
+    options: &WorkerOptions,
+) {
+    let attempts = meta.attempts + 1;
+    if attempts < meta.max_attempts {
+        let delay = backoff_delay(attempts, options);
+        tracing::warn!(
+            job_type,
+            job_id = meta.id,
+            attempts,
+            error = last_error,
+            "job failed, will retry"
+        );
+        if let Err(e) = schedule_retry(bus, meta.id, attempts, delay, last_error).await {
+            tracing::error!(job_type, job_id = meta.id, error = %e, "schedule job retry failed");
+        }
+    } else {
+        tracing::error!(
+            job_type,
+            job_id = meta.id,
+            attempts,
+            error = last_error,
+            "job failed permanently"
+        );
+        if let Err(e) = mark_failed(bus, meta.id, attempts, last_error).await {
+            tracing::error!(job_type, job_id = meta.id, error = %e, "mark job failed failed");
+        }
+    }
+}
+
+fn backoff_delay(attempt: i32, options: &WorkerOptions) -> Duration {
+    let exp = 1u32 << (attempt.saturating_sub(1) as u32).min(30);
+    options
+        .backoff_base
+        .saturating_mul(exp)
+        .min(options.backoff_cap)
+}
+
+/// 孤儿扫描：`Running` 且 `lock_at` 超龄 → 回置 Pending（at-least-once 兜底）。
+async fn run_orphan_sweep(
+    bus: JobBus,
+    options: WorkerOptions,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let mut ticker = tokio::time::interval(options.orphan_interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            _ = ticker.tick() => {}
+        }
+        match reenqueue_orphaned(&bus, options.orphan_timeout).await {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::warn!(count, "re-enqueued orphaned jobs");
+                }
+            }
+            Err(e) => tracing::error!(error = %e, "orphan sweep failed"),
+        }
+    }
+}
+
+// ---- 后端分发（按 JobBus 变体路由到方言实现） ----
+
+async fn fetch_due(bus: &JobBus, job_type: &str, limit: i32) -> Result<Vec<FetchJob>> {
+    match bus {
+        #[cfg(feature = "pg")]
+        JobBus::Pg { pool } => backend::pg::fetch_due(pool, job_type, limit, "local-worker").await,
+        #[cfg(feature = "sqlite")]
+        JobBus::Sqlite { pool } => {
+            backend::sqlite::fetch_due(pool, job_type, limit, "local-worker").await
+        }
+    }
+}
+
+async fn mark_done(bus: &JobBus, id: i64) -> Result<()> {
+    match bus {
+        #[cfg(feature = "pg")]
+        JobBus::Pg { pool } => backend::pg::mark_done(pool, id).await,
+        #[cfg(feature = "sqlite")]
+        JobBus::Sqlite { pool } => backend::sqlite::mark_done(pool, id).await,
+    }
+}
+
+async fn schedule_retry(
+    bus: &JobBus,
+    id: i64,
+    attempts: i32,
+    delay: Duration,
+    last_error: &str,
+) -> Result<()> {
+    match bus {
+        #[cfg(feature = "pg")]
+        JobBus::Pg { pool } => {
+            backend::pg::schedule_retry(pool, id, attempts, delay, last_error).await
+        }
+        #[cfg(feature = "sqlite")]
+        JobBus::Sqlite { pool } => {
+            backend::sqlite::schedule_retry(pool, id, attempts, delay, last_error).await
+        }
+    }
+}
+
+async fn mark_failed(bus: &JobBus, id: i64, attempts: i32, last_error: &str) -> Result<()> {
+    match bus {
+        #[cfg(feature = "pg")]
+        JobBus::Pg { pool } => backend::pg::mark_failed(pool, id, attempts, last_error).await,
+        #[cfg(feature = "sqlite")]
+        JobBus::Sqlite { pool } => {
+            backend::sqlite::mark_failed(pool, id, attempts, last_error).await
+        }
+    }
+}
+
+async fn reenqueue_orphaned(bus: &JobBus, orphan_timeout: Duration) -> Result<i64> {
+    match bus {
+        #[cfg(feature = "pg")]
+        JobBus::Pg { pool } => {
+            let older_than =
+                Utc::now() - chrono::Duration::milliseconds(orphan_timeout.as_millis() as i64);
+            backend::pg::reenqueue_orphaned(pool, older_than).await
+        }
+        #[cfg(feature = "sqlite")]
+        JobBus::Sqlite { pool } => {
+            let older_than = (Utc::now()
+                - chrono::Duration::milliseconds(orphan_timeout.as_millis() as i64))
+            .timestamp_millis();
+            backend::sqlite::reenqueue_orphaned(pool, older_than).await
+        }
+    }
+}
+
+/// 供测试 / 调用方按时间点断言用的表查询入口（避免测试直接拼 SQL）。
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::*;
+    use sqlx::Row as _;
+
+    pub(crate) async fn latest_id(bus: &JobBus, job_type: &str) -> Result<i64> {
+        match bus {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { pool } => {
+                let row = sqlx::query(
+                    "SELECT id FROM worker_jobs WHERE job_type = $1 ORDER BY id DESC LIMIT 1",
+                )
+                .bind(job_type)
+                .fetch_one(pool)
+                .await?;
+                Ok(row.get("id"))
+            }
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { pool } => {
+                let row = sqlx::query(
+                    "SELECT id FROM worker_jobs WHERE job_type = ? ORDER BY id DESC LIMIT 1",
+                )
+                .bind(job_type)
+                .fetch_one(pool)
+                .await?;
+                Ok(row.get("id"))
+            }
+        }
+    }
+
+    /// 测试断言用：按 id 取一行（status / attempts / last_error），避免测试各自拼 SQL。
+    pub(crate) struct JobRow {
+        pub status: String,
+        pub attempts: i32,
+        pub last_error: String,
+    }
+
+    pub(crate) async fn fetch_row(bus: &JobBus, id: i64) -> Result<JobRow> {
+        match bus {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { pool } => {
+                let row = sqlx::query(
+                    "SELECT status, attempts, COALESCE(last_error, '') AS last_error
+                       FROM worker_jobs WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                Ok(JobRow {
+                    status: row.get("status"),
+                    attempts: row.get("attempts"),
+                    last_error: row.get("last_error"),
+                })
+            }
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { pool } => {
+                let row = sqlx::query(
+                    "SELECT status, attempts, COALESCE(last_error, '') AS last_error
+                       FROM worker_jobs WHERE id = ?",
+                )
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+                Ok(JobRow {
+                    status: row.get("status"),
+                    attempts: row.get("attempts"),
+                    last_error: row.get("last_error"),
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{fetch_row, latest_id};
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ---- 示例 Job（框架验证夹具，非业务域） ----
+
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    struct EchoJob {
+        n: u32,
+    }
+    impl Job for EchoJob {
+        const NAME: &'static str = "test_echo";
+        const CONCURRENCY: usize = 4;
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct FlakyJob {
+        n: u32,
+    }
+    impl Job for FlakyJob {
+        const NAME: &'static str = "test_flaky";
+        const RETRIES: usize = 2;
+        const TIMEOUT: Duration = Duration::from_secs(5);
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct SlowJob {
+        n: u32,
+    }
+    impl Job for SlowJob {
+        const NAME: &'static str = "test_slow";
+        const RETRIES: usize = 0;
+        const TIMEOUT: Duration = Duration::from_millis(100);
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct DedupJob {
+        id: u32,
+    }
+    impl Job for DedupJob {
+        const NAME: &'static str = "test_dedup";
+        const CONCURRENCY: usize = 2;
+    }
+
+    // ---- 测试上下文与 handler ----
+
+    #[derive(Clone, Default)]
+    struct TestCtx {
+        calls: Arc<AtomicUsize>,
+        fail_until: Arc<AtomicUsize>,
+        seen: Arc<Mutex<HashSet<u32>>>,
+        effects: Arc<AtomicUsize>,
+    }
+
+    async fn handle_echo(_job: EchoJob, ctx: &TestCtx) -> Result<()> {
+        ctx.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn handle_flaky(_job: FlakyJob, ctx: &TestCtx) -> Result<()> {
+        let call = ctx.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call <= ctx.fail_until.load(Ordering::SeqCst) {
+            return Err(report!("flaky_failure"));
+        }
+        Ok(())
+    }
+
+    async fn handle_slow(_job: SlowJob, _ctx: &TestCtx) -> Result<()> {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        Ok(())
+    }
+
+    async fn handle_dedup(job: DedupJob, ctx: &TestCtx) -> Result<()> {
+        ctx.calls.fetch_add(1, Ordering::SeqCst);
+        if ctx.seen.lock().unwrap().insert(job.id) {
+            ctx.effects.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    // ---- 工具 ----
+
+    fn fast_options() -> WorkerOptions {
+        WorkerOptions {
+            poll_interval: Duration::from_millis(20),
+            backoff_base: Duration::from_millis(50),
+            backoff_cap: Duration::from_millis(200),
+            orphan_interval: Duration::from_secs(3600),
+            orphan_timeout: Duration::from_secs(3600),
+        }
+    }
+
+    /// 启动 worker（每 job_type 一个轮询循环 + 孤儿扫描），返回关闭信号。
+    fn spawn_worker(
+        bus: JobBus,
+        ctx: TestCtx,
+        registry: &JobRegistry<TestCtx>,
+    ) -> (watch::Sender<bool>, tokio::task::JoinHandle<()>) {
+        let mut manager = WorkerManager::new(bus, ctx).with_options(fast_options());
+        manager.register_all(registry);
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move {
+            manager.run(rx).await.expect("worker run failed");
+        });
+        (tx, handle)
+    }
+
+    async fn wait_status(bus: &JobBus, id: i64, expected: &str, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if fetch_row(bus, id)
+                .await
+                .map(|row| row.status == expected)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn wait_until<F: FnMut() -> bool>(mut check: F, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if check() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    // ---- 场景 1：立即入队 → 消费 → Done ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn immediate_enqueue_consumed_and_done(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(5)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        handle.abort();
+    }
+
+    // ---- 场景 2：延迟入队 → 到期前不消费，到期后消费 ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn delayed_enqueue_not_consumed_until_due(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        bus.enqueue_after(EchoJob { n: 1 }, Duration::from_millis(500))
+            .await
+            .unwrap();
+        let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+
+        // 到期前（200ms）不得消费
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 0);
+
+        // 到期后应被消费
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(5)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        handle.abort();
+    }
+
+    // ---- 场景 3：失败 → 退避重试 → 成功 ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn flaky_job_retries_then_succeeds(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        ctx.fail_until.store(2, Ordering::SeqCst); // 前两次失败
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_flaky(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        bus.enqueue(FlakyJob { n: 1 }).await.unwrap();
+        let id = latest_id(&bus, FlakyJob::NAME).await.unwrap();
+
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(5)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 3);
+        // 重试通过 attempts 列落库（2 次失败后成功）
+        assert_eq!(fetch_row(&bus, id).await.unwrap().attempts, 2);
+        handle.abort();
+    }
+
+    // ---- 场景 4：超时 → 计入失败，耗尽后 Failed（DLQ-in-table） ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn slow_job_times_out_and_fails(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_slow(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        bus.enqueue(SlowJob { n: 1 }).await.unwrap();
+        let id = latest_id(&bus, SlowJob::NAME).await.unwrap();
+
+        assert!(wait_status(&bus, id, "Failed", Duration::from_secs(5)).await);
+        assert_eq!(
+            fetch_row(&bus, id).await.unwrap().last_error,
+            WorkerError::Timeout.to_string()
+        );
+        handle.abort();
+    }
+
+    // ---- 场景 5：幂等（同一 payload 两次入队，效果只发生一次） ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn idempotent_handler_dedups_replays(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_dedup(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        bus.enqueue(DedupJob { id: 7 }).await.unwrap();
+        bus.enqueue(DedupJob { id: 7 }).await.unwrap(); // 重放：同一 payload
+
+        assert!(
+            wait_until(
+                || ctx.calls.load(Ordering::SeqCst) >= 2,
+                Duration::from_secs(5)
+            )
+            .await,
+            "两个任务都应被消费"
+        );
+        // 去重：效果只发生一次
+        assert_eq!(ctx.effects.load(Ordering::SeqCst), 1);
+        handle.abort();
+    }
+
+    // ---- 场景 6：同名冲突注册立即 panic（fail fast） ----
+
+    #[test]
+    #[should_panic(expected = "job name conflict")]
+    fn duplicate_registration_panics() {
+        let mut registry = JobRegistry::<TestCtx>::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+    }
+
+    // ---- 场景 7：sqlite 冒烟（enqueue → 消费 → Done + 延迟），仅 sqlite feature ----
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn sqlite_smoke_enqueue_consume_and_delay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker.db");
+        let pool = crate::sqlite_helper::new_sqlite_pool(path.to_str().unwrap())
+            .await
+            .unwrap();
+        let bus = JobBus::try_new_sqlite(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        let (_tx, handle) = spawn_worker(bus.clone(), ctx.clone(), &registry);
+
+        // 立即
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(5)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+
+        // 延迟
+        bus.enqueue_after(EchoJob { n: 2 }, Duration::from_millis(300))
+            .await
+            .unwrap();
+        let id2 = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        assert!(wait_status(&bus, id2, "Done", Duration::from_secs(5)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 2);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn sqlite_debug_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker.db");
+        eprintln!("STEP1 creating pool");
+        let pool = crate::sqlite_helper::new_sqlite_pool(path.to_str().unwrap())
+            .await
+            .unwrap();
+        eprintln!("STEP2 creating bus");
+        let bus = JobBus::try_new_sqlite(pool.clone()).await.unwrap();
+        eprintln!("STEP3 enqueue");
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        eprintln!("STEP4 fetch_due");
+        let jobs = backend::sqlite::fetch_due(&pool, EchoJob::NAME, 10, "probe")
+            .await
+            .unwrap();
+        eprintln!("STEP5 fetched {} jobs", jobs.len());
+    }
 }

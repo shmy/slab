@@ -16,3 +16,4 @@ event_bus = { workspace = true }
 rootcause = { workspace = true }
 sched_kit = { workspace = true }
 utoipa-axum = { workspace = true }
+worker = { workspace = true }
