@@ -8,7 +8,7 @@ name = "server"
 path = "main.rs"
 
 [features]
-default = ["kv-redis", "event-bus-pg", "job-queue-sqlite", "blob-cos"]
+default = ["kv-pg", "event-bus-pg", "job-queue-pg", "blob-cos"]
 # 缓存后端（互斥，开启其一）：
 #   kv-pg  → kv::KvBackend::Pg（PostgreSQL，跨实例共享）
 #   kv-redb  → kv::KvBackend::Redb（嵌入式，单实例）
