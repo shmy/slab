@@ -1,5 +1,5 @@
 use appctx::AppCtx;
-use event_bus::Registry;
+use event_bus::EventRegistry;
 use futures_util::future::BoxFuture;
 use rootcause::Result;
 use sched_kit::CronScheduler;
@@ -11,7 +11,7 @@ use worker::JobRegistry;
 /// `DomainModule::register` 中被域模块填充，随后由 server 消费。
 pub struct ModuleRegistrar {
     /// 事件订阅者注册表（消费上下文为 `AppCtx`）。
-    pub bus: Registry<AppCtx>,
+    pub events: EventRegistry<AppCtx>,
     /// 定时任务（cron）。
     pub scheduler: CronScheduler<AppCtx>,
     /// 后台任务（Job Queue）消费 handler 注册表（消费上下文为 `AppCtx`）。
@@ -21,7 +21,7 @@ pub struct ModuleRegistrar {
 impl ModuleRegistrar {
     pub fn new(app_state: AppCtx) -> Self {
         Self {
-            bus: Registry::default(),
+            events: EventRegistry::default(),
             scheduler: CronScheduler::new(app_state),
             jobs: JobRegistry::default(),
         }

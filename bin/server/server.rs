@@ -42,7 +42,7 @@ pub async fn serve(cli: Cli) -> Result<()> {
         }
         registrar
     };
-    let frozen_registry = registrar.bus.freeze();
+    let frozen_registry = registrar.events.freeze();
 
     // 后台任务 worker：收编域模块注册的 Job handler，进程内消费（同 dispatcher）。
     let mut worker_manager = WorkerManager::new(state.jobs.clone(), state.clone());

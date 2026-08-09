@@ -30,7 +30,7 @@ pub use event::Event;
 #[cfg(feature = "nats")]
 pub use nats::{NatsBackend, NatsConfig};
 pub use pg::PgBackend;
-pub use registry::{FrozenRegistry, Registry};
+pub use registry::{EventRegistry, FrozenRegistry};
 pub use subscriber::Subscriber;
 
 pub use gc::{DEFAULT_DELIVERED_RETENTION_DAYS, delete_delivered_older_than_in_transaction};

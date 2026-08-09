@@ -491,7 +491,7 @@ async fn wait_shutdown(shutdown: &mut Receiver<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::Registry;
+    use crate::registry::EventRegistry;
     use serde_json::{Value, json};
     use sqlx::{PgPool, Row};
     use std::future::Future;
@@ -609,7 +609,7 @@ mod tests {
         let handler_b = TestHandler::ok("slab.test.evt", "listener_b");
         let calls_a = handler_a.calls.clone();
         let calls_b = handler_b.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(handler_a).register(handler_b);
         let registry = registry.freeze();
 
@@ -648,7 +648,7 @@ mod tests {
     #[sqlx::test]
     async fn handler_panic_is_terminal_failure_not_crash(pool: PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(PanicHandler);
         let registry = registry.freeze();
 
@@ -683,7 +683,7 @@ mod tests {
         let bad = TestHandler::failing("slab.test.evt", "listener_bad");
         let calls_ok = ok.calls.clone();
         let calls_bad = bad.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(ok).register(bad);
         let registry = registry.freeze();
 
@@ -710,7 +710,7 @@ mod tests {
         let ok = TestHandler::ok("slab.test.evt", "listener_ok");
         let flaky = TestHandler::flaky("slab.test.evt", "listener_flaky", 1);
         let calls_flaky = flaky.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(ok).register(flaky);
         let registry = registry.freeze();
 
@@ -759,7 +759,7 @@ mod tests {
         let b = TestHandler::flaky("slab.test.evt", "listener_b", 1);
         let calls_a = a.calls.clone();
         let calls_b = b.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(a).register(b);
         let registry = registry.freeze();
 
@@ -812,7 +812,7 @@ mod tests {
         // 但 pending 分发仍会被拉取执行，执行后行保持 failed。
         let ok = TestHandler::ok("slab.test.evt", "listener_pending");
         let calls_ok = ok.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(ok);
         let registry = registry.freeze();
 
@@ -850,7 +850,7 @@ mod tests {
     #[sqlx::test]
     async fn message_without_handler_goes_terminal_failure(pool: PgPool) {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
-        let registry = Registry::<()>::default().freeze();
+        let registry = EventRegistry::<()>::default().freeze();
 
         let id = publish(&pool, "slab.no.subscriber", 5).await;
 
@@ -875,7 +875,7 @@ mod tests {
         crate::pg::PgBackend::try_new(pool.clone()).await.unwrap();
         // 事件先发布，此时无人订阅 → 终态失败，不会分发给后到的订阅者
         let id = publish(&pool, "slab.late.evt", 5).await;
-        let registry = Registry::<()>::default().freeze();
+        let registry = EventRegistry::<()>::default().freeze();
         run_one_cycle(&pool, &(), &registry, &config())
             .await
             .unwrap();
@@ -884,7 +884,7 @@ mod tests {
         // 订阅者后注册，重新发布一条事件 → 正常分发
         let handler = TestHandler::ok("slab.late.evt", "listener_late");
         let calls = handler.calls.clone();
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(handler);
         let registry = registry.freeze();
 

@@ -6,11 +6,11 @@ use crate::subscriber::Subscriber;
 /// topic → 监听者列表（广播：同一 topic 多个 handler）。
 type HandlerMap<C> = HashMap<&'static str, Vec<Arc<dyn Subscriber<C>>>>;
 
-pub struct Registry<C: Send + Sync + 'static> {
+pub struct EventRegistry<C: Send + Sync + 'static> {
     handlers: HandlerMap<C>,
 }
 
-impl<C: Send + Sync + 'static> Default for Registry<C> {
+impl<C: Send + Sync + 'static> Default for EventRegistry<C> {
     fn default() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -18,7 +18,7 @@ impl<C: Send + Sync + 'static> Default for Registry<C> {
     }
 }
 
-impl<C: Send + Sync + 'static> Registry<C> {
+impl<C: Send + Sync + 'static> EventRegistry<C> {
     /// 注册监听者。同一 topic 可注册多个 handler（广播语义），全部保留；
     /// 之前是 `insert`（同 topic 后注册覆盖先注册，静默丢消息），现改为追加。
     /// **同名冲突是编程错误**（同 topic 下两个 handler 的 `name()` 相同会导致
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn same_topic_registers_multiple_handlers() {
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry
             .register(DummyHandler("slab.test.evt", "listener_a"))
             .register(DummyHandler("slab.test.evt", "listener_b"));
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn distinct_topics_are_separate() {
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry.register(DummyHandler("slab.a", "a"));
         let frozen = registry.freeze();
 
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "name conflict")]
     fn same_name_on_same_topic_panics() {
-        let mut registry = Registry::<()>::default();
+        let mut registry = EventRegistry::<()>::default();
         registry
             .register(DummyHandler("slab.test.evt", "listener_a"))
             .register(DummyHandler("slab.test.evt", "listener_a"));
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn unknown_topic_returns_none() {
-        let frozen = Registry::<()>::default().freeze();
+        let frozen = EventRegistry::<()>::default().freeze();
         assert!(frozen.get("nope").is_none());
     }
 }

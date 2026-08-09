@@ -46,8 +46,8 @@ impl DomainModule for Module {
     }
 
     fn register(&self, registrar: &mut ModuleRegistrar) {
-        registrar.bus.register(AccountCreatedSubscriber);
-        registrar.bus.register(AccountLoggedInSubscriber);
+        registrar.events.register(AccountCreatedSubscriber);
+        registrar.events.register(AccountLoggedInSubscriber);
     }
 
     fn on_start<'a>(&'a self, state: &'a AppCtx) -> BoxFuture<'a, Result<()>> {
