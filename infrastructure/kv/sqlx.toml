@@ -1,0 +1,3 @@
+[migrate]
+migrations-dir = "./migrations"
+table-name = "_kv_migrations"

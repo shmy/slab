@@ -33,51 +33,6 @@ pub(crate) mod pg {
     use chrono::{DateTime, Utc};
     use sqlx::{PgPool, Row};
 
-    /// 幂等自建表（基础设施自管表的**唯一事实源**：不进 migration，同 event_bus 先例——
-    /// 事件总线表同样完全由 `PgBackend::try_new` 自建，migration 目录无其定义）。
-    /// 同时幂等建 INSERT 触发器：入队即 `pg_notify('job_queue_events')`（事务内投递，无丢失
-    /// 窗口），worker 侧 `PgListener` 收到后立即唤醒消费（poll 保留为兜底）。
-    pub(crate) async fn create_table(pool: &PgPool) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS worker_jobs (
-                id BIGSERIAL PRIMARY KEY,
-                job_type VARCHAR(128) NOT NULL,
-                payload JSONB NOT NULL,
-                status VARCHAR(16) NOT NULL DEFAULT 'Pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                max_attempts INTEGER NOT NULL DEFAULT 1,
-                run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                last_error TEXT,
-                lock_by TEXT,
-                lock_at TIMESTAMPTZ,
-                done_at TIMESTAMPTZ
-            )",
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS worker_jobs_fetch_idx
-             ON worker_jobs (job_type, status, run_at, id)",
-        )
-        .execute(pool)
-        .await?;
-        sqlx::raw_sql(
-            "CREATE OR REPLACE FUNCTION job_queue_notify() RETURNS trigger AS $$
-                BEGIN
-                    PERFORM pg_notify('job_queue_events', NEW.job_type);
-                    RETURN NEW;
-                END;
-             $$ LANGUAGE plpgsql;
-             DROP TRIGGER IF EXISTS job_queue_notify_trigger ON worker_jobs;
-             CREATE TRIGGER job_queue_notify_trigger
-                 AFTER INSERT ON worker_jobs
-                 FOR EACH ROW EXECUTE FUNCTION job_queue_notify();",
-        )
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
     pub(crate) async fn insert(
         pool: &PgPool,
         job_type: &str,
@@ -206,6 +161,7 @@ pub(crate) mod pg {
 }
 
 #[cfg(feature = "sqlite")]
+
 pub(crate) mod sqlite {
     use super::*;
     use chrono::Utc;
@@ -214,34 +170,6 @@ pub(crate) mod sqlite {
 
     fn now_millis() -> i64 {
         Utc::now().timestamp_millis()
-    }
-
-    /// 幂等自建表（sqlite 文件不在 migration 管辖内，随 `try_new_sqlite` 创建）。
-    pub(crate) async fn create_table(pool: &SqlitePool) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS worker_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_type TEXT NOT NULL,
-                payload TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Pending',
-                attempts INTEGER NOT NULL DEFAULT 0,
-                max_attempts INTEGER NOT NULL DEFAULT 1,
-                run_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-                last_error TEXT,
-                lock_by TEXT,
-                lock_at INTEGER,
-                done_at INTEGER
-            )",
-        )
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS worker_jobs_fetch_idx
-             ON worker_jobs (job_type, status, run_at)",
-        )
-        .execute(pool)
-        .await?;
-        Ok(())
     }
 
     pub(crate) async fn insert(

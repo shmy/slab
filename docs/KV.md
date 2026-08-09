@@ -37,7 +37,7 @@
 
 ### 3.1 Pg 后端（`caches` 表）
 
-- 迁移见 `infrastructure/migration/versions/0001_create_foundations.sql`；`PgCache::try_new` 会**幂等自建**（`CREATE UNLOGGED TABLE IF NOT EXISTS` + 索引），不依赖 migration 版本。
+- 表结构由 `PgCache::try_new` 启动时跑 crate 内嵌迁移（`infrastructure/kv/migrations/`，版本表 `_kv_migrations`），不进应用层 migration；v1 保留幂等写法兼容旧自建表，演进走 v2+ ALTER。
 - `UNLOGGED`：性能更好，但进程/主机崩溃后可能丢失崩溃前未落盘的写入——适合「丢了可重建」的会话语义。
 - 列：`key TEXT PRIMARY KEY`、`value TEXT NOT NULL`（JSON 文本）、`expires_at TIMESTAMPTZ NOT NULL`；索引 `idx_caches_expires_at (expires_at)` 供批量清理。
 

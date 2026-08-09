@@ -20,27 +20,12 @@ pub struct PgCache {
 }
 
 impl PgCache {
-    /// 供 `KvBackend::try_new_pg` 调用；幂等建表（kv crate 自管表结构，不依赖 migration 版本）。
+    /// 供 `KvBackend::try_new_pg` 调用；跑缓存迁移（`migrations/`，版本表 `_kv_migrations`）。
+    /// 启动时执行（自愈：旧库自动升到最新），v1 保留幂等写法兼容迁移系统引入前的自建表。
     #[cfg(feature = "pg")]
     pub(crate) async fn try_new(pool: PgPool) -> Result<Self> {
-        let mut conn = pool.acquire().await?;
-        // 幂等建表：kv crate 自管表结构（不依赖 migration 版本）。
-        sqlx::query(
-            r#"
-            CREATE UNLOGGED TABLE IF NOT EXISTS _pg_caches (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                expires_at TIMESTAMPTZ NOT NULL
-            )
-            "#,
-        )
-        .execute(&mut *conn)
-        .await?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_pg_caches_expires_at ON _pg_caches (expires_at)",
-        )
-        .execute(&mut *conn)
-        .await?;
+        // 迁移表名来自 sqlx.toml 的 table-name（编译期嵌入），与 sqlx CLI 保持一致。
+        sqlx::migrate!("./migrations").run(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -111,7 +96,7 @@ impl PgCache {
 mod tests {
     use super::*;
 
-    /// 测试本地建表（migration 已不含 caches；try_new 在并集下可能被 cfg 禁用，故独立建表）。
+    /// 测试本地建表（测试直接构造 PgCache 不走 try_new，故独立建表；IF NOT EXISTS 与迁移共存无害）。
     async fn ensure_schema(pool: &sqlx::PgPool) {
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query(

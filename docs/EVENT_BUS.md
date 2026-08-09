@@ -34,9 +34,10 @@
 
 ## 2.1 数据模型
 
-> 建表：`PgBackend::try_new` 幂等自建全部事件总线表（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器），
-> 不依赖 migration 版本——基础设施自管表不进 migration（`infrastructure/migration/versions/` 中无其定义），
-> 与 `infrastructure/worker` 的 `worker_jobs` 表同一模式（crate 内自建为唯一事实源）。
+> 建表：`PgBackend::try_new` 启动时跑 crate 内嵌迁移（`infrastructure/event_bus/migrations/`，
+> 版本表 `_event_bus_migrations`）——基础设施自管表的唯一事实源，不进应用层 migration
+> （`infrastructure/migration/versions/` 中无其定义）；v1 保留幂等写法兼容迁移系统引入前的自建表，
+> 后续表结构演进走 v2+ ALTER（旧库启动自动升级）。
 
 ### `_pg_events` — 事件本体（一行一个事件）
 
@@ -180,7 +181,7 @@ registrar.bus.register(BSubscriber);   // 同一 topic，同一事件两个订�
 | `infrastructure/event_bus/pg.rs`                       | `PgBackend`（Outbox + dispatcher） |
 | `infrastructure/event_bus/nats.rs`                     | `NatsBackend`（JetStream 直发 + durable consumer） |
 | `infrastructure/migration/versions/0001_create_foundations.sql` | `fn_set_updated_at` 函数 |
-| `infrastructure/event_bus/pg.rs` | `PgBackend` 运行时自建全部事件总线表（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器） |
+| `infrastructure/event_bus/migrations/` | 事件总线表迁移（`_pg_events` / `_pg_event_deliveries` + 索引 + 触发器，版本表 `_event_bus_migrations`） |
 | `bin/server/config.rs`                             | 按 feature 组装 `event_bus::EventBus`    |
 | `bin/server/server.rs`                             | dispatcher 启动与 registry 构建    |
 | `bin/server/gc_jobs.rs`                            | 已分发行 GC（nats 后端为空操作）    |

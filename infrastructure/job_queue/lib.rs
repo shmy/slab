@@ -97,20 +97,24 @@ pub enum JobBus {
 }
 
 impl JobBus {
-    /// pg 后端：自建 `worker_jobs` 表 + INSERT 触发器（幂等）。
+    /// pg 后端：跑队列迁移（`migrations-pg/`，版本表 `_job_queue_migrations`）。
+    /// 启动时执行（自愈：旧库自动升到最新），v1 保留幂等写法兼容迁移系统引入前的自建表。
     #[cfg(feature = "pg")]
     pub async fn try_new_pg(pool: PgPool) -> Result<Self> {
-        backend::pg::create_table(&pool).await?;
+        // 迁移表名来自 sqlx.toml 的 table-name（编译期嵌入），与 sqlx CLI 保持一致。
+        sqlx::migrate!("./migrations-pg").run(&pool).await?;
         Ok(Self::Pg {
             pool,
             notify: Arc::new(Notify::new()),
         })
     }
 
-    /// sqlite 后端：自建 `worker_jobs` 表（幂等）。仅支持单进程消费。
+    /// sqlite 后端：跑队列迁移（`migrations-sqlite/`，版本表 `_job_queue_migrations` 记录在
+    /// sqlite 文件内）。仅支持单进程消费。
     #[cfg(feature = "sqlite")]
     pub async fn try_new_sqlite(pool: SqlitePool) -> Result<Self> {
-        backend::sqlite::create_table(&pool).await?;
+        // 迁移表名来自 sqlx.toml 的 table-name（编译期嵌入；sqlite 文件内同名版本表，与 pg 互不干扰）。
+        sqlx::migrate!("./migrations-sqlite").run(&pool).await?;
         Ok(Self::Sqlite {
             pool,
             notify: Arc::new(Notify::new()),

@@ -71,8 +71,9 @@ WorkerManager::new(bus: JobBus, ctx: C)         // 默认参数
 
 ## 4. 数据模型与语义契约
 
-### `worker_jobs` 表（由 `JobBus::try_new_pg` 幂等自建——基础设施自管表不进 migration，
-同 event_bus 先例：事件总线表同样完全由 `PgBackend::try_new` 自建）
+### `worker_jobs` 表（由 `JobBus::try_new_*` 启动时跑 crate 内嵌迁移——pg 走
+`infrastructure/job_queue/migrations-pg/`、sqlite 走 `migrations-sqlite/`，版本表
+`_job_queue_migrations`；不进应用层 migration，v1 保留幂等写法兼容旧自建表，演进走 v2+ ALTER）
 
 | 列 | 说明 |
 |------|------|
