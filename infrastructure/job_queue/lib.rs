@@ -44,7 +44,7 @@ use futures_util::future::BoxFuture;
 use rootcause::{Result, report};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{Notify, Semaphore, watch};
 
 #[cfg(feature = "pg")]
 use sqlx::PgPool;
@@ -79,27 +79,62 @@ pub trait Job: Serialize + DeserializeOwned + Send + Sync + 'static {
 }
 
 /// 队列后端：`pg`（生产，worker_jobs 表在业务库）/ `sqlite`（单机部署，本地文件）。
+///
+/// `notify` 是进程内唤醒信号（`tokio::sync::Notify`），入队成功后触发：
+/// - pg：INSERT 触发器 `pg_notify` → `WorkerManager` 的 `PgListener` 任务桥接为 `notify_waiters`；
+/// - sqlite：`enqueue_after` 直接 `notify_waiters`。
+///
+/// 消费侧轮询保留为兜底（NOTIFY 不持久，listener 未就绪/断线期间靠轮询）。
 #[derive(Clone)]
 pub enum JobBus {
     #[cfg(feature = "pg")]
-    Pg { pool: PgPool },
+    Pg { pool: PgPool, notify: Arc<Notify> },
     #[cfg(feature = "sqlite")]
-    Sqlite { pool: SqlitePool },
+    Sqlite {
+        pool: SqlitePool,
+        notify: Arc<Notify>,
+    },
 }
 
 impl JobBus {
-    /// pg 后端：自建 `worker_jobs` 表（幂等，与 migration 0012 同款定义双保险）。
+    /// pg 后端：自建 `worker_jobs` 表 + INSERT 触发器（幂等）。
     #[cfg(feature = "pg")]
     pub async fn try_new_pg(pool: PgPool) -> Result<Self> {
         backend::pg::create_table(&pool).await?;
-        Ok(Self::Pg { pool })
+        Ok(Self::Pg {
+            pool,
+            notify: Arc::new(Notify::new()),
+        })
     }
 
     /// sqlite 后端：自建 `worker_jobs` 表（幂等）。仅支持单进程消费。
     #[cfg(feature = "sqlite")]
     pub async fn try_new_sqlite(pool: SqlitePool) -> Result<Self> {
         backend::sqlite::create_table(&pool).await?;
-        Ok(Self::Sqlite { pool })
+        Ok(Self::Sqlite {
+            pool,
+            notify: Arc::new(Notify::new()),
+        })
+    }
+
+    /// 进程内唤醒信号（消费侧轮询循环监听；pg 由 NOTIFY 桥接触发，sqlite 由入队直发）。
+    pub(crate) fn notifier(&self) -> &Arc<Notify> {
+        match self {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { notify, .. } => notify,
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { notify, .. } => notify,
+        }
+    }
+
+    /// pg 后端连接池（供 LISTEN/NOTIFY 桥接任务使用）。
+    #[cfg(feature = "pg")]
+    pub(crate) fn pg_pool(&self) -> Option<PgPool> {
+        match self {
+            JobBus::Pg { pool, .. } => Some(pool.clone()),
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { .. } => None,
+        }
     }
 
     /// 立即入队。
@@ -108,24 +143,29 @@ impl JobBus {
     }
 
     /// 延迟入队：`delay` 之后才可被消费（`run_at = now + delay`，投递参数不进 payload）。
+    /// 入队成功（事务已提交）后触发进程内唤醒信号。
     pub async fn enqueue_after<T: Job>(&self, job: T, delay: Duration) -> Result<()> {
         let max_attempts = T::RETRIES + 1;
-        match self {
+        let result = match self {
             #[cfg(feature = "pg")]
-            JobBus::Pg { pool } => {
+            JobBus::Pg { pool, .. } => {
                 let payload = serde_json::to_value(&job).map_err(|e| report!("{e}"))?;
                 let run_at = Utc::now() + chrono::Duration::milliseconds(delay.as_millis() as i64);
                 backend::pg::insert(pool, T::NAME, payload, run_at, max_attempts as i32).await
             }
             #[cfg(feature = "sqlite")]
-            JobBus::Sqlite { pool } => {
+            JobBus::Sqlite { pool, .. } => {
                 let payload = serde_json::to_string(&job).map_err(|e| report!("{e}"))?;
                 let run_at = (Utc::now()
                     + chrono::Duration::milliseconds(delay.as_millis() as i64))
                 .timestamp_millis();
                 backend::sqlite::insert(pool, T::NAME, &payload, run_at, max_attempts as i32).await
             }
+        };
+        if result.is_ok() {
+            self.notifier().notify_waiters();
         }
+        result
     }
 }
 
@@ -228,14 +268,25 @@ impl<C: Clone + Send + Sync + 'static> WorkerManager<C> {
 
     /// 启动消费（每 job_type 一个轮询循环 + 一个孤儿扫描），`shutdown` 为 true 时优雅退出。
     pub async fn run(self, shutdown: watch::Receiver<bool>) -> Result<()> {
-        let mut handles = Vec::with_capacity(self.specs.len() + 1);
+        let mut handles = Vec::with_capacity(self.specs.len() + 2);
+        // pg 后端：LISTEN/NOTIFY 桥接任务——把 INSERT 触发器的 pg_notify 转成进程内 Notify
+        // （sqlite 后端无 listener：Notify 由 enqueue_after 直发）。
+        #[cfg(feature = "pg")]
+        if let Some(pool) = self.bus.pg_pool() {
+            let notify = self.bus.notifier().clone();
+            let rx = shutdown.clone();
+            handles.push(tokio::spawn(async move {
+                run_pg_listener(pool, notify, rx).await;
+            }));
+        }
         for spec in self.specs {
             let bus = self.bus.clone();
             let ctx = self.ctx.clone();
             let options = self.options.clone();
+            let notify = self.bus.notifier().clone();
             let rx = shutdown.clone();
             handles.push(tokio::spawn(async move {
-                run_job_loop(spec, bus, ctx, options, rx).await;
+                run_job_loop(spec, bus, ctx, options, notify, rx).await;
             }));
         }
         {
@@ -255,6 +306,48 @@ impl<C: Clone + Send + Sync + 'static> WorkerManager<C> {
     }
 }
 
+/// pg LISTEN/NOTIFY 桥接：监听 `job_queue_events` 通道，收到通知即唤醒进程内 Notify。
+/// 连接失败 / 断线时退出（poll 兜底），不做重连——Notify 语义下丢失一次唤醒无妨。
+#[cfg(feature = "pg")]
+async fn run_pg_listener(pool: PgPool, notify: Arc<Notify>, mut shutdown: watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::error!(error = %e, "pg listener connect failed, falling back to polling");
+            return;
+        }
+    };
+    if let Err(e) = listener.listen("job_queue_events").await {
+        tracing::error!(error = %e, "pg listener listen failed, falling back to polling");
+        return;
+    }
+    tracing::info!("pg listener listening on job_queue_events");
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => break,
+            result = listener.recv() => {
+                match result {
+                    Ok(notification) => {
+                        tracing::trace!(
+                            channel = %notification.channel(),
+                            payload = %notification.payload(),
+                            "pg notify received"
+                        );
+                        notify.notify_waiters();
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "pg listener recv failed, falling back to polling");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// 擦除后的 job 规格：注册时类型化、消费时在 trait object 内部还原 `T`。
 pub(crate) trait JobSpec<C>: Send + Sync {
     fn name(&self) -> &'static str;
@@ -263,8 +356,13 @@ pub(crate) trait JobSpec<C>: Send + Sync {
     fn handle<'a>(&'a self, payload: Value, ctx: &'a C) -> BoxFuture<'a, Result<()>>;
 }
 
+/// 擦除后的 job 消费 handler：`for<'a>` 高阶签名——future 借用调用方的 `&'a C`，
+/// 因此返回 `BoxFuture<'a>` 而非 `'static`（async fn 的 opaque future 无法装箱为
+/// `'static`，见 `JobRegistry::register` 的 HRTB 说明）。
+type ErasedHandler<T, C> = dyn for<'a> Fn(T, &'a C) -> BoxFuture<'a, Result<()>> + Send + Sync;
+
 struct TypedJob<T: Job, C> {
-    handler: Arc<dyn for<'a> Fn(T, &'a C) -> BoxFuture<'a, Result<()>> + Send + Sync>,
+    handler: Arc<ErasedHandler<T, C>>,
 }
 
 impl<T: Job, C: Send + Sync + 'static> JobSpec<C> for TypedJob<T, C> {
@@ -289,13 +387,15 @@ impl<T: Job, C: Send + Sync + 'static> JobSpec<C> for TypedJob<T, C> {
 }
 
 /// 每 job_type 一个轮询循环：并发受 `Semaphore(CONCURRENCY)` 约束，
-/// 拉取 → 逐任务 spawn（占位符即并发许可）。shutdown 后等待全部 in-flight 完成
-/// （handler 受 `TIMEOUT` 约束，等待有界），即优雅退出。
+/// 拉取 → 逐任务 spawn（占位符即并发许可）。唤醒来源：进程内 `Notify`（入队信号，
+/// 立即消费）与固定间隔轮询（兜底：NOTIFY 不持久 / listener 未就绪 / 通知丢失）。
+/// shutdown 后等待全部 in-flight 完成（handler 受 `TIMEOUT` 约束，等待有界），即优雅退出。
 async fn run_job_loop<C: Clone + Send + Sync + 'static>(
     spec: Arc<dyn JobSpec<C>>,
     bus: JobBus,
     ctx: C,
     options: WorkerOptions,
+    notify: Arc<Notify>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     if *shutdown.borrow() {
@@ -305,10 +405,14 @@ async fn run_job_loop<C: Clone + Send + Sync + 'static>(
     let mut in_flight = tokio::task::JoinSet::new();
     let mut ticker = tokio::time::interval(options.poll_interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut notified = Box::pin(notify.notified());
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,
             _ = ticker.tick() => {}
+            _ = &mut notified => {
+                notified = Box::pin(notify.notified());
+            }
         }
         let permits = semaphore.available_permits() as i32;
         if permits <= 0 {
@@ -448,9 +552,11 @@ async fn run_orphan_sweep(
 async fn fetch_due(bus: &JobBus, job_type: &str, limit: i32) -> Result<Vec<FetchJob>> {
     match bus {
         #[cfg(feature = "pg")]
-        JobBus::Pg { pool } => backend::pg::fetch_due(pool, job_type, limit, "local-worker").await,
+        JobBus::Pg { pool, .. } => {
+            backend::pg::fetch_due(pool, job_type, limit, "local-worker").await
+        }
         #[cfg(feature = "sqlite")]
-        JobBus::Sqlite { pool } => {
+        JobBus::Sqlite { pool, .. } => {
             backend::sqlite::fetch_due(pool, job_type, limit, "local-worker").await
         }
     }
@@ -459,9 +565,9 @@ async fn fetch_due(bus: &JobBus, job_type: &str, limit: i32) -> Result<Vec<Fetch
 async fn mark_done(bus: &JobBus, id: i64) -> Result<()> {
     match bus {
         #[cfg(feature = "pg")]
-        JobBus::Pg { pool } => backend::pg::mark_done(pool, id).await,
+        JobBus::Pg { pool, .. } => backend::pg::mark_done(pool, id).await,
         #[cfg(feature = "sqlite")]
-        JobBus::Sqlite { pool } => backend::sqlite::mark_done(pool, id).await,
+        JobBus::Sqlite { pool, .. } => backend::sqlite::mark_done(pool, id).await,
     }
 }
 
@@ -474,11 +580,11 @@ async fn schedule_retry(
 ) -> Result<()> {
     match bus {
         #[cfg(feature = "pg")]
-        JobBus::Pg { pool } => {
+        JobBus::Pg { pool, .. } => {
             backend::pg::schedule_retry(pool, id, attempts, delay, last_error).await
         }
         #[cfg(feature = "sqlite")]
-        JobBus::Sqlite { pool } => {
+        JobBus::Sqlite { pool, .. } => {
             backend::sqlite::schedule_retry(pool, id, attempts, delay, last_error).await
         }
     }
@@ -487,9 +593,9 @@ async fn schedule_retry(
 async fn mark_failed(bus: &JobBus, id: i64, attempts: i32, last_error: &str) -> Result<()> {
     match bus {
         #[cfg(feature = "pg")]
-        JobBus::Pg { pool } => backend::pg::mark_failed(pool, id, attempts, last_error).await,
+        JobBus::Pg { pool, .. } => backend::pg::mark_failed(pool, id, attempts, last_error).await,
         #[cfg(feature = "sqlite")]
-        JobBus::Sqlite { pool } => {
+        JobBus::Sqlite { pool, .. } => {
             backend::sqlite::mark_failed(pool, id, attempts, last_error).await
         }
     }
@@ -498,13 +604,13 @@ async fn mark_failed(bus: &JobBus, id: i64, attempts: i32, last_error: &str) -> 
 async fn reenqueue_orphaned(bus: &JobBus, orphan_timeout: Duration) -> Result<i64> {
     match bus {
         #[cfg(feature = "pg")]
-        JobBus::Pg { pool } => {
+        JobBus::Pg { pool, .. } => {
             let older_than =
                 Utc::now() - chrono::Duration::milliseconds(orphan_timeout.as_millis() as i64);
             backend::pg::reenqueue_orphaned(pool, older_than).await
         }
         #[cfg(feature = "sqlite")]
-        JobBus::Sqlite { pool } => {
+        JobBus::Sqlite { pool, .. } => {
             let older_than = (Utc::now()
                 - chrono::Duration::milliseconds(orphan_timeout.as_millis() as i64))
             .timestamp_millis();
@@ -522,7 +628,7 @@ pub(crate) mod testing {
     pub(crate) async fn latest_id(bus: &JobBus, job_type: &str) -> Result<i64> {
         match bus {
             #[cfg(feature = "pg")]
-            JobBus::Pg { pool } => {
+            JobBus::Pg { pool, .. } => {
                 let row = sqlx::query(
                     "SELECT id FROM worker_jobs WHERE job_type = $1 ORDER BY id DESC LIMIT 1",
                 )
@@ -532,7 +638,7 @@ pub(crate) mod testing {
                 Ok(row.get("id"))
             }
             #[cfg(feature = "sqlite")]
-            JobBus::Sqlite { pool } => {
+            JobBus::Sqlite { pool, .. } => {
                 let row = sqlx::query(
                     "SELECT id FROM worker_jobs WHERE job_type = ? ORDER BY id DESC LIMIT 1",
                 )
@@ -554,7 +660,7 @@ pub(crate) mod testing {
     pub(crate) async fn fetch_row(bus: &JobBus, id: i64) -> Result<JobRow> {
         match bus {
             #[cfg(feature = "pg")]
-            JobBus::Pg { pool } => {
+            JobBus::Pg { pool, .. } => {
                 let row = sqlx::query(
                     "SELECT status, attempts, COALESCE(last_error, '') AS last_error
                        FROM worker_jobs WHERE id = $1",
@@ -569,7 +675,7 @@ pub(crate) mod testing {
                 })
             }
             #[cfg(feature = "sqlite")]
-            JobBus::Sqlite { pool } => {
+            JobBus::Sqlite { pool, .. } => {
                 let row = sqlx::query(
                     "SELECT status, attempts, COALESCE(last_error, '') AS last_error
                        FROM worker_jobs WHERE id = ?",
@@ -889,22 +995,67 @@ mod tests {
         handle.abort();
     }
 
+    // ---- 场景 8：通知驱动——入队即唤醒，不依赖轮询间隔 ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn pg_notify_wakes_worker_without_polling(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        // poll_interval 10s：只有通知路径（INSERT 触发器 NOTIFY → PgListener → Notify）
+        // 能在 1s 内消费；靠轮询要等 10s。
+        let manager = WorkerManager::new(bus.clone(), ctx.clone()).with_options(WorkerOptions {
+            poll_interval: Duration::from_secs(10),
+            ..fast_options()
+        });
+        let mut manager = manager;
+        manager.register_all(&registry);
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move {
+            manager.run(rx).await.unwrap();
+        });
+        let _tx = tx;
+        // 等待 PgListener 完成 connect + listen（避免通知在 LISTEN 前丢失，poll 兜底仍保证最终消费）
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(1)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        handle.abort();
+    }
+
+    #[cfg(feature = "sqlite")]
     #[tokio::test]
-    async fn sqlite_debug_probe() {
+    async fn sqlite_notify_wakes_worker_without_polling() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("worker.db");
-        eprintln!("STEP1 creating pool");
         let pool = crate::sqlite_helper::new_sqlite_pool(path.to_str().unwrap())
             .await
             .unwrap();
-        eprintln!("STEP2 creating bus");
-        let bus = JobBus::try_new_sqlite(pool.clone()).await.unwrap();
-        eprintln!("STEP3 enqueue");
+        let bus = JobBus::try_new_sqlite(pool).await.unwrap();
+        let ctx = TestCtx::default();
+        let mut registry = JobRegistry::default();
+        registry.register(|job, ctx| Box::pin(handle_echo(job, ctx)));
+        // poll_interval 10s：只有 enqueue 直发的 Notify 能在 1s 内唤醒消费
+        let manager = WorkerManager::new(bus.clone(), ctx.clone()).with_options(WorkerOptions {
+            poll_interval: Duration::from_secs(10),
+            ..fast_options()
+        });
+        let mut manager = manager;
+        manager.register_all(&registry);
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move {
+            manager.run(rx).await.unwrap();
+        });
+        let _tx = tx;
+
         bus.enqueue(EchoJob { n: 1 }).await.unwrap();
-        eprintln!("STEP4 fetch_due");
-        let jobs = backend::sqlite::fetch_due(&pool, EchoJob::NAME, 10, "probe")
-            .await
-            .unwrap();
-        eprintln!("STEP5 fetched {} jobs", jobs.len());
+        let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        assert!(wait_status(&bus, id, "Done", Duration::from_secs(1)).await);
+        assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
+        handle.abort();
     }
 }

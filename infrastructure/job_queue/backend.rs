@@ -35,6 +35,8 @@ pub(crate) mod pg {
 
     /// 幂等自建表（基础设施自管表的**唯一事实源**：不进 migration，同 event_bus 先例——
     /// 事件总线表同样完全由 `PgBackend::try_new` 自建，migration 目录无其定义）。
+    /// 同时幂等建 INSERT 触发器：入队即 `pg_notify('job_queue_events')`（事务内投递，无丢失
+    /// 窗口），worker 侧 `PgListener` 收到后立即唤醒消费（poll 保留为兜底）。
     pub(crate) async fn create_table(pool: &PgPool) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS worker_jobs (
@@ -56,6 +58,20 @@ pub(crate) mod pg {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS worker_jobs_fetch_idx
              ON worker_jobs (job_type, status, run_at, id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::raw_sql(
+            "CREATE OR REPLACE FUNCTION job_queue_notify() RETURNS trigger AS $$
+                BEGIN
+                    PERFORM pg_notify('job_queue_events', NEW.job_type);
+                    RETURN NEW;
+                END;
+             $$ LANGUAGE plpgsql;
+             DROP TRIGGER IF EXISTS job_queue_notify_trigger ON worker_jobs;
+             CREATE TRIGGER job_queue_notify_trigger
+                 AFTER INSERT ON worker_jobs
+                 FOR EACH ROW EXECUTE FUNCTION job_queue_notify();",
         )
         .execute(pool)
         .await?;

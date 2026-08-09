@@ -104,6 +104,19 @@ Running ── 成功 ──► Done
 - **重试持久化**：退避调度写库（`run_at` 后移），进程崩溃不丢重试进度；
 - **超时**：单次执行超 `TIMEOUT` 按一次失败计（`job_timeout`），计入重试次数。
 
+### 通知机制（入队即唤醒，轮询为兜底）
+
+消费侧唤醒有两个来源，**轮询始终保留为兜底**：
+
+| 后端 | 即时唤醒路径 | 兜底 |
+|------|-------------|------|
+| **pg** | INSERT 触发器 `job_queue_notify`（事务内 `pg_notify('job_queue_events')`，无丢失窗口）→ `WorkerManager` 的 `PgListener` 任务（`LISTEN` 专用连接）→ 进程内 `Notify` → 消费循环立即 fetch | 固定间隔轮询（默认 200ms，`WorkerOptions::poll_interval`） |
+| **sqlite** | `enqueue_after` 成功后直发进程内 `Notify`（单进程内即时，无 update_hook——连接级回调收不到跨连接写入） | 同上 |
+
+- 延迟任务：唤醒后 fetch 时 `run_at` 未到则不拉取，到期后由下一轮唤醒/轮询消费；
+- `NOTIFY` 不持久：listener 未就绪 / 断线期间的通知丢失，靠轮询兜底（无丢失语义变化，仍是 at-least-once + 幂等）；
+- pg 多进程部署：每个进程各跑一个 listener（都收到 NOTIFY → 各自 fetch，`FOR UPDATE SKIP LOCKED` 竞争安全）。
+
 ## 5. 接线
 
 ```
@@ -120,7 +133,7 @@ AppCtx.jobs: JobBus（入队）          ModuleRegistrar.jobs: JobRegistry<AppCt
 - 业务端点入队：`state.jobs.enqueue(GenerateReport { .. }).await?`；
 - 后端选择（bin/server feature，互斥；双开时 worker-pg 让位，同 blob 惯例）：
   - `worker-pg`（推荐生产）→ 表在业务 PG；
-  - `worker-sqlite`（默认，单机部署）→ 本地 sqlite 文件（`--queue-sqlite-path`，默认 `worker.db`），**仅支持单进程消费**。
+  - `worker-sqlite`（默认，单机部署）→ 本地 sqlite 文件（`--queue-sqlite-path`，默认 `worker.db`），**仅支持单进程消费**；WAL + `synchronous=Normal`（提交不 fsync，队列数据可重建，换取写吞吐）。
 
 ### 使用示例（三步，照着抄）
 
@@ -191,5 +204,5 @@ state.jobs.enqueue_after(ExportOrders { order_id }, Duration::from_secs(3600)).a
 - 无显式 DLQ 表：终态 `Failed` 留表 + `last_error` + tracing 日志，人工重放需求出现时再加管理端点；
 - 无多队列隔离（无 priority）：单一队列 + 延迟投递，多队列等真实需求再引入；
 - 无去重（dedup）：幂等是 handler 职责（与 event_bus 同一约定）；
-- sqlite 后端仅单进程消费；延迟精度受轮询间隔（默认 200ms）与后端时间精度影响；
+- sqlite 后端仅单进程消费；延迟精度受轮询兜底间隔影响（进程内通知唤醒下立即；跨进程仍为轮询间隔）；
 - 无内置管理 UI：排查走 SQL + 日志。
