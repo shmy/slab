@@ -44,12 +44,12 @@ members = [
     "infrastructure/flow",
     "infrastructure/http_auth",
     "infrastructure/http_client",
+    "infrastructure/job_queue",
     "infrastructure/jwt",
     "infrastructure/locale",
     "infrastructure/migration",
     "infrastructure/module",
     "infrastructure/web",
-    "infrastructure/worker",
     "libs/authn_kit",
     "libs/authz_kit",
     "libs/image_kit",
@@ -129,6 +129,7 @@ inventory_ledger = { path = "cross_domain/inventory_ledger" }
 ipnetwork = { version = "0.21", default-features = false }
 item = { path = "features/item" }
 item_contract = { path = "features/item_contract" }
+job_queue = { path = "infrastructure/job_queue" }
 jsonwebtoken = { version = "11", default-features = false, features = [
     "rust_crypto",
 ] }
@@ -252,7 +253,6 @@ validify = { version = "2.0", default-features = false }
 warehouse = { path = "features/warehouse" }
 warehouse_contract = { path = "features/warehouse_contract" }
 web = { path = "infrastructure/web" }
-worker = { path = "infrastructure/worker" }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

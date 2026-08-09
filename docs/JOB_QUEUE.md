@@ -1,6 +1,6 @@
 # 后台任务队列（`worker`）
 
-本文描述 `infrastructure/worker` 的架构、API 与语义边界，与当前代码一致。
+本文描述 `infrastructure/job_queue` 的架构、API 与语义边界，与当前代码一致。
 
 ## 1. 定位
 
@@ -133,7 +133,7 @@ pub struct ExportOrders {
     pub order_id: i64,
 }
 
-impl worker::Job for ExportOrders {
+impl job_queue::Job for ExportOrders {
     const NAME: &'static str = "export_orders";
     const RETRIES: usize = 2;                     // 失败后追加重试 2 次（总执行 ≤ 3）
     const CONCURRENCY: usize = 2;                 // 最多 2 个并行
@@ -166,7 +166,7 @@ state.jobs.enqueue_after(ExportOrders { order_id }, Duration::from_secs(3600)).a
 ```
 
 > 延迟投递适合分钟级起步的短等待；跨小时/天的长等待仍建议交给 `flow` 的持久化 delay（重启不丢）。
-> 完整可运行示例见 `infrastructure/worker/lib.rs` 的 `#[cfg(test)] mod tests`（框架验证夹具）。
+> 完整可运行示例见 `infrastructure/job_queue/lib.rs` 的 `#[cfg(test)] mod tests`（框架验证夹具）。
 
 ## 6. 选型说明（为何自研而非 Apalis）
 

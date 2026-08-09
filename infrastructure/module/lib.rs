@@ -1,10 +1,10 @@
 use appctx::AppCtx;
 use event_bus::EventRegistry;
 use futures_util::future::BoxFuture;
+use job_queue::JobRegistry;
 use rootcause::Result;
 use sched_kit::CronScheduler;
 use utoipa_axum::router::OpenApiRouter;
-use worker::JobRegistry;
 
 /// 模块注册上下文：收集各域需要注册的后台任务。
 ///

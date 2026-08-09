@@ -110,7 +110,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `infrastructure/event_bus` | 事件总线（广播事件投递；Pg Outbox 默认 / NATS JetStream，feature 切换）→ [docs/EVENT_BUS.md](docs/EVENT_BUS.md) |
 | `infrastructure/flow` | sayiir 持久化工作流（长流程/信号/超时编排）→ [docs/FLOW.md](docs/FLOW.md) |
 | `infrastructure/kv` | 可插拔 KV 缓存后端（Pg UNLOGGED 默认 / redb / redis，feature 切换）→ [docs/KV.md](docs/KV.md) |
-| `infrastructure/worker` | 后台任务队列（点对点命令式 Job：入队/延迟/重试退避/超时/终态；pg 默认 / sqlite 单机，feature 切换；自研 sqlx 0.9，无 Apalis）→ [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md) |
+| `infrastructure/job_queue` | 后台任务队列（点对点命令式 Job：入队/延迟/重试退避/超时/终态；pg 默认 / sqlite 单机，feature 切换；自研 sqlx 0.9，无 Apalis）→ [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md) |
 | `infrastructure/web` | ValidJson / ValidQuery / ValidPath + Problem Details |
 | `infrastructure/http_auth` | Bearer JWT 鉴权中间件 |
 | `infrastructure/locale` | Fluent 本地化中间件 |

@@ -60,10 +60,10 @@ dependencies = [
  "event_bus",
  "flow",
  "http_client",
+ "job_queue",
  "jwt",
  "kv",
  "tracing",
- "worker",
 ]
 
 [[package]]
@@ -2987,6 +2987,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "job_queue"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "rootcause",
+ "serde",
+ "serde_json",
+ "sqlx 0.9.0",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "jobserver"
 version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3423,10 +3439,10 @@ dependencies = [
  "appctx",
  "event_bus",
  "futures-util",
+ "job_queue",
  "rootcause",
  "sched_kit",
  "utoipa-axum",
- "worker",
 ]
 
 [[package]]
@@ -5633,6 +5649,7 @@ dependencies = [
  "humantime",
  "identity",
  "item",
+ "job_queue",
  "kv",
  "lazy-limit",
  "locale",
@@ -5659,7 +5676,6 @@ dependencies = [
  "utoipa-axum",
  "utoipa-scalar",
  "warehouse",
- "worker",
 ]
 
 [[package]]
@@ -7871,22 +7887,6 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
-
-[[package]]
-name = "worker"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "futures-util",
- "rootcause",
- "serde",
- "serde_json",
- "sqlx 0.9.0",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "writeable"

@@ -2,8 +2,8 @@ use crate::{AppCtx, Blob, HttpClient, TokenBundle, TokenHelper, TokenRealm};
 use db::PgPool;
 use event_bus::EventBus;
 use flow::Flow;
+use job_queue::JobBus;
 use kv::KvBackend;
-use worker::JobBus;
 
 /// 构建用于集成测试的 `AppCtx`。
 ///

@@ -8,7 +8,7 @@ name = "server"
 path = "main.rs"
 
 [features]
-default = ["kv-redis", "event-bus-pg", "worker-sqlite", "blob-cos"]
+default = ["kv-redis", "event-bus-pg", "job-queue-sqlite", "blob-cos"]
 # 缓存后端（互斥，开启其一）：
 #   kv-pg  → kv::KvBackend::Pg（PostgreSQL，跨实例共享）
 #   kv-redb  → kv::KvBackend::Redb（嵌入式，单实例）
@@ -29,12 +29,12 @@ event-bus-nats = ["event_bus/nats"]
 blob-cos = ["blob/cos"]
 blob-fs = ["blob/fs"]
 
-worker-sqlite = ["worker/sqlite"]
-worker-pg = ["worker/pg"]
+job-queue-sqlite = ["job_queue/sqlite"]
+job-queue-pg = ["job_queue/pg"]
 
 [dependencies]
 kv = { workspace = true }
-worker = { workspace = true }
+job_queue = { workspace = true }
 db = { workspace = true }
 blob = { workspace = true }
 event_bus = { workspace = true }

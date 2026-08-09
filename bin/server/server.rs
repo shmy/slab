@@ -13,7 +13,7 @@ use crate::gc_jobs::{BusGc, KvGc};
 use crate::modules::MODULES;
 use crate::router::build;
 use crate::shutdown::{ShutdownCoordinator, shutdown_signal};
-use worker::WorkerManager;
+use job_queue::WorkerManager;
 
 pub async fn serve(cli: Cli) -> Result<()> {
     let listener = TcpListener::bind(&cli.server.listen_addr).await?;

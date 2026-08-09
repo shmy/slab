@@ -7,10 +7,10 @@ use blob::CosConfig;
 use blob::FsConfig;
 use db::{DbConfig, PgPool, connect};
 use event_bus::EventBus;
+use job_queue::JobBus;
 use kv::KvBackend;
 use rootcause::Result;
 use secrecy::ExposeSecret;
-use worker::JobBus;
 
 use crate::cli::Cli;
 
@@ -110,13 +110,13 @@ async fn build_job_bus(_cli: &Cli, _pg_pool: PgPool) -> Result<JobBus> {
     //   worker-pg      → worker_jobs 表在业务 PG（生产；显式指定时优先）；
     //   worker-sqlite  → worker_jobs 表在本地 sqlite 文件（单机部署，默认）。
     // 语义见 docs/JOB_QUEUE.md。
-    #[cfg(feature = "worker-pg")]
+    #[cfg(feature = "job-queue-pg")]
     {
         JobBus::try_new_pg(_pg_pool).await
     }
-    #[cfg(all(feature = "worker-sqlite", not(feature = "worker-pg")))]
+    #[cfg(all(feature = "job-queue-sqlite", not(feature = "job-queue-pg")))]
     {
-        use worker::sqlite_helper::new_sqlite_pool;
+        use job_queue::sqlite_helper::new_sqlite_pool;
         let pool = new_sqlite_pool(&_cli.queue.sqlite_path).await?;
         JobBus::try_new_sqlite(pool).await
     }

@@ -9,10 +9,10 @@ pub use db::PgPool;
 pub use event_bus::EventBus;
 pub use flow::Flow;
 pub use http_client::HttpClient;
+pub use job_queue::JobBus;
 pub use jwt::{TokenBundle, TokenHelper, TokenRealm};
 pub use kv::KvBackend;
 use tracing::info;
-pub use worker::JobBus;
 
 #[derive(Clone, FromRef)]
 pub struct AppCtx {
@@ -21,7 +21,7 @@ pub struct AppCtx {
     pub kv: KvBackend,
     /// 事件总线（`event_bus::EventBus`，变体由组装处选择：Pg / Nats）。
     pub bus: EventBus,
-    /// 后台任务队列入队入口（`worker::JobBus`，变体由组装处选择：Pg / Sqlite）。
+    /// 后台任务队列入队入口（`job_queue::JobBus`，变体由组装处选择：Pg / Sqlite）。
     pub jobs: JobBus,
     pub token_bundle: TokenBundle,
     pub http_client: HttpClient,

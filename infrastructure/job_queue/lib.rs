@@ -764,11 +764,11 @@ mod tests {
             .unwrap();
         let id = latest_id(&bus, EchoJob::NAME).await.unwrap();
 
-        // 到期前（200ms）不得消费
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // 入队后立即断言未被消费（确定性：run_at 在 DB 视角仍为未来，轮询不会拉取）
+        assert_eq!(fetch_row(&bus, id).await.unwrap().status, "Pending");
         assert_eq!(ctx.calls.load(Ordering::SeqCst), 0);
 
-        // 到期后应被消费
+        // 到期后应被消费（DB 时钟自洽：轮询等待 run_at <= now()）
         assert!(wait_status(&bus, id, "Done", Duration::from_secs(5)).await);
         assert_eq!(ctx.calls.load(Ordering::SeqCst), 1);
         handle.abort();
