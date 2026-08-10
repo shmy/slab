@@ -13,6 +13,10 @@ use rootcause::Result;
 use serde_json::Value;
 use std::time::Duration;
 
+/// 终态行清理的每批删除上限：分批循环删除，避免单事务大 DELETE 长时间锁表 / WAL 膨胀
+/// （见各后端 `delete_finished_older_than`）。
+pub(crate) const GC_BATCH: i64 = 1000;
+
 /// 一次拉取到的待执行任务（与方言无关的归一化视图）。
 pub(crate) struct FetchJob {
     pub payload: Value,
@@ -160,18 +164,35 @@ pub(crate) mod pg {
     }
 
     /// 清理超过保留期的终态行（Done / Failed），供统计保留期管理（`JobGc`）。
+    ///
+    /// 分批循环删除（每批 [`GC_BATCH`] 行）：行数大时避免单事务大 DELETE
+    /// 长时间锁表 / WAL 膨胀，也便于 gc_idx 逐批走索引。
     pub(crate) async fn delete_finished_older_than(
         pool: &PgPool,
         retention_days: i64,
     ) -> Result<u64> {
-        let result = sqlx::query(
-            "DELETE FROM worker_jobs
-              WHERE status IN ('Done', 'Failed') AND done_at < now() - make_interval(days => $1::int)",
-        )
-        .bind(retention_days)
-        .execute(pool)
-        .await?;
-        Ok(result.rows_affected() as u64)
+        let mut deleted = 0u64;
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM worker_jobs
+                  WHERE id IN (
+                      SELECT id FROM worker_jobs
+                       WHERE status IN ('Done', 'Failed')
+                         AND done_at < now() - make_interval(days => $1::int)
+                       LIMIT $2
+                  )",
+            )
+            .bind(retention_days)
+            .bind(GC_BATCH)
+            .execute(pool)
+            .await?;
+            let batch = result.rows_affected() as u64;
+            deleted += batch;
+            if batch < GC_BATCH as u64 {
+                break;
+            }
+        }
+        Ok(deleted)
     }
 }
 
@@ -353,18 +374,35 @@ pub(crate) mod sqlite {
     }
 
     /// 清理超过保留期的终态行（Done / Failed），供统计保留期管理（`JobGc`）。
+    ///
+    /// 分批循环删除（每批 [`GC_BATCH`] 行）：与 pg 同语义，避免单事务大 DELETE
+    /// 长时间持有写锁（sqlite 单写者模型下阻塞其他写入）。
     pub(crate) async fn delete_finished_older_than(
         pool: &SqlitePool,
         retention_days: i64,
     ) -> Result<u64> {
         let cutoff = now_millis() - retention_days * 86_400_000;
-        let result = sqlx::query(
-            "DELETE FROM worker_jobs
-              WHERE status IN ('Done', 'Failed') AND done_at < ?",
-        )
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
-        Ok(result.rows_affected() as u64)
+        let mut deleted = 0u64;
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM worker_jobs
+                  WHERE id IN (
+                      SELECT id FROM worker_jobs
+                       WHERE status IN ('Done', 'Failed')
+                         AND done_at < ?
+                       LIMIT ?
+                  )",
+            )
+            .bind(cutoff)
+            .bind(GC_BATCH)
+            .execute(pool)
+            .await?;
+            let batch = result.rows_affected() as u64;
+            deleted += batch;
+            if batch < GC_BATCH as u64 {
+                break;
+            }
+        }
+        Ok(deleted)
     }
 }

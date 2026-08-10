@@ -180,6 +180,7 @@ impl JobBus {
     ///
     /// 供统计保留期管理：`worker_jobs` 表同时是执行审计台账（落库即统计），
     /// 终态行按 `DEFAULT_JOB_RETENTION_DAYS` 保留，超期由周期任务 `JobGc` 删除。
+    /// 后端实现为分批循环删除（每批 `GC_BATCH` 行），大表下不长时间锁表。
     pub async fn delete_finished_older_than(&self, retention_days: i64) -> Result<u64> {
         match self {
             #[cfg(feature = "pg")]
@@ -998,6 +999,39 @@ mod tests {
         assert_eq!(fetch_row(&bus, pending_id).await.unwrap().status, "Pending");
     }
 
+    // ---- 场景 5d：终态行超过单批上限时分批删净（大 DELETE 不长时间锁表） ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn finished_rows_deleted_in_batches(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool.clone()).await.unwrap();
+
+        // 直插 GC_BATCH + 1 行 Done（保留期 0 天即应全删，跨两批循环）
+        sqlx::query(
+            "INSERT INTO worker_jobs (job_type, payload, status, done_at)
+             SELECT 'echo_job', '{\"n\": 1}'::jsonb, 'Done', now() - interval '1 day'
+               FROM generate_series(1, $1)",
+        )
+        .bind(crate::backend::GC_BATCH + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted = bus.delete_finished_older_than(0).await.unwrap();
+        assert_eq!(
+            deleted,
+            crate::backend::GC_BATCH as u64 + 1,
+            "分批循环应删净全部终态行"
+        );
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM worker_jobs WHERE status IN ('Done', 'Failed')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0, "终态行应全部删除");
+    }
+
     // ---- 场景 6：同名冲突注册立即 panic（fail fast） ----
 
     #[test]
@@ -1069,6 +1103,46 @@ mod tests {
         assert_eq!(deleted, 1, "只删 Done 终态行，Pending 保留");
         assert!(fetch_row(&bus, done_id).await.is_err(), "Done 行应已被删除");
         assert_eq!(fetch_row(&bus, pending_id).await.unwrap().status, "Pending");
+    }
+
+    // ---- 场景 5e：sqlite 跨批删净（与 pg 同语义） ----
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn sqlite_finished_rows_deleted_in_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker.db");
+        let pool = crate::sqlite_helper::new_sqlite_pool(path.to_str().unwrap())
+            .await
+            .unwrap();
+        let bus = JobBus::try_new_sqlite(pool.clone()).await.unwrap();
+
+        // 直插 GC_BATCH + 1 行 Done（done_at 昨天，保留期 0 天即应全删，跨两批循环）
+        let cutoff = (Utc::now() - chrono::Duration::days(1)).timestamp_millis();
+        sqlx::query(
+            "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < ?)
+             INSERT INTO worker_jobs (job_type, payload, status, done_at)
+             SELECT 'echo_job', '{}', 'Done', ? FROM cnt",
+        )
+        .bind(crate::backend::GC_BATCH + 1)
+        .bind(cutoff)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let deleted = bus.delete_finished_older_than(0).await.unwrap();
+        assert_eq!(
+            deleted,
+            crate::backend::GC_BATCH as u64 + 1,
+            "分批循环应删净全部终态行"
+        );
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM worker_jobs WHERE status IN ('Done', 'Failed')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0, "终态行应全部删除");
     }
 
     // ---- 场景 8：通知驱动——入队即唤醒，不依赖轮询间隔 ----
