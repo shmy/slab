@@ -35,6 +35,7 @@ job-queue-pg = ["job_queue/pg"]
 [dependencies]
 kv = { workspace = true }
 job_queue = { workspace = true }
+serde = { workspace = true }
 db = { workspace = true }
 blob = { workspace = true }
 event_bus = { workspace = true }
@@ -53,7 +54,6 @@ migration = { workspace = true }
 module = { workspace = true }
 mimalloc = { workspace = true }
 rootcause = { workspace = true }
-sched_kit = { workspace = true }
 secrecy = { workspace = true }
 appctx = { workspace = true }
 audit = { workspace = true }

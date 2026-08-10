@@ -17,3 +17,9 @@ rootcause = { workspace = true }
 sched_kit = { workspace = true }
 utoipa-axum = { workspace = true }
 job_queue = { workspace = true }
+
+[dev-dependencies]
+appctx = { workspace = true, features = ["test-utils"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }

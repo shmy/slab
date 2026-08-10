@@ -158,6 +158,21 @@ pub(crate) mod pg {
         .await?;
         Ok(result.rows_affected() as i64)
     }
+
+    /// 清理超过保留期的终态行（Done / Failed），供统计保留期管理（`JobGc`）。
+    pub(crate) async fn delete_finished_older_than(
+        pool: &PgPool,
+        retention_days: i64,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM worker_jobs
+              WHERE status IN ('Done', 'Failed') AND done_at < now() - make_interval(days => $1::int)",
+        )
+        .bind(retention_days)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() as u64)
+    }
 }
 
 #[cfg(feature = "sqlite")]
@@ -335,5 +350,21 @@ pub(crate) mod sqlite {
         .execute(pool)
         .await?;
         Ok(result.rows_affected() as i64)
+    }
+
+    /// 清理超过保留期的终态行（Done / Failed），供统计保留期管理（`JobGc`）。
+    pub(crate) async fn delete_finished_older_than(
+        pool: &SqlitePool,
+        retention_days: i64,
+    ) -> Result<u64> {
+        let cutoff = now_millis() - retention_days * 86_400_000;
+        let result = sqlx::query(
+            "DELETE FROM worker_jobs
+              WHERE status IN ('Done', 'Failed') AND done_at < ?",
+        )
+        .bind(cutoff)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() as u64)
     }
 }

@@ -78,6 +78,10 @@ pub trait Job: Serialize + DeserializeOwned + Send + Sync + 'static {
     const TIMEOUT: Duration = Duration::from_secs(60);
 }
 
+/// 终态（Done / Failed）行的默认保留期（天）。超过后由 `JobGc` 清理，
+/// 防止统计台账无限膨胀（见 [`JobBus::delete_finished_older_than`]）。
+pub const DEFAULT_JOB_RETENTION_DAYS: i64 = 30;
+
 /// 队列后端：`pg`（生产，worker_jobs 表在业务库）/ `sqlite`（单机部署，本地文件）。
 ///
 /// `notify` 是进程内唤醒信号（`tokio::sync::Notify`），入队成功后触发：
@@ -170,6 +174,23 @@ impl JobBus {
             self.notifier().notify_waiters();
         }
         result
+    }
+
+    /// 清理超过保留期的终态行（Done / Failed），返回删除行数。
+    ///
+    /// 供统计保留期管理：`worker_jobs` 表同时是执行审计台账（落库即统计），
+    /// 终态行按 `DEFAULT_JOB_RETENTION_DAYS` 保留，超期由周期任务 `JobGc` 删除。
+    pub async fn delete_finished_older_than(&self, retention_days: i64) -> Result<u64> {
+        match self {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { pool, .. } => {
+                backend::pg::delete_finished_older_than(pool, retention_days).await
+            }
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { pool, .. } => {
+                backend::sqlite::delete_finished_older_than(pool, retention_days).await
+            }
+        }
     }
 }
 
@@ -955,6 +976,28 @@ mod tests {
         handle.abort();
     }
 
+    // ---- 场景 5b：终态行按保留期清理（统计台账不无限膨胀） ----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn finished_rows_deleted_after_retention(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+
+        // Done 行：入队 → 标记完成，保留期 0 天即应被删
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let done_id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        mark_done(&bus, done_id).await.unwrap();
+
+        // Pending 行：未执行，不应被清理
+        bus.enqueue(EchoJob { n: 2 }).await.unwrap();
+        let pending_id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+
+        let deleted = bus.delete_finished_older_than(0).await.unwrap();
+        assert_eq!(deleted, 1, "只删 Done 终态行，Pending 保留");
+        assert!(fetch_row(&bus, done_id).await.is_err(), "Done 行应已被删除");
+        assert_eq!(fetch_row(&bus, pending_id).await.unwrap().status, "Pending");
+    }
+
     // ---- 场景 6：同名冲突注册立即 panic（fail fast） ----
 
     #[test]
@@ -997,6 +1040,35 @@ mod tests {
         assert!(wait_status(&bus, id2, "Done", Duration::from_secs(5)).await);
         assert_eq!(ctx.calls.load(Ordering::SeqCst), 2);
         handle.abort();
+    }
+
+    // ---- 场景 5c：sqlite 保留期清理（与 pg 同语义） ----
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn sqlite_finished_rows_deleted_after_retention() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker.db");
+        let pool = crate::sqlite_helper::new_sqlite_pool(path.to_str().unwrap())
+            .await
+            .unwrap();
+        let bus = JobBus::try_new_sqlite(pool).await.unwrap();
+
+        // Done 行：入队 → 标记完成，保留期 0 天即应被删
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let done_id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+        mark_done(&bus, done_id).await.unwrap();
+        // 推进时钟：sqlite 本地文件操作可能在同毫秒内完成，`done_at < cutoff` 要求时间差 > 0
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        // Pending 行：未执行，不应被清理
+        bus.enqueue(EchoJob { n: 2 }).await.unwrap();
+        let pending_id = latest_id(&bus, EchoJob::NAME).await.unwrap();
+
+        let deleted = bus.delete_finished_older_than(0).await.unwrap();
+        assert_eq!(deleted, 1, "只删 Done 终态行，Pending 保留");
+        assert!(fetch_row(&bus, done_id).await.is_err(), "Done 行应已被删除");
+        assert_eq!(fetch_row(&bus, pending_id).await.unwrap().status, "Pending");
     }
 
     // ---- 场景 8：通知驱动——入队即唤醒，不依赖轮询间隔 ----

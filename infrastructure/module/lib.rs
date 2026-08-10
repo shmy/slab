@@ -1,10 +1,13 @@
 use appctx::AppCtx;
 use event_bus::EventRegistry;
 use futures_util::future::BoxFuture;
-use job_queue::JobRegistry;
+use job_queue::{Job, JobRegistry};
 use rootcause::Result;
 use sched_kit::CronScheduler;
 use utoipa_axum::router::OpenApiRouter;
+
+mod scheduled_job;
+pub use scheduled_job::ScheduledJob;
 
 /// 模块注册上下文：收集各域需要注册的后台任务。
 ///
@@ -25,6 +28,22 @@ impl ModuleRegistrar {
             scheduler: CronScheduler::new(app_state),
             jobs: JobRegistry::default(),
         }
+    }
+
+    /// 注册周期任务：cron 到点 → 入队一个 [`Job`]。
+    ///
+    /// 业务侧只需定义 `Job` + 消费 handler（用 [`Self::jobs`] 注册），再挂一个周期触发：
+    ///
+    /// ```rust,ignore
+    /// r.jobs.register::<SyncSupplierData, _>(|job, ctx| Box::pin(handle(job, ctx)));
+    /// r.scheduled("0 0 3 * * *", SyncSupplierData { tenant_id: 1 });
+    /// ```
+    ///
+    /// 触发是 master-only（同 [`CronScheduler`]），执行由 worker 多进程竞争消费——
+    /// 重试 / 超时 / 终态 / 幂等全部复用 job_queue 语义，见 [`ScheduledJob`]。
+    pub fn scheduled<T: Job + Clone>(&mut self, expr: &'static str, job: T) -> &mut Self {
+        self.scheduler.add(ScheduledJob::new(expr, job));
+        self
     }
 }
 

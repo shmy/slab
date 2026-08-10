@@ -9,7 +9,7 @@ use tokio::sync::watch::Receiver;
 
 use crate::cli::Cli;
 use crate::config::build_app_ctx;
-use crate::gc_jobs::{BusGc, KvGc};
+use crate::gc_jobs::register_gc_tasks;
 use crate::modules::MODULES;
 use crate::router::build;
 use crate::shutdown::{ShutdownCoordinator, shutdown_signal};
@@ -35,8 +35,7 @@ pub async fn serve(cli: Cli) -> Result<()> {
     let shutdown = ShutdownCoordinator::new();
     let registrar = {
         let mut registrar = ModuleRegistrar::new(state.clone());
-        registrar.scheduler.add(KvGc);
-        registrar.scheduler.add(BusGc);
+        register_gc_tasks(&mut registrar);
         for module in MODULES {
             module.register(&mut registrar);
         }

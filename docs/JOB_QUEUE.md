@@ -52,7 +52,7 @@ where F: for<'a> Fn(T, &'a C) -> BoxFuture<'a, Result<()>> + Send + Sync + 'stat
 
 - handler 是纯函数 `async fn(T, &C) -> rootcause::Result<()>`，调用方包一层 `Box::pin`：
   ```rust
-  r.jobs.register::<SyncOrder>(|job, ctx| Box::pin(handle_sync_order(job, ctx)));
+  r.jobs.register::<SyncOrder, _>(|job, ctx| Box::pin(handle_sync_order(job, ctx)));
   ```
 - 上下文泛型（同 `event_bus::Registry<C>` 模式）：crate 不依赖 appctx，由 `module` crate 实例化为 `JobRegistry<AppCtx>`，避免循环依赖；
 - **同名冲突是编程错误**：同一 `Job::NAME` 重复注册立即 panic（fail fast）。
@@ -130,7 +130,7 @@ AppCtx.jobs: JobBus（入队）          ModuleRegistrar.jobs: JobRegistry<AppCt
                worker_jobs 表（pg / sqlite，feature 切换）
 ```
 
-- 域模块在 `DomainModule::register` 里：`r.jobs.register::<T>(|job, ctx| Box::pin(handler(job, ctx)))`；
+- 域模块在 `DomainModule::register` 里：`r.jobs.register::<T, _>(|job, ctx| Box::pin(handler(job, ctx)))`；
 - 业务端点入队：`state.jobs.enqueue(GenerateReport { .. }).await?`；
 - 后端选择（bin/server feature，互斥；双开时 worker-pg 让位，同 blob 惯例）：
   - `worker-pg`（推荐生产）→ 表在业务 PG；
@@ -166,7 +166,9 @@ async fn handle_export_orders(job: ExportOrders, ctx: &appctx::AppCtx) -> rootca
 
 impl DomainModule for Module {
     fn register(&self, r: &mut module::ModuleRegistrar) {
-        r.jobs.register::<ExportOrders>(|job, ctx| Box::pin(handle_export_orders(job, ctx)));
+        r.jobs.register::<ExportOrders, _>(|job, ctx| Box::pin(handle_export_orders(job, ctx)));
+        // 周期任务：cron 到点 → enqueue（触发 master-only，执行归 worker 竞争消费）
+        r.scheduled("0 0 3 * * *", ExportOrders { order_id: 100 });
     }
 }
 ```
@@ -177,6 +179,45 @@ impl DomainModule for Module {
 // features/sales/endpoint/export_orders_create.rs（handler 内）
 state.jobs.enqueue(ExportOrders { order_id }).await?;                                     // 立即
 state.jobs.enqueue_after(ExportOrders { order_id }, Duration::from_secs(3600)).await?;    // 1 小时后
+```
+
+### 周期任务（与 sched_kit 组合）
+
+`job_queue` 本身只做一次性任务；**周期触发**由 `sched_kit`（cron）承担，`module` crate 提供
+`ModuleRegistrar::scheduled(expr, job)` 桥接（实现见 `infrastructure/module/scheduled_job.rs`）：
+
+- cron tick → `enqueue(job.clone())`，重试 / 超时 / 终态 / 幂等全部复用本 crate 语义，业务侧不多写一行；
+- 触发是 master-only（`server_master`），执行由 worker 多进程竞争消费——多进程部署不重复执行；
+- 每次 tick 都入队一个新实例，上一轮未消费完会排队堆积；需要“上一轮未完成则跳过”时在
+  handler 内用幂等守卫 / KV 标记自行控制；
+- `expr` 在调度器 `start` 时校验，非法表达式使 server 启动失败（fail fast）。
+
+**内务任务（系统 GC）也走此通道**：`KvGc` / `BusGc` / `JobGc`（`bin/server/gc_jobs.rs`）全部
+落库为 Job——`worker_jobs` 表即执行统计台账。内务语义通过 `RETRIES = 0` 保留：失败不重试
+（下个周期再跑，时间驱动语义不变），但终态 `Failed` + `last_error` 留痕可统计失败率。
+
+### 统计（落库即台账）
+
+终态行（Done / Failed）保留 `DEFAULT_JOB_RETENTION_DAYS`（30 天），由周期任务 `JobGc`
+（`ctx.jobs.delete_finished_older_than`）每天清理，统计表不无限膨胀。常用 SQL：
+
+```sql
+-- 各任务执行次数 / 成功 / 失败（保留期内）
+SELECT job_type, status, count(*)
+FROM worker_jobs WHERE status IN ('Done', 'Failed')
+GROUP BY job_type, status;
+
+-- 失败率与最近失败原因
+SELECT job_type,
+       count(*) FILTER (WHERE status = 'Failed')::float / count(*) AS failure_rate,
+       max(done_at) AS last_run
+FROM worker_jobs WHERE status IN ('Done', 'Failed')
+GROUP BY job_type;
+
+-- 执行耗时（最近 50 次，done_at - lock_at）
+SELECT id, done_at - lock_at AS duration, status, last_error
+FROM worker_jobs WHERE job_type = 'kv_gc'
+ORDER BY done_at DESC LIMIT 50;
 ```
 
 > 延迟投递适合分钟级起步的短等待；跨小时/天的长等待仍建议交给 `flow` 的持久化 delay（重启不丢）。

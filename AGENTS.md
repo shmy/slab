@@ -97,8 +97,10 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 ├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + publish
 ├── 加流程 → infrastructure/flow 定义 `#[task]` + `workflow!`，AppCtx.flow.run/resume（见 [docs/FLOW.md](docs/FLOW.md)）
 ├── 加 Job → 域内定义 `Job` trait 实现（payload 即类型）+ handler `async fn(T, &AppCtx)`，
-│   在 `DomainModule::register` 里 `r.jobs.register::<T>(|job, ctx| Box::pin(handler(job, ctx)))`，
+│   在 `DomainModule::register` 里 `r.jobs.register::<T, _>(|job, ctx| Box::pin(handler(job, ctx)))`，
 │   端点入队 `state.jobs.enqueue(T { .. }).await?`（见 [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md)）
+├── 加周期任务 → 同加 Job 定义 `Job` + handler，再在 `register` 里一行 `r.scheduled("0 0 3 * * *", T { .. })`
+│   （cron 到点 enqueue，执行语义归 job_queue；触发 master-only，执行多进程竞争）
 ├── 改 DB → infrastructure/migration/versions/ 新 .sql
 ```
 
