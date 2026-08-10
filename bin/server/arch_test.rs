@@ -276,8 +276,82 @@ mod arch_test {
                     assert!(
                         AUDIT_TODO.contains(&stem),
                         "write endpoint `{stem}` does not wire `AuditService` and is not in \
-                         AUDIT_TODO — wire change history (AuditService::record_*) or add it to \
+                         AUDIT_TODO - wire change history (AuditService::record_*) or add it to \
                          the whitelist"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 检测行中是否存在 `status != <数字>` 或 `status == <数字>` 模式。
+    /// 枚举常量（字母开头）不匹配；SQL 单等号 `status = $1` 不在检测范围。
+    fn status_compares_with_magic_number(line: &str) -> bool {
+        for op in ["!=", "=="] {
+            let needle = format!("status {op} ");
+            if let Some(pos) = line.find(&needle) {
+                let rest = line[pos + needle.len()..].trim_start();
+                if rest.starts_with('-') || rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 端点不得用裸数字比较 status 字段（必须用领域状态枚举常量）。
+    ///
+    /// 启发式：扫描 `endpoint/*.rs` 业务代码行（排除注释与 `assert_eq!`/`assert_ne!` 测试断言），
+    /// 检测 `<...>.status != <数字>` / `<...>.status == <数字>` 模式。
+    /// 枚举常量比较（`status != PurchaseOrderStatus::Approved as i16`）以字母开头，不误报。
+    /// SQL 的 `status = $1`（单等号）不在检测范围。
+    #[test]
+    fn endpoints_should_not_compare_status_with_magic_number() {
+        // 欠账白名单：尚未枚举化的域（P0-2/3/4 待处理），完成后从列表移除。
+        const STATUS_TODO: &[&str] = &[
+            "sales_delivery_create",
+            "inspection_order_complete",
+            "bom_release",
+            "work_order_release",
+        ];
+        let features_dir = workspace_root().join("features");
+        for entry in std::fs::read_dir(&features_dir).unwrap() {
+            let entry = entry.unwrap();
+            let domain = entry.file_name().to_string_lossy().to_string();
+            if !entry.file_type().unwrap().is_dir() || domain.ends_with("_contract") {
+                continue;
+            }
+            let endpoint_dir = features_dir.join(&domain).join("endpoint");
+            if !endpoint_dir.exists() {
+                continue;
+            }
+            for file in std::fs::read_dir(&endpoint_dir).unwrap() {
+                let file = file.unwrap();
+                let stem = file
+                    .file_name()
+                    .to_string_lossy()
+                    .trim_end_matches(".rs")
+                    .to_string();
+                if STATUS_TODO.contains(&stem.as_str()) {
+                    continue;
+                }
+                let path = file.path();
+                let content = std::fs::read_to_string(&path).unwrap();
+                for (lineno, line) in content.lines().enumerate() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("//")
+                        || trimmed.contains("assert_eq!")
+                        || trimmed.contains("assert_ne!")
+                    {
+                        continue;
+                    }
+                    assert!(
+                        !status_compares_with_magic_number(line),
+                        "magic-number status comparison in {}:{lineno}: {line:?} — \
+                         use a domain status enum constant (e.g. \
+                         `PurchaseOrderStatus::Approved as i16`) instead of a bare integer",
+                        path.display()
                     );
                 }
             }

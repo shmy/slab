@@ -91,6 +91,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseOrderStatus;
 
     #[sqlx::test]
     async fn test_reject_pending_success(pool: sqlx::PgPool) {
@@ -115,7 +116,7 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(row.status, 4);
+        assert_eq!(row.status, PurchaseOrderStatus::Rejected as i16);
         assert!(row.rejected_at.is_some());
 
         // 变更历史：update 类型，before/after 快照状态分别为 1 → 4
@@ -129,8 +130,8 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 4);
+        assert_eq!(before["status"], PurchaseOrderStatus::Submitted as i16);
+        assert_eq!(after["status"], PurchaseOrderStatus::Rejected as i16);
     }
 
     #[sqlx::test]

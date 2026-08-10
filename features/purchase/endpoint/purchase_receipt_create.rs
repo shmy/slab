@@ -7,6 +7,7 @@ use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use purchase_contract::entity::PurchaseReceipt;
 use purchase_contract::error::PurchaseError;
+use purchase_contract::value_object::PurchaseOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -77,7 +78,7 @@ async fn execute(
     .await?
     .ok_or(PurchaseError::NotFound)?;
 
-    if order.status != 3 {
+    if order.status != PurchaseOrderStatus::Approved as i16 {
         return Err(PurchaseError::OrderNotApproved.into());
     }
 

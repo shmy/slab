@@ -6,7 +6,7 @@ pub struct PurchaseOrder {
     pub id: ID,
     pub code: String,
     pub supplier_id: ID,
-    pub status: i16, // ApprovalStatus
+    pub status: i16, // PurchaseOrderStatus（审批流状态）
     pub order_date: chrono::NaiveDate,
     pub expected_delivery_date: Option<chrono::NaiveDate>,
     pub currency: String,
@@ -41,7 +41,7 @@ pub struct PurchaseReceipt {
     pub order_id: ID,
     pub supplier_id: ID,
     pub receipt_date: chrono::NaiveDate,
-    pub status: i16,
+    pub status: i16, // TODO(P0): 待枚举化（生命周期状态，语义待定）
     pub remark: Option<String>,
 }
 
@@ -66,7 +66,7 @@ pub struct PurchaseReturn {
     pub order_id: ID,
     pub supplier_id: ID,
     pub return_date: chrono::NaiveDate,
-    pub status: i16,
+    pub status: i16, // PurchaseReturnStatus（审批流状态）
     pub reason: Option<String>,
     pub remark: Option<String>,
 }
@@ -94,6 +94,6 @@ pub struct PurchaseInvoice {
     pub amount: i64,
     pub tax_amount: i64,
     pub total_amount: i64,
-    pub status: i16,
+    pub status: i16, // TODO(P0): 待枚举化
     pub remark: Option<String>,
 }

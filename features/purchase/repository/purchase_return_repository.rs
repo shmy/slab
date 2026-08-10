@@ -58,6 +58,7 @@ mod tests {
     use super::*;
     use crate::tests::insert_test_purchase_order;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseReturnStatus;
     use sqlx::Acquire;
 
     async fn seed_return(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
@@ -101,7 +102,7 @@ mod tests {
             .fetch_one(&mut *pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 1);
+        assert_eq!(status, PurchaseReturnStatus::Submitted as i16);
     }
 
     #[sqlx::test]
@@ -128,7 +129,7 @@ mod tests {
             .await
             .unwrap();
         txn.commit().await.unwrap();
-        assert_eq!(new_status, 3);
+        assert_eq!(new_status, PurchaseReturnStatus::Approved as i16);
 
         let row = sqlx::query!(
             "SELECT status, approved_at FROM purchase_returns WHERE id = $1",
@@ -137,7 +138,7 @@ mod tests {
         .fetch_one(&mut *pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 3);
+        assert_eq!(row.status, PurchaseReturnStatus::Approved as i16);
         assert!(row.approved_at.is_some());
     }
 

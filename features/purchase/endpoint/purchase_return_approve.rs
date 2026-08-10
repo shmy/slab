@@ -159,6 +159,7 @@ mod tests {
     use super::*;
     use appctx::testing;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseReturnStatus;
     use shared_contract::value_object::id::ID;
 
     #[sqlx::test]
@@ -206,7 +207,7 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 3);
+        assert_eq!(before["status"], PurchaseReturnStatus::Submitted as i16);
+        assert_eq!(after["status"], PurchaseReturnStatus::Approved as i16);
     }
 }

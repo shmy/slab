@@ -95,6 +95,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseOrderStatus;
 
     #[sqlx::test]
     async fn test_approve_pending_success(pool: sqlx::PgPool) {
@@ -110,7 +111,7 @@ mod tests {
         .await
         .unwrap();
         assert!(resp.approved);
-        assert_eq!(resp.status, 2);
+        assert_eq!(resp.status, PurchaseOrderStatus::PendingSupervisor as i16);
 
         let mut conn = state.pg_pool.acquire().await.unwrap();
         let row = sqlx::query!(
@@ -120,7 +121,7 @@ mod tests {
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-        assert_eq!(row.status, 2);
+        assert_eq!(row.status, PurchaseOrderStatus::PendingSupervisor as i16);
         assert!(row.approved_at.is_some());
 
         // 变更历史：update 类型，before/after 快照状态分别为 1 → 2
@@ -134,8 +135,11 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 2);
+        assert_eq!(before["status"], PurchaseOrderStatus::Submitted as i16);
+        assert_eq!(
+            after["status"],
+            PurchaseOrderStatus::PendingSupervisor as i16
+        );
     }
 
     #[sqlx::test]

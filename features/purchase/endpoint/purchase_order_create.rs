@@ -130,6 +130,7 @@ mod tests {
     use super::*;
     use appctx::testing;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseOrderStatus;
     use shared_contract::value_object::id::ID;
 
     #[sqlx::test]
@@ -187,7 +188,7 @@ mod tests {
         assert_eq!(audit_row.action, 1); // Created
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(after["status"], 0);
+        assert_eq!(after["status"], PurchaseOrderStatus::Draft as i16);
         assert_eq!(after["total_amount"], 1000);
     }
 }

@@ -5,6 +5,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use purchase_contract::entity::PurchaseOrder;
 use purchase_contract::error::PurchaseError;
+use purchase_contract::value_object::PurchaseOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -65,12 +66,13 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(PurchaseError::NotFound)?;
-    if before.status != 0 {
+    if before.status != PurchaseOrderStatus::Draft as i16 {
         return Err(PurchaseError::NotDraft.into());
     }
 
     // 软删除
-    PurchaseOrderRepository::update_status(&mut txn, &path.id, -1).await?;
+    PurchaseOrderRepository::update_status(&mut txn, &path.id, PurchaseOrderStatus::Deleted as i16)
+        .await?;
     AuditService::record_deleted(&mut txn, "purchase_order", &path.id, &ctx, &before).await?;
 
     txn.commit().await?;
@@ -104,7 +106,7 @@ mod tests {
             .fetch_one(&mut *conn)
             .await
             .unwrap();
-        assert_eq!(status, -1);
+        assert_eq!(status, PurchaseOrderStatus::Deleted as i16);
 
         // 变更历史：delete 类型，after 为空，快照为删除前状态
         let audit_row = sqlx::query!(
@@ -116,7 +118,7 @@ mod tests {
         .unwrap();
         assert_eq!(audit_row.action, 3); // Deleted
         let before: serde_json::Value = audit_row.before.unwrap();
-        assert_eq!(before["status"], 0);
+        assert_eq!(before["status"], PurchaseOrderStatus::Draft as i16);
         assert!(audit_row.after.is_none());
     }
 

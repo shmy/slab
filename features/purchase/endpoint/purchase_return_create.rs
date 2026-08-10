@@ -128,6 +128,7 @@ mod tests {
     use super::*;
     use appctx::testing;
     use migration::run_migrations;
+    use purchase_contract::value_object::PurchaseReturnStatus;
 
     #[sqlx::test]
     async fn test_create_success(pool: sqlx::PgPool) {
@@ -162,6 +163,6 @@ mod tests {
         assert_eq!(audit_row.action, 1); // Created
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(after["status"], 0);
+        assert_eq!(after["status"], PurchaseReturnStatus::Draft as i16);
     }
 }
