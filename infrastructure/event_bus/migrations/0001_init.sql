@@ -1,9 +1,4 @@
--- 事件总线表（v1）：_pg_events / _pg_event_deliveries + 索引 + 触发器。
--- 由 PgBackend::try_new 启动时执行（版本表 _event_bus_migrations 记录）。
--- 全部保留幂等写法（IF NOT EXISTS / OR REPLACE / DO 块）：兼容迁移系统引入前
--- 已由旧版"启动自建"建好的表，首跑即标记 v1 已应用；此后表结构演进走 v2+ ALTER。
-
-CREATE OR REPLACE FUNCTION fn_set_updated_at()
+CREATE FUNCTION fn_event_bus_set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = CURRENT_TIMESTAMP;
@@ -11,7 +6,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TABLE IF NOT EXISTS _pg_events (
+CREATE TABLE _pg_events (
     id BIGSERIAL PRIMARY KEY,
     topic VARCHAR(255) NOT NULL,
     payload TEXT NOT NULL,
@@ -26,20 +21,19 @@ CREATE TABLE IF NOT EXISTS _pg_events (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_pg_events_pending
+CREATE INDEX idx_pg_events_pending
     ON _pg_events (next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts;
-CREATE INDEX IF NOT EXISTS idx_pg_events_topic_pending
+CREATE INDEX idx_pg_events_topic_pending
     ON _pg_events (topic, next_attempt_at, id) WHERE status = 1 AND attempts < max_attempts;
 
--- CREATE TRIGGER 无 IF NOT EXISTS：DO 块内查 pg_trigger 幂等。
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_events') THEN
+DO $$ BEGIN IF NOT EXISTS
+ (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_events') THEN
         CREATE TRIGGER set_updated_at_events BEFORE UPDATE ON _pg_events
-        FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
+        FOR EACH ROW EXECUTE PROCEDURE fn_event_bus_set_updated_at();
     END IF;
 END $$;
 
-CREATE TABLE IF NOT EXISTS _pg_event_deliveries (
+CREATE TABLE _pg_event_deliveries (
     event_id      BIGINT NOT NULL REFERENCES _pg_events(id) ON DELETE CASCADE,
     handler         TEXT NOT NULL,
     -- 1=pending, 2=delivered, 3=failed
@@ -54,14 +48,14 @@ CREATE TABLE IF NOT EXISTS _pg_event_deliveries (
     PRIMARY KEY (event_id, handler)
 );
 
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_event_deliveries') THEN
+DO $$ BEGIN IF NOT EXISTS
+ (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_event_deliveries') THEN
         CREATE TRIGGER set_updated_at_event_deliveries BEFORE UPDATE ON _pg_event_deliveries
-        FOR EACH ROW EXECUTE PROCEDURE fn_set_updated_at();
+        FOR EACH ROW EXECUTE PROCEDURE fn_event_bus_set_updated_at();
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_event_deliveries_pending
+CREATE INDEX idx_event_deliveries_pending
     ON _pg_event_deliveries (next_attempt_at, event_id) WHERE status = 1 AND attempts < max_attempts;
-CREATE INDEX IF NOT EXISTS idx_event_deliveries_delivered
+CREATE INDEX idx_event_deliveries_delivered
     ON _pg_event_deliveries (delivered_at) WHERE status = 2 AND delivered_at IS NOT NULL;
