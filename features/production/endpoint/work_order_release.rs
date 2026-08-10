@@ -4,6 +4,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use production_contract::entity::WorkOrder;
 use production_contract::error::ProductionError;
+use production_contract::value_object::WorkOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use utoipa::{IntoParams, ToSchema};
@@ -67,12 +68,16 @@ async fn execute(
     .fetch_optional(&mut *conn)
     .await?
     .ok_or(ProductionError::NotFound)?;
-    if before.status != 0 {
+    if before.status != WorkOrderStatus::Draft as i16 {
         return Err(ProductionError::InvalidStatus.into());
     }
-    sqlx::query!("UPDATE work_orders SET status = 1 WHERE id = $1", &*path.id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "UPDATE work_orders SET status = $1 WHERE id = $2",
+        WorkOrderStatus::Released as i16,
+        &*path.id
+    )
+    .execute(&mut *conn)
+    .await?;
 
     // 变更历史：写后重读全行作为 after（同一连接，提交后即见自身写入）
     let after = sqlx::query_as!(
@@ -105,6 +110,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use production_contract::value_object::WorkOrderStatus;
 
     async fn seed_work_order(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
         let item_id = tests::insert_test_item(pool, &format!("I-{code}")).await;
@@ -129,7 +135,7 @@ mod tests {
     async fn test_release_draft_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        let id = seed_work_order(&state.pg_pool, "MO-RLS-1", 0).await;
+        let id = seed_work_order(&state.pg_pool, "MO-RLS-1", WorkOrderStatus::Draft as i16).await;
 
         let resp = execute(
             &state.pg_pool,
@@ -153,15 +159,16 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 0);
-        assert_eq!(after["status"], 1);
+        assert_eq!(before["status"], WorkOrderStatus::Draft as i16);
+        assert_eq!(after["status"], WorkOrderStatus::Released as i16);
     }
 
     #[sqlx::test]
     async fn test_release_not_draft_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        let id = seed_work_order(&state.pg_pool, "MO-RLS-2", 1).await;
+        let id =
+            seed_work_order(&state.pg_pool, "MO-RLS-2", WorkOrderStatus::Released as i16).await;
 
         let err = execute(
             &state.pg_pool,

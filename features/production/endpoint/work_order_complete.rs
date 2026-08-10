@@ -6,6 +6,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use production_contract::entity::WorkOrder;
 use production_contract::error::ProductionError;
+use production_contract::value_object::WorkOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -73,13 +74,19 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(ProductionError::NotFound)?;
-    if before.status < 1 || before.status >= 3 {
+    if before.status < WorkOrderStatus::Released as i16
+        || before.status >= WorkOrderStatus::Completed as i16
+    {
         return Err(ProductionError::InvalidStatus.into());
     }
 
-    sqlx::query!("UPDATE work_orders SET status = 3 WHERE id = $1", &*path.id)
-        .execute(&mut *txn)
-        .await?;
+    sqlx::query!(
+        "UPDATE work_orders SET status = $1 WHERE id = $2",
+        WorkOrderStatus::Completed as i16,
+        &*path.id
+    )
+    .execute(&mut *txn)
+    .await?;
 
     // 变更历史：写后重读全行作为 after（同事务，可见自身未提交写入）
     let after = sqlx::query_as!(
@@ -113,6 +120,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use production_contract::value_object::WorkOrderStatus;
 
     async fn seed_work_order(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
         let item_id = tests::insert_test_item(pool, &format!("I-{code}")).await;
@@ -137,7 +145,8 @@ mod tests {
     async fn test_complete_released_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        let id = seed_work_order(&state.pg_pool, "MO-CMP-1", 1).await;
+        let id =
+            seed_work_order(&state.pg_pool, "MO-CMP-1", WorkOrderStatus::Released as i16).await;
 
         let resp = execute(
             &state.pg_pool,
@@ -152,7 +161,7 @@ mod tests {
             .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 3);
+        assert_eq!(status, WorkOrderStatus::Completed as i16);
 
         // 变更历史：update 类型，status 1 → 3
         let mut conn = state.pg_pool.acquire().await.unwrap();
@@ -167,15 +176,15 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 3);
+        assert_eq!(before["status"], WorkOrderStatus::Released as i16);
+        assert_eq!(after["status"], WorkOrderStatus::Completed as i16);
     }
 
     #[sqlx::test]
     async fn test_complete_draft_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        let id = seed_work_order(&state.pg_pool, "MO-CMP-2", 0).await;
+        let id = seed_work_order(&state.pg_pool, "MO-CMP-2", WorkOrderStatus::Draft as i16).await;
 
         let err = execute(
             &state.pg_pool,
@@ -190,7 +199,7 @@ mod tests {
             .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 0);
+        assert_eq!(status, WorkOrderStatus::Draft as i16);
 
         // 状态机拒绝，不产生变更历史
         let count =
@@ -205,7 +214,12 @@ mod tests {
     async fn test_complete_already_completed_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
         let state = testing::build(pool).await;
-        let id = seed_work_order(&state.pg_pool, "MO-CMP-3", 3).await;
+        let id = seed_work_order(
+            &state.pg_pool,
+            "MO-CMP-3",
+            WorkOrderStatus::Completed as i16,
+        )
+        .await;
 
         let err = execute(
             &state.pg_pool,

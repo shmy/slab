@@ -9,7 +9,7 @@ pub struct WorkOrder {
     pub planned_qty: i64,
     pub completed_qty: i64,
     pub scrap_qty: i64,
-    pub status: i16,
+    pub status: i16, // WorkOrderStatus（生命周期状态）
     pub due_date: Option<chrono::NaiveDate>,
     pub remark: Option<String>,
 }
@@ -33,7 +33,7 @@ pub struct WorkOrderOperation {
     pub planned_qty: i64,
     pub completed_qty: i64,
     pub scrap_qty: i64,
-    pub status: i16,
+    pub status: i16, // TODO(P0): 待枚举化（工序状态 0=pending 1=in_progress 2=completed）
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow, utoipa::ToSchema)]

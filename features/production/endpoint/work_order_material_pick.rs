@@ -157,6 +157,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use production_contract::value_object::WorkOrderStatus;
 
     #[sqlx::test]
     async fn test_pick_success(pool: sqlx::PgPool) {
@@ -240,8 +241,8 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 1);
+        assert_eq!(before["status"], WorkOrderStatus::Released as i16);
+        assert_eq!(after["status"], WorkOrderStatus::Released as i16);
     }
 
     #[sqlx::test]

@@ -313,7 +313,6 @@ mod arch_test {
             "sales_delivery_create",
             "inspection_order_complete",
             "bom_release",
-            "work_order_release",
         ];
         let features_dir = workspace_root().join("features");
         for entry in std::fs::read_dir(&features_dir).unwrap() {

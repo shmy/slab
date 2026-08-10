@@ -128,6 +128,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use production_contract::value_object::WorkOrderStatus;
 
     #[sqlx::test]
     async fn test_create_success(pool: sqlx::PgPool) {
@@ -169,7 +170,7 @@ mod tests {
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
         assert_eq!(after["code"].as_str(), Some(response.code.as_str()));
-        assert_eq!(after["status"], 0);
+        assert_eq!(after["status"], WorkOrderStatus::Draft as i16);
         assert_eq!(after["planned_qty"], 10);
     }
 }
