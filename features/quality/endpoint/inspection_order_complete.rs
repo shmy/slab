@@ -4,6 +4,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use quality_contract::entity::InspectionOrder;
 use quality_contract::error::QualityError;
+use quality_contract::value_object::{InspectionOrderStatus, Verdict};
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -80,13 +81,20 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(QualityError::InspectionNotFound)?;
-    if before.status == 10 {
+    if before.status == InspectionOrderStatus::Inspected as i16 {
         return Err(QualityError::InvalidStatus.into());
     }
 
     // 判定整体检验结论：任一项 fail → 不通过
-    let any_fail = request.results.iter().any(|r| r.result == 2);
-    let overall = if any_fail { 2i16 } else { 1i16 };
+    let any_fail = request
+        .results
+        .iter()
+        .any(|r| r.result == Verdict::Fail as i16);
+    let overall = if any_fail {
+        Verdict::Fail as i16
+    } else {
+        Verdict::Pass as i16
+    };
 
     // 逐项写入检验结论明细
     for r in &request.results {
@@ -107,8 +115,9 @@ async fn execute(
 
     // 更新检验单状态
     sqlx::query!(
-        r#"UPDATE inspection_orders SET result = $1, status = 10, inspected_at = NOW() WHERE id = $2"#,
+        r#"UPDATE inspection_orders SET result = $1, status = $2, inspected_at = NOW() WHERE id = $3"#,
         overall,
+        InspectionOrderStatus::Inspected as i16,
         &*path.id,
     )
     .execute(&mut *txn)
@@ -144,6 +153,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use quality_contract::value_object::{InspectionOrderStatus, Verdict};
 
     async fn seed_order(state: &appctx::AppCtx, code: &str) -> (ID, ID) {
         let template_id = tests::insert_test_template(&state.pg_pool, "TPL-CMP-1").await;
@@ -184,7 +194,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(resp.result, 1);
+        assert_eq!(resp.result, Verdict::Pass as i16);
 
         let row = sqlx::query!(
             "SELECT result, status FROM inspection_orders WHERE id = $1",
@@ -193,8 +203,8 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.result.unwrap_or(0), 1);
-        assert_eq!(row.status, 10);
+        assert_eq!(row.result.unwrap_or(0), Verdict::Pass as i16);
+        assert_eq!(row.status, InspectionOrderStatus::Inspected as i16);
 
         // 变更历史：updated 类型，before=待检(0)，after=已完成(10)
         let audit_row = sqlx::query!(
@@ -207,9 +217,9 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 0);
-        assert_eq!(after["status"], 10);
-        assert_eq!(after["result"], 1);
+        assert_eq!(before["status"], InspectionOrderStatus::Pending as i16);
+        assert_eq!(after["status"], InspectionOrderStatus::Inspected as i16);
+        assert_eq!(after["result"], Verdict::Pass as i16);
     }
 
     #[sqlx::test]
@@ -234,7 +244,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(resp.result, 2);
+        assert_eq!(resp.result, Verdict::Fail as i16);
 
         let row = sqlx::query!(
             "SELECT result FROM inspection_orders WHERE id = $1",
@@ -243,7 +253,7 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.result.unwrap_or(0), 2);
+        assert_eq!(row.result.unwrap_or(0), Verdict::Fail as i16);
     }
 
     #[sqlx::test]
@@ -254,7 +264,8 @@ mod tests {
 
         // 模拟已完成的检验单
         sqlx::query!(
-            "UPDATE inspection_orders SET status = 10 WHERE id = $1",
+            "UPDATE inspection_orders SET status = $1 WHERE id = $2",
+            InspectionOrderStatus::Inspected as i16,
             &*order_id
         )
         .execute(&mut *state.pg_pool.acquire().await.unwrap())

@@ -75,6 +75,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use quality_contract::value_object::InspectionOrderStatus;
 
     #[sqlx::test]
     async fn test_inspection_order_get_success(pool: sqlx::PgPool) {
@@ -90,7 +91,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(detail.order.code, "IQ-GO-1");
-        assert_eq!(detail.order.status, 0);
+        assert_eq!(detail.order.status, InspectionOrderStatus::Pending as i16);
         assert_eq!(detail.order.lot_qty, 100);
         assert!(detail.results.is_empty());
     }

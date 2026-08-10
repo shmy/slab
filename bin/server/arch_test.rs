@@ -309,11 +309,7 @@ mod arch_test {
     #[test]
     fn endpoints_should_not_compare_status_with_magic_number() {
         // 欠账白名单：尚未枚举化的域（P0-2/3/4 待处理），完成后从列表移除。
-        const STATUS_TODO: &[&str] = &[
-            "sales_delivery_create",
-            "inspection_order_complete",
-            "bom_release",
-        ];
+        const STATUS_TODO: &[&str] = &["sales_delivery_create", "bom_release"];
         let features_dir = workspace_root().join("features");
         for entry in std::fs::read_dir(&features_dir).unwrap() {
             let entry = entry.unwrap();

@@ -36,8 +36,8 @@ pub struct InspectionOrder {
     pub lot_qty: i64,
     pub sample_qty: i64,
     pub inspector: Option<String>,
-    pub result: Option<i16>, // NULL=待检 1=pass 2=fail 3=conditional
-    pub status: i16,
+    pub result: Option<i16>, // Option<Verdict>（检验结论；NULL=待检）
+    pub status: i16,         // InspectionOrderStatus（检验单状态）
     pub inspected_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -47,7 +47,7 @@ pub struct InspectionResult {
     pub id: ID,
     pub inspection_id: ID,
     pub template_item_id: ID,
-    pub result: i16, // 1=pass 2=fail
+    pub result: i16, // Verdict::Pass/Fail
     pub actual_value: Option<String>,
     pub remark: Option<String>,
 }
@@ -62,6 +62,6 @@ pub struct NonConformance {
     pub quantity: i64,
     pub severity: i16,
     pub disposition: Option<i16>,
-    pub status: i16,
+    pub status: i16, // TODO(P0): 待枚举化
     pub remark: Option<String>,
 }

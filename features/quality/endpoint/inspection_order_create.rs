@@ -97,6 +97,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use quality_contract::value_object::InspectionOrderStatus;
 
     #[sqlx::test]
     async fn test_inspection_order_create_success(pool: sqlx::PgPool) {
@@ -126,7 +127,7 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 0);
+        assert_eq!(row.status, InspectionOrderStatus::Pending as i16);
         assert_eq!(row.sample_qty, 100);
 
         // 变更历史：create 类型
@@ -141,6 +142,6 @@ mod tests {
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
         assert_eq!(after["code"], resp.code);
-        assert_eq!(after["status"], 0);
+        assert_eq!(after["status"], InspectionOrderStatus::Pending as i16);
     }
 }
