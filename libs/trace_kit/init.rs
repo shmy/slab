@@ -6,7 +6,6 @@
 #[cfg(feature = "otlp")]
 use opentelemetry::{KeyValue, StringValue, Value};
 #[cfg(feature = "otlp")]
-use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 #[cfg(feature = "otlp")]
 use opentelemetry_sdk::Resource;
 #[cfg(feature = "otlp")]
@@ -24,10 +23,29 @@ use tracing_subscriber::{
 fn log_filter(config: &TraceConfig) -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(format!(
-            "{},otel::tracing=trace,sqlx::query=off",
+            "{},otel::tracing=trace,sqlx::query=off,opentelemetry=off,hyper=off,tonic=off,reqwest=off",
             config.level
         ))
     })
+}
+
+/// OTLP/HTTP 传输配置（官方 OpenObserve Rust 指南规范）：
+/// - endpoint：`{otlp_endpoint}/api/{org}`（无尾斜杠；exporter 自动追加 `/v1/{signal}`，
+///   尾斜杠会产生 `//v1/...` 404）；
+/// - headers：OTLP_METADATA JSON 原样转 HTTP 头（`authorization` 为 Basic 认证）。
+#[cfg(feature = "otlp")]
+fn otlp_http_config(
+    endpoint: &str,
+    metadata: &str,
+) -> (String, std::collections::HashMap<String, String>) {
+    let headers: std::collections::HashMap<String, String> =
+        serde_json::from_str(metadata).expect("parse otlp_metadata");
+    let org = headers
+        .get("organization")
+        .map(String::as_str)
+        .unwrap_or("default");
+    let base = format!("{}/api/{org}", endpoint.trim_end_matches('/'));
+    (base, headers)
 }
 
 #[derive(Debug)]
@@ -71,16 +89,13 @@ pub fn init_tracing(
     #[cfg(feature = "otlp")]
     let (log_layer, log_provider) = {
         use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-        use opentelemetry_otlp::{LogExporter, WithExportConfig as _, WithTonicConfig as _};
+        use opentelemetry_otlp::{LogExporter, WithExportConfig as _, WithHttpConfig as _};
         use opentelemetry_sdk::logs::SdkLoggerProvider;
-        let budiler = LogExporter::builder().with_tonic();
-        #[cfg(feature = "otlp_tls")]
-        let budiler = budiler.with_tls_config(
-            opentelemetry_otlp::tonic_types::transport::ClientTlsConfig::new().with_enabled_roots(),
-        );
-        let exporter = budiler
-            .with_endpoint(config.otlp_endpoint)
-            .with_metadata(metadata_from_json(config.otlp_metadata))
+        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
+        let exporter = LogExporter::builder()
+            .with_http()
+            .with_endpoint(format!("{base}/v1/logs"))
+            .with_headers(headers)
             .build()
             .expect("build log exporter");
         let provider = SdkLoggerProvider::builder()
@@ -93,17 +108,18 @@ pub fn init_tracing(
 
     #[cfg(feature = "otlp")]
     let (metrics_layer, metrics_provider) = {
-        use opentelemetry_otlp::{MetricExporter, WithExportConfig as _, WithTonicConfig as _};
+        use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig as _, WithHttpConfig as _};
         use opentelemetry_sdk::metrics::{MeterProviderBuilder, PeriodicReader, Temporality};
         use tracing_opentelemetry::MetricsLayer;
-        let budiler = MetricExporter::builder().with_tonic();
-        #[cfg(feature = "otlp_tls")]
-        let budiler = budiler.with_tls_config(
-            opentelemetry_otlp::tonic_types::transport::ClientTlsConfig::new().with_enabled_roots(),
-        );
-        let exporter = budiler
-            .with_endpoint(config.otlp_endpoint)
-            .with_metadata(metadata_from_json(config.otlp_metadata))
+        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
+        // OTLP/HTTP + **JSON 编码**：OpenObserve 对 OTLP 直方图存在已知缺陷（issue #12345：
+        // 创建流但存 0 事件）。修复 #12615 明确覆盖 "OTLP/JSON metrics" 路径（gRPC 与
+        // HTTP+protobuf 均实测仍丢直方图），http-json feature 使三信号统一走 JSON 编码。
+        let exporter = MetricExporter::builder()
+            .with_http()
+            .with_protocol(Protocol::HttpJson)
+            .with_endpoint(format!("{base}/v1/metrics"))
+            .with_headers(headers)
             .with_temporality(Temporality::Cumulative)
             .build()
             .expect("build metrics exporter");
@@ -123,17 +139,14 @@ pub fn init_tracing(
     #[cfg(feature = "otlp")]
     let (trace_layer, trace_provider) = {
         use opentelemetry::trace::TracerProvider as _;
-        use opentelemetry_otlp::{WithExportConfig as _, WithTonicConfig as _};
+        use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
         use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, SdkTracerProvider};
 
-        let budiler = opentelemetry_otlp::SpanExporter::builder().with_tonic();
-        #[cfg(feature = "otlp_tls")]
-        let budiler = budiler.with_tls_config(
-            opentelemetry_otlp::tonic_types::transport::ClientTlsConfig::new().with_enabled_roots(),
-        );
-        let exporter = budiler
-            .with_endpoint(config.otlp_endpoint)
-            .with_metadata(metadata_from_json(config.otlp_metadata))
+        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_endpoint(format!("{base}/v1/traces"))
+            .with_headers(headers)
             .build()
             .expect("build trace exporter");
 
@@ -201,19 +214,6 @@ fn resource(service_name: &str) -> Resource {
 }
 
 #[cfg(feature = "otlp")]
-fn metadata_from_json(s: &str) -> MetadataMap {
-    use std::str::FromStr as _;
-    let map: std::collections::HashMap<String, String> =
-        serde_json::from_str(s).expect("parse otlp_metadata");
-    let mut m = MetadataMap::new();
-    for (k, v) in map {
-        let key = tonic::metadata::MetadataKey::from_str(&k).expect("metadata key");
-        let value = tonic::metadata::MetadataValue::from_str(&v).expect("metadata value");
-        m.insert(key, value);
-    }
-    m
-}
-
 pub enum TracingGuard {
     #[cfg(feature = "otlp")]
     Otlp(OtlpGuard),

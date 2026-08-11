@@ -15,7 +15,6 @@ init = ["dep:tracing-subscriber"]
 console = ["init"]
 otlp = [
     "init",
-    "dep:tonic",
     "dep:tracing",
     "dep:tracing-opentelemetry",
     "dep:opentelemetry",
@@ -25,7 +24,6 @@ otlp = [
     "dep:opentelemetry-semantic-conventions",
     "dep:serde_json",
 ]
-otlp_tls = ["otlp", "opentelemetry-otlp/tls-roots"]
 
 [dependencies]
 http_1 = { package = "http", version = "1", default-features = false, features = [
@@ -37,13 +35,15 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = [
     "logs",
     "metrics",
     "trace",
-    "grpc-tonic",
+    "http-proto",
+    "http-json",
+    "reqwest-blocking-client",
+    "reqwest-rustls",
 ], optional = true }
 
 opentelemetry-semantic-conventions = { version = "0.32", default-features = false, optional = true }
 opentelemetry_sdk = { version = "0.32", default-features = false, optional = true }
 serde_json = { workspace = true, optional = true }
-tonic = { version = "0.14", default-features = false, optional = true }
 tracing = { workspace = true, optional = true }
 rootcause = { workspace = true }
 rootcause-tracing = { workspace = true }

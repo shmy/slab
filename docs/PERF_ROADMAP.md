@@ -24,6 +24,7 @@
    - `db.query.duration` 直方图（`SqlxQueryMetricsLayer` 裸 Layer + event_enabled 自过滤，消费 `sqlx::query` 日志事件的 `elapsed_secs`；db 池开 `log_statements(Info)`，日志噪音由 EnvFilter `sqlx::query=off` 屏蔽）
    - `job_queue.pending / running / failed` + `event_bus.pending / failed / deliveries.pending` gauge（`BacklogMetrics` 周期任务每 30s 采样，调 `JobBus::backlog` / `EventBus::backlog` crate API，不碰表）
    - `db.pool.connections / idle` gauge（sqlx 官方 `Pool::size()` / `num_idle()`，对应 issue #1896 的 USE 指标诉求——官方 API 直接采样，无需等官方落地）
+   - **出口：OTLP/HTTP（protobuf，OpenObserve 官方推荐）**——OpenObserve 对 OTLP **gRPC** 直方图存 0 事件（issue #12345，修复 #12615 仅覆盖 OTLP/JSON），HTTP 路径原生正常；端点 `{OTLP_ENDPOINT}/api/{org}/v1/{traces,metrics,logs}`（无尾斜杠，exporter 自动追加 `/v1/...`；认证复用 OTLP_METADATA 的 authorization）。注意 self-hosted 的 HTTP 端口是 **5080**（5081 是 gRPC）
    - 实现要点：trace_kit 注册全局 meter provider；EnvFilter 改为各日志层 per-layer Filter（避免 `Layered::enabled` AND 链掐断指标事件）；sqlx 指标层为裸 Layer + `event_enabled`/`on_event` 自过滤、注册于 EnvFilter 之前
 2. **响应压缩** — Traefik 层配 gzip（省事）或 tower-http `CompressionLayer`，二选一。JSON API 可压缩 5-10x。
 3. **压测基线** — k6/wrk 打核心链路（登录、列表分页、单据创建），定 QPS/p99 预算，进 CI 防回归。
