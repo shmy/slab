@@ -22,7 +22,6 @@ use std::time::Duration;
 #[cfg(feature = "pg")]
 use db::PgPool;
 use rootcause::Result;
-#[cfg(feature = "pg")]
 use sqlx::PgConnection;
 use tokio::sync::watch::Receiver;
 
@@ -37,6 +36,14 @@ pub use gc::{DEFAULT_DELIVERED_RETENTION_DAYS, delete_delivered_older_than_in_tr
 
 #[cfg(not(any(feature = "pg", feature = "nats")))]
 compile_error!("event_bus crate requires feature \"pg\" or \"nats\"");
+
+/// 事件积压统计（供可观测性采样，见 [`EventBus::backlog`]）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventBacklog {
+    pub pending: i64,
+    pub failed: i64,
+    pub deliveries_pending: i64,
+}
 
 /// 事件总线句柄：发布 + 消费 + 清理，克隆共享。
 #[derive(Clone)]
@@ -53,6 +60,17 @@ impl EventBus {
     #[cfg(feature = "pg")]
     pub async fn try_new_pg(pg_pool: PgPool) -> Result<Self> {
         Ok(Self::Pg(PgBackend::try_new(pg_pool).await?))
+    }
+
+    /// 积压统计（观测采样）：pg 查 Outbox 表；nats 取 JetStream stream 未消费消息数。
+    /// 由各后端实现，调用方不感知后端差异。
+    pub async fn backlog(&self) -> Result<EventBacklog> {
+        match self {
+            #[cfg(feature = "pg")]
+            EventBus::Pg(backend) => backend.backlog().await,
+            #[cfg(feature = "nats")]
+            EventBus::Nats(backend) => backend.backlog().await,
+        }
     }
 
     /// 测试用后端：复用测试 PG 池（`PgBackend::try_new` 幂等建表，不依赖 NATS 实例）。

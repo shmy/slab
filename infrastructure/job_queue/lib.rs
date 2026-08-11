@@ -48,6 +48,7 @@ use tokio::sync::{Notify, Semaphore, watch};
 
 #[cfg(feature = "pg")]
 use sqlx::PgPool;
+use sqlx::Row as _;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
@@ -89,6 +90,14 @@ pub const DEFAULT_JOB_RETENTION_DAYS: i64 = 30;
 /// - sqlite：`enqueue_after` 直接 `notify_waiters`。
 ///
 /// 消费侧轮询保留为兜底（NOTIFY 不持久，listener 未就绪/断线期间靠轮询）。
+/// 队列积压统计（供可观测性采样，见 [`JobBus::backlog`]）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueueBacklog {
+    pub pending: i64,
+    pub running: i64,
+    pub failed: i64,
+}
+
 #[derive(Clone)]
 pub enum JobBus {
     #[cfg(feature = "pg")]
@@ -132,6 +141,45 @@ impl JobBus {
             JobBus::Pg { notify, .. } => notify,
             #[cfg(feature = "sqlite")]
             JobBus::Sqlite { notify, .. } => notify,
+        }
+    }
+
+    /// 队列积压统计（观测采样；pg / sqlite 后端同构查询，status 值一致）。
+    pub async fn backlog(&self) -> Result<QueueBacklog> {
+        match self {
+            #[cfg(feature = "pg")]
+            JobBus::Pg { pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT count(*) FILTER (WHERE status = 'Pending') AS pending,
+                            count(*) FILTER (WHERE status = 'Running') AS running,
+                            count(*) FILTER (WHERE status = 'Failed') AS failed
+                     FROM worker_jobs",
+                )
+                .fetch_one(pool)
+                .await?;
+                Ok(QueueBacklog {
+                    pending: row.try_get("pending")?,
+                    running: row.try_get("running")?,
+                    failed: row.try_get("failed")?,
+                })
+            }
+            #[cfg(feature = "sqlite")]
+            JobBus::Sqlite { pool, .. } => {
+                // sqlite ≥ 3.30 支持 FILTER 子句；status 值与 pg 后端一致。
+                let row = sqlx::query(
+                    "SELECT count(*) FILTER (WHERE status = 'Pending') AS pending,
+                            count(*) FILTER (WHERE status = 'Running') AS running,
+                            count(*) FILTER (WHERE status = 'Failed') AS failed
+                     FROM worker_jobs",
+                )
+                .fetch_one(pool)
+                .await?;
+                Ok(QueueBacklog {
+                    pending: row.try_get("pending")?,
+                    running: row.try_get("running")?,
+                    failed: row.try_get("failed")?,
+                })
+            }
         }
     }
 
@@ -859,6 +907,23 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    // ---- 场景 0：积压统计（backlog，观测采样 API）----
+
+    #[cfg(feature = "pg")]
+    #[sqlx::test]
+    async fn backlog_counts_pending_running_failed(pool: PgPool) {
+        let bus = JobBus::try_new_pg(pool).await.unwrap();
+        // 空队列：全零。
+        assert_eq!(bus.backlog().await.unwrap(), QueueBacklog::default());
+
+        // 入队（worker 未启动，行保持 Pending）。
+        bus.enqueue(EchoJob { n: 1 }).await.unwrap();
+        let backlog = bus.backlog().await.unwrap();
+        assert_eq!(backlog.pending, 1);
+        assert_eq!(backlog.running, 0);
+        assert_eq!(backlog.failed, 0);
     }
 
     // ---- 场景 1：立即入队 → 消费 → Done ----

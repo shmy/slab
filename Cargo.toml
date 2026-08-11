@@ -136,6 +136,10 @@ module = { path = "infrastructure/module" }
 opendal = { version = "0.58", default-features = false, features = [
     "layers-logging",
 ] }
+opentelemetry = { version = "0.32", default-features = false, features = [
+    "trace",
+    "metrics",
+] }
 planning = { path = "features/planning" }
 planning_contract = { path = "features/planning_contract" }
 product = { path = "features/product" }

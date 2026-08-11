@@ -1,13 +1,17 @@
 //! 系统内务任务（全部落库为 Job，`worker_jobs` 表即执行统计台账）。
 //!
-//! - `KvGc`：清理缓存后端过期条目（pg 表 / redb 文件；redis 后端由服务端 TTL 处理，返回 0）；
-//! - `BusGc`：清理事件总线已投递的过期条目和孤儿 inbox；
-//! - `JobGc`：清理超过保留期的终态（Done / Failed）Job 行——统计台账不无限膨胀。
+//! 两类职责：
+//! - **清理（GC）**：`KvGc` 清理缓存过期条目；`BusGc` 清理已投递事件与孤儿 inbox；
+//!   `JobGc` 清理超过保留期的终态 Job 行——统计台账不无限膨胀；
+//! - **观测采样**：`BacklogMetrics` 每 30s 采样队列 / 事件总线积压写 gauge
+//!   （只调 `JobBus::backlog` / `EventBus::backlog`，不碰表结构——schema 与状态值是
+//!   各自 crate 的内部实现细节，后端差异由 crate 内消化：pg 查表、sqlite 同构查询、
+//!   nats 取 JetStream stream 未消费消息数）。
 //!
 //! 内务语义通过 `RETRIES = 0` 保留：失败不重试（下个周期再跑，符合时间驱动语义），
 //! 但终态 `Failed` + `last_error` 留痕，可统计失败率——**落库 ≠ 必须重试**。
 //!
-//! 三个任务都经 `register_gc_tasks` 注册（handler + cron 周期），由 server 组装：
+//! 任务都经 `register_internal_jobs` 注册（handler + cron 周期），由 server 组装：
 //! cron 触发是 master-only，入队后由 worker 多进程竞争消费。
 
 use appctx::AppCtx;
@@ -68,6 +72,35 @@ async fn handle_job_gc(_job: JobGc, ctx: &AppCtx) -> Result<()> {
     Ok(())
 }
 
+/// 周期采样队列/事件总线积压（gauge 写入指标后端，见 `metrics` 模块）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacklogMetrics {}
+
+impl Job for BacklogMetrics {
+    const NAME: &'static str = "backlog_metrics";
+    const RETRIES: usize = 0; // 采样任务：失败下期再跑（原因见文件头 doc）
+}
+
+async fn handle_backlog_metrics(_job: BacklogMetrics, ctx: &AppCtx) -> Result<()> {
+    // 连接池 USE（官方 API，零 hack）：当前连接数 / 空闲数，配合 max_connections 算利用率。
+    crate::metrics::db_pool_connections().record(i64::from(ctx.pg_pool.size()), &[]);
+    crate::metrics::db_pool_idle().record(
+        i64::try_from(ctx.pg_pool.num_idle()).unwrap_or(i64::MAX),
+        &[],
+    );
+
+    let jobs = ctx.jobs.backlog().await?;
+    crate::metrics::job_pending().record(jobs.pending, &[]);
+    crate::metrics::job_running().record(jobs.running, &[]);
+    crate::metrics::job_failed().record(jobs.failed, &[]);
+
+    let events = ctx.bus.backlog().await?;
+    crate::metrics::event_pending().record(events.pending, &[]);
+    crate::metrics::event_failed().record(events.failed, &[]);
+    crate::metrics::event_deliveries_pending().record(events.deliveries_pending, &[]);
+    Ok(())
+}
+
 /// 内务任务统一完成日志：删除 > 0 行记 info（含行数），0 行记 debug；job 名作字段记录。
 fn log_gc_result(job: &'static str, deleted: u64) {
     if deleted > 0 {
@@ -77,15 +110,18 @@ fn log_gc_result(job: &'static str, deleted: u64) {
     }
 }
 
-/// server 组装：注册内务任务（消费 handler + cron 周期触发，全部落库可统计）。
-pub fn register_gc_tasks(r: &mut ModuleRegistrar) {
+/// server 组装：注册全部内务任务（消费 handler + cron 周期触发，全部落库可统计）。
+pub fn register_internal_jobs(r: &mut ModuleRegistrar) {
     r.jobs
         .register::<KvGc, _>(|job, ctx| Box::pin(handle_kv_gc(job, ctx)));
     r.jobs
         .register::<BusGc, _>(|job, ctx| Box::pin(handle_bus_gc(job, ctx)));
     r.jobs
         .register::<JobGc, _>(|job, ctx| Box::pin(handle_job_gc(job, ctx)));
+    r.jobs
+        .register::<BacklogMetrics, _>(|job, ctx| Box::pin(handle_backlog_metrics(job, ctx)));
     r.scheduled("every 5 minutes", KvGc {});
     r.scheduled("every 10 minutes", BusGc {});
     r.scheduled("0 0 4 * * *", JobGc {}); // 每天 04:00 清理（6 字段：秒 分 时 日 月 周）
+    r.scheduled("*/30 * * * * *", BacklogMetrics {}); // 每 30 秒采样积压
 }

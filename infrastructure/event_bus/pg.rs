@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 
+use crate::EventBacklog;
 use db::PgPool;
 use rootcause::Result;
 use sqlx::{Acquire, PgConnection};
@@ -35,6 +36,27 @@ impl PgBackend {
 }
 
 impl PgBackend {
+    /// 积压统计（观测采样；`_pg_events` 状态 1=pending / 3=failed，投递表待投递数）。
+    pub(crate) async fn backlog(&self) -> Result<EventBacklog> {
+        use sqlx::Row as _;
+        let row = sqlx::query(
+            "SELECT count(*) FILTER (WHERE status = 1) AS pending,
+                    count(*) FILTER (WHERE status = 3) AS failed
+             FROM _pg_events",
+        )
+        .fetch_one(&self.pg_pool)
+        .await?;
+        let deliveries =
+            sqlx::query("SELECT count(*) AS pending FROM _pg_event_deliveries WHERE status = 1")
+                .fetch_one(&self.pg_pool)
+                .await?;
+        Ok(EventBacklog {
+            pending: row.try_get("pending")?,
+            failed: row.try_get("failed")?,
+            deliveries_pending: deliveries.try_get("pending")?,
+        })
+    }
+
     pub(crate) async fn publish<T: Event>(&self, event: &T) -> Result<()> {
         let mut conn = self.pg_pool.acquire().await?;
         publish::publish(&mut conn, event).await
@@ -94,6 +116,20 @@ mod tests {
     }
     impl Event for TestEvent {
         const TOPIC: &'static str = "slab.pg_backend.evt";
+    }
+
+    /// backlog：空队列全零；发布后 pending 计数（delayed 未到期仍是 pending 状态）。
+    #[sqlx::test]
+    async fn backlog_counts_pending_events(pool: sqlx::PgPool) {
+        let backend = PgBackend::try_new(pool.clone()).await.unwrap();
+        assert_eq!(backend.backlog().await.unwrap(), EventBacklog::default());
+
+        backend.publish(&TestEvent { n: 1 }).await.unwrap();
+        backend.publish(&TestEvent { n: 2 }).await.unwrap();
+        let backlog = backend.backlog().await.unwrap();
+        assert_eq!(backlog.pending, 2);
+        assert_eq!(backlog.failed, 0);
+        assert_eq!(backlog.deliveries_pending, 0);
     }
 
     /// 不跑 migration：验证 `try_new` 幂等自建表（events + event_deliveries）后可直接入队。

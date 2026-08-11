@@ -10,6 +10,7 @@
 
 use std::{fmt, time::Duration};
 
+use crate::EventBacklog;
 use async_nats::HeaderMap;
 use async_nats::jetstream::consumer::pull;
 use async_nats::jetstream::stream::{self, RetentionPolicy, StorageType};
@@ -159,6 +160,18 @@ impl NatsBackend {
 }
 
 impl NatsBackend {
+    /// 积压统计（观测采样）：JetStream 消费 ack 后删消息，`stream.state.messages` ≈ 未消费积压。
+    /// failed / deliveries_pending 无对应概念（重投在 consumer 内，超限丢弃并告警），返回 0。
+    pub(crate) async fn backlog(&self) -> Result<EventBacklog> {
+        let mut stream = self.js.context().get_stream(self.js.stream_name()).await?;
+        let info = stream.info().await?;
+        Ok(EventBacklog {
+            pending: i64::try_from(info.state.messages).unwrap_or(i64::MAX),
+            failed: 0,
+            deliveries_pending: 0,
+        })
+    }
+
     pub(crate) async fn publish<T: Event>(&self, event: &T) -> Result<()> {
         self.js.publish_json(T::TOPIC, event).await
     }

@@ -31,9 +31,7 @@ otlp_tls = ["otlp", "opentelemetry-otlp/tls-roots"]
 http_1 = { package = "http", version = "1", default-features = false, features = [
     "std",
 ] }
-opentelemetry = { version = "0.32", default-features = false, features = [
-    "trace",
-], optional = true }
+opentelemetry = { workspace = true, optional = true }
 opentelemetry-appender-tracing = { version = "0.32", default-features = false, optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = [
     "logs",

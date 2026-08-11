@@ -13,7 +13,22 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::{SCHEMA_URL, resource::SERVICE_VERSION};
 use rootcause::hooks::Hooks;
 use rootcause_tracing::{RootcauseLayer, SpanCollector};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
+use tracing_subscriber::{
+    EnvFilter, layer::Layer, layer::SubscriberExt as _, registry::Registry,
+    util::SubscriberInitExt as _,
+};
+
+/// 日志过滤（各层按需取用）：默认 info，OTel 桥接链路全程 trace；
+/// `sqlx::query=off` 屏蔽 sqlx 逐条 SQL 日志噪音（查询耗时由 `SqlxQueryMetricsLayer` 消费，见 bin/server/metrics.rs）。
+/// 显式设置 RUST_LOG 时以用户为准（不强制追加）。
+fn log_filter(config: &TraceConfig) -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "{},otel::tracing=trace,sqlx::query=off",
+            config.level
+        ))
+    })
+}
 
 #[derive(Debug)]
 pub struct TraceConfig<'a> {
@@ -45,9 +60,11 @@ impl<'a> TraceConfig<'a> {
     }
 }
 
-pub fn init_tracing(config: TraceConfig) -> TracingGuard {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("{},otel::tracing=trace", config.level)));
+pub fn init_tracing(
+    config: TraceConfig,
+    extra_layers: Vec<Box<dyn Layer<Registry> + Send + Sync>>,
+) -> TracingGuard {
+    let filter = log_filter(&config);
     #[cfg(feature = "console")]
     let console_layer = tracing_subscriber::fmt::layer().with_ansi(true);
 
@@ -97,6 +114,8 @@ pub fn init_tracing(config: TraceConfig) -> TracingGuard {
             .with_reader(reader)
             .with_resource(resource(config.otlp_service_name))
             .build();
+        // 注册全局 meter provider：业务代码经 `opentelemetry::global::meter("slab")` 取仪表埋点。
+        opentelemetry::global::set_meter_provider(provider.clone());
         let layer = MetricsLayer::new(provider.clone());
         (layer, provider)
     };
@@ -130,17 +149,23 @@ pub fn init_tracing(config: TraceConfig) -> TracingGuard {
         (layer, provider)
     };
 
-    let builder = tracing_subscriber::registry()
-        .with(filter)
-        .with(RootcauseLayer);
+    // 各层独立过滤：extra 层（如 sqlx 指标层）自带 Targets 过滤器，放在最前；
+    // 日志/桥接层统一挂 EnvFilter per-layer Filter——注意不能把 EnvFilter 当全局 Layer 注册，
+    // 否则 `Layered::enabled` 的 AND 链会全局掐断被它拒绝的事件（sqlx 指标层将收不到任何事件）。
+    let extra_stack: Box<dyn Layer<Registry> + Send + Sync> = extra_layers
+        .into_iter()
+        .reduce(|acc, layer| Box::new(acc.and_then(layer)))
+        .unwrap_or_else(|| Box::new(tracing_subscriber::layer::Identity::new()));
+    let builder = tracing_subscriber::registry().with(extra_stack);
+    let builder = builder.with(RootcauseLayer.with_filter(filter.clone()));
     #[cfg(feature = "console")]
-    let builder = builder.with(console_layer);
+    let builder = builder.with(console_layer.with_filter(filter.clone()));
 
     #[cfg(feature = "otlp")]
     let builder = builder
-        .with(log_layer)
-        .with(metrics_layer)
-        .with(trace_layer);
+        .with(log_layer.with_filter(filter.clone()))
+        .with(metrics_layer.with_filter(filter.clone()))
+        .with(trace_layer.with_filter(filter.clone()));
 
     builder.init();
 

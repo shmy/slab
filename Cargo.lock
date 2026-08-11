@@ -1317,6 +1317,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 name = "db"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rootcause",
  "secrecy",
  "sqlx 0.9.0",
@@ -3882,6 +3883,7 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.5",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -5660,6 +5662,8 @@ dependencies = [
  "migration",
  "mimalloc",
  "module",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "planning",
  "product",
  "production",
@@ -5676,6 +5680,7 @@ dependencies = [
  "tower-http 0.7.0",
  "trace_kit",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
  "utoipa-scalar",

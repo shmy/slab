@@ -9,7 +9,8 @@ use crate::cli::Cli;
 mod api_doc;
 mod cli;
 mod config;
-mod gc_jobs;
+mod internal_jobs;
+mod metrics;
 mod modules;
 mod router;
 mod server;
@@ -26,12 +27,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 async fn main() -> Result<()> {
     dotenvy::dotenv_override().ok();
     let cli: Cli = Cli::parse();
-    let _guard = init_tracing(TraceConfig::new(
-        &cli.log_level,
-        &cli.otlp.service_name,
-        &cli.otlp.endpoint,
-        cli.otlp.metadata.expose_secret(),
-    ));
+    let _guard = init_tracing(
+        TraceConfig::new(
+            &cli.log_level,
+            &cli.otlp.service_name,
+            &cli.otlp.endpoint,
+            cli.otlp.metadata.expose_secret(),
+        ),
+        // sqlx 查询耗时指标层：独立 Targets 过滤，注册于 EnvFilter 之前（见 trace_kit::init_tracing 注释）。
+        vec![Box::new(metrics::sqlx_query_layer())],
+    );
     info!("{:?}", &cli);
     server::serve(cli).await?;
     Ok(())

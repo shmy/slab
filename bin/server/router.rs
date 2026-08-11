@@ -12,6 +12,7 @@ use utoipa::OpenApi as _;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::Servable as _;
 
+use crate::metrics::record_request_metrics;
 use crate::{api_doc::ApiDoc, modules::MODULES};
 
 const CUSTOM_HTML: &str = include_str!("scalar.html");
@@ -43,6 +44,7 @@ pub fn build(state: AppCtx, request_timeout: Duration, scalar_ui_enabled: bool) 
         .layer(ServiceBuilder::new().layer(GovernorLayer::new(cfg)))
         .layer(OtelInResponseLayer)
         .layer(OtelAxumLayer::default())
+        .layer(middleware::from_fn(record_request_metrics))
         .with_state(state)
         .split_for_parts();
 
