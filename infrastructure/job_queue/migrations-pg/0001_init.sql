@@ -16,10 +16,13 @@ CREATE TABLE worker_jobs (
 CREATE INDEX worker_jobs_fetch_idx
     ON worker_jobs (job_type, status, run_at, id);
 
+CREATE INDEX worker_jobs_gc_idx ON worker_jobs (done_at)
+    WHERE status IN ('Done', 'Failed');
+    
 -- 入队通知：INSERT 即 pg_notify（事务内投递，无丢失窗口），worker 侧 PgListener 桥接进程内 Notify。
 CREATE FUNCTION job_queue_notify() RETURNS trigger AS $$
     BEGIN
-        PERFORM pg_notify('job_queue_events', NEW.job_type);
+        PERFORM pg_notify('_job_queue_events', NEW.job_type);
         RETURN NEW;
     END;
 $$ LANGUAGE plpgsql;

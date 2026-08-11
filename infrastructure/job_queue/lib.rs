@@ -332,7 +332,7 @@ impl<C: Clone + Send + Sync + 'static> WorkerManager<C> {
     }
 }
 
-/// pg LISTEN/NOTIFY 桥接：监听 `job_queue_events` 通道，收到通知即唤醒进程内 Notify。
+/// pg LISTEN/NOTIFY 桥接：监听 `_job_queue_events` 通道，收到通知即唤醒进程内 Notify。
 /// 连接失败 / 断线时退出（poll 兜底），不做重连——Notify 语义下丢失一次唤醒无妨。
 #[cfg(feature = "pg")]
 async fn run_pg_listener(pool: PgPool, notify: Arc<Notify>, mut shutdown: watch::Receiver<bool>) {
@@ -346,11 +346,11 @@ async fn run_pg_listener(pool: PgPool, notify: Arc<Notify>, mut shutdown: watch:
             return;
         }
     };
-    if let Err(e) = listener.listen("job_queue_events").await {
+    if let Err(e) = listener.listen("_job_queue_events").await {
         tracing::error!(error = %e, "pg listener listen failed, falling back to polling");
         return;
     }
-    tracing::info!("pg listener listening on job_queue_events");
+    tracing::info!("pg listener listening on _job_queue_events");
     loop {
         tokio::select! {
             _ = shutdown.changed() => break,

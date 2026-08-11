@@ -111,7 +111,7 @@ Running ── 成功 ──► Done
 
 | 后端 | 即时唤醒路径 | 兜底 |
 |------|-------------|------|
-| **pg** | INSERT 触发器 `job_queue_notify`（事务内 `pg_notify('job_queue_events')`，无丢失窗口）→ `WorkerManager` 的 `PgListener` 任务（`LISTEN` 专用连接）→ 进程内 `Notify` → 消费循环立即 fetch | 固定间隔轮询（默认 200ms，`WorkerOptions::poll_interval`） |
+| **pg** | INSERT 触发器 `job_queue_notify`（事务内 `pg_notify('_job_queue_events')`，无丢失窗口）→ `WorkerManager` 的 `PgListener` 任务（`LISTEN` 专用连接）→ 进程内 `Notify` → 消费循环立即 fetch | 固定间隔轮询（默认 200ms，`WorkerOptions::poll_interval`） |
 | **sqlite** | `enqueue_after` 成功后直发进程内 `Notify`（单进程内即时，无 update_hook——连接级回调收不到跨连接写入） | 同上 |
 
 - 延迟任务：唤醒后 fetch 时 `run_at` 未到则不拉取，到期后由下一轮唤醒/轮询消费；

@@ -14,3 +14,6 @@ CREATE TABLE worker_jobs (
 
 CREATE INDEX worker_jobs_fetch_idx
     ON worker_jobs (job_type, status, run_at);
+
+CREATE INDEX worker_jobs_gc_idx ON worker_jobs (done_at)
+    WHERE status IN ('Done', 'Failed');
