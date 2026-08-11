@@ -6,7 +6,6 @@
 #[cfg(feature = "otlp")]
 use opentelemetry::{KeyValue, StringValue, Value};
 #[cfg(feature = "otlp")]
-#[cfg(feature = "otlp")]
 use opentelemetry_sdk::Resource;
 #[cfg(feature = "otlp")]
 use opentelemetry_semantic_conventions::{SCHEMA_URL, resource::SERVICE_VERSION};
@@ -18,8 +17,9 @@ use tracing_subscriber::{
 };
 
 /// 日志过滤（各层按需取用）：默认 info，OTel 桥接链路全程 trace；
-/// `sqlx::query=off` 屏蔽 sqlx 逐条 SQL 日志噪音（查询耗时由 `SqlxQueryMetricsLayer` 消费，见 bin/server/metrics.rs）。
-/// 显式设置 RUST_LOG 时以用户为准（不强制追加）。
+/// `sqlx::query=off` 屏蔽 sqlx 逐条 SQL 日志噪音（其 `elapsed_secs` 由指标层单独消费）；
+/// `opentelemetry/hyper/tonic/reqwest=off` 防 telemetry-induced-telemetry（导出栈自身日志
+/// 不再回灌 OTLP）。显式设置 RUST_LOG 时以用户为准（不强制追加）。
 fn log_filter(config: &TraceConfig) -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(format!(
@@ -29,23 +29,31 @@ fn log_filter(config: &TraceConfig) -> EnvFilter {
     })
 }
 
-/// OTLP/HTTP 传输配置（官方 OpenObserve Rust 指南规范）：
-/// - endpoint：`{otlp_endpoint}/api/{org}`（无尾斜杠；exporter 自动追加 `/v1/{signal}`，
-///   尾斜杠会产生 `//v1/...` 404）；
-/// - headers：OTLP_METADATA JSON 原样转 HTTP 头（`authorization` 为 Basic 认证）。
+/// OTLP/gRPC 传输配置（OpenObserve 官方 Rust 指南）：
+/// - endpoint：`{otlp_endpoint}`（base URL；gRPC 的 org 不进 URL 路径）；
+/// - metadata：OTLP_METADATA JSON 原样转 gRPC metadata，并**强制补 organization**——
+///   OpenObserve 的 gRPC 路径要求 `organization` header 与 `Authorization` 同传。
 #[cfg(feature = "otlp")]
-fn otlp_http_config(
+fn otlp_grpc_config(
     endpoint: &str,
     metadata: &str,
-) -> (String, std::collections::HashMap<String, String>) {
-    let headers: std::collections::HashMap<String, String> =
+) -> (
+    String,
+    opentelemetry_otlp::tonic_types::metadata::MetadataMap,
+) {
+    use std::str::FromStr as _;
+    let mut map: std::collections::HashMap<String, String> =
         serde_json::from_str(metadata).expect("parse otlp_metadata");
-    let org = headers
-        .get("organization")
-        .map(String::as_str)
-        .unwrap_or("default");
-    let base = format!("{}/api/{org}", endpoint.trim_end_matches('/'));
-    (base, headers)
+    if !map.contains_key("organization") {
+        map.insert("organization".to_string(), "default".to_string());
+    }
+    let mut m = opentelemetry_otlp::tonic_types::metadata::MetadataMap::new();
+    for (k, v) in map {
+        let key = tonic::metadata::MetadataKey::from_str(&k).expect("metadata key");
+        let value = tonic::metadata::MetadataValue::from_str(&v).expect("metadata value");
+        m.insert(key, value);
+    }
+    (endpoint.to_string(), m)
 }
 
 #[derive(Debug)]
@@ -89,13 +97,13 @@ pub fn init_tracing(
     #[cfg(feature = "otlp")]
     let (log_layer, log_provider) = {
         use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-        use opentelemetry_otlp::{LogExporter, WithExportConfig as _, WithHttpConfig as _};
+        use opentelemetry_otlp::{LogExporter, WithExportConfig as _, WithTonicConfig as _};
         use opentelemetry_sdk::logs::SdkLoggerProvider;
-        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
+        let (endpoint, metadata) = otlp_grpc_config(config.otlp_endpoint, config.otlp_metadata);
         let exporter = LogExporter::builder()
-            .with_http()
-            .with_endpoint(format!("{base}/v1/logs"))
-            .with_headers(headers)
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .with_metadata(metadata)
             .build()
             .expect("build log exporter");
         let provider = SdkLoggerProvider::builder()
@@ -108,18 +116,17 @@ pub fn init_tracing(
 
     #[cfg(feature = "otlp")]
     let (metrics_layer, metrics_provider) = {
-        use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig as _, WithHttpConfig as _};
+        use opentelemetry_otlp::{MetricExporter, WithExportConfig as _, WithTonicConfig as _};
         use opentelemetry_sdk::metrics::{MeterProviderBuilder, PeriodicReader, Temporality};
         use tracing_opentelemetry::MetricsLayer;
-        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
-        // OTLP/HTTP + **JSON 编码**：OpenObserve 对 OTLP 直方图存在已知缺陷（issue #12345：
-        // 创建流但存 0 事件）。修复 #12615 明确覆盖 "OTLP/JSON metrics" 路径（gRPC 与
-        // HTTP+protobuf 均实测仍丢直方图），http-json feature 使三信号统一走 JSON 编码。
+        let (endpoint, metadata) = otlp_grpc_config(config.otlp_endpoint, config.otlp_metadata);
+        // OTLP/gRPC：性能优先（HTTP/2 多路复用）。注意 OpenObserve 对 gRPC 直方图曾存 0 事件
+        // （issue #12345，#12615 仅修 OTLP/JSON 路径）——若实测仍丢直方图，切回 HTTP+JSON
+        // （git revert 或改 with_http + Protocol::HttpJson）。
         let exporter = MetricExporter::builder()
-            .with_http()
-            .with_protocol(Protocol::HttpJson)
-            .with_endpoint(format!("{base}/v1/metrics"))
-            .with_headers(headers)
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .with_metadata(metadata)
             .with_temporality(Temporality::Cumulative)
             .build()
             .expect("build metrics exporter");
@@ -139,14 +146,14 @@ pub fn init_tracing(
     #[cfg(feature = "otlp")]
     let (trace_layer, trace_provider) = {
         use opentelemetry::trace::TracerProvider as _;
-        use opentelemetry_otlp::{WithExportConfig as _, WithHttpConfig as _};
+        use opentelemetry_otlp::{WithExportConfig as _, WithTonicConfig as _};
         use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, SdkTracerProvider};
 
-        let (base, headers) = otlp_http_config(config.otlp_endpoint, config.otlp_metadata);
+        let (endpoint, metadata) = otlp_grpc_config(config.otlp_endpoint, config.otlp_metadata);
         let exporter = opentelemetry_otlp::SpanExporter::builder()
-            .with_http()
-            .with_endpoint(format!("{base}/v1/traces"))
-            .with_headers(headers)
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .with_metadata(metadata)
             .build()
             .expect("build trace exporter");
 
@@ -162,11 +169,11 @@ pub fn init_tracing(
         (layer, provider)
     };
 
-    // 各层独立过滤：extra 层（如 sqlx 指标层）放在最前，自带 event_enabled 自过滤
-    // （裸 Layer，不依赖 per-layer Filter 注册路径——经 Box<dyn Layer> 包装时 Filtered 的
-    // filter 注册不可靠，实测收不到事件）；日志/桥接层统一挂 EnvFilter per-layer Filter——
-    // 注意不能把 EnvFilter 当全局 Layer 注册，否则 `Layered::enabled` 的 AND 链会全局
-    // 掐断被它拒绝的事件（sqlx 指标层将收不到任何事件）。
+    // per-layer filtering（tracing-subscriber 标准机制，非 hack）：各日志/桥接层独立挂
+    // EnvFilter，互不干扰；extra 层（sqlx 指标层）放在最前，靠自身 on_event 过滤。
+    // 不能把 EnvFilter 当全局 Layer 注册：`Layered::enabled` 是 AND 链，`sqlx::query=off`
+    // 会全局掐断 sqlx 事件构造（指标层收不到事件）；per-layer 下 `Filtered::enabled`
+    // 恒 true 不短路，各层独立裁决。
     let extra_stack: Box<dyn Layer<Registry> + Send + Sync> = extra_layers
         .into_iter()
         .reduce(|acc, layer| Box::new(acc.and_then(layer)))
