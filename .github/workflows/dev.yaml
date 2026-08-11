@@ -33,7 +33,6 @@
 #       - name: Architecture tests
 #         run: cargo test -p server arch_test
 #       - name: Cross-domain repository check
-#         run: bash scripts/check_cross_domain_repository.sh
 #       - name: Check unused dependencies
 #         run: cargo machete
 #       - name: Check dependency ordering

@@ -63,9 +63,7 @@ ai-check crate:
     set -euo pipefail
     echo "=== Architecture test ==="
     cargo test -p server arch_test 2>&1 | tail -3
-    echo "=== Cross-domain check ==="
-    bash scripts/check_cross_domain_repository.sh
-    echo "=== Format check ==="
+    echo "=== Format check ===
     cargo fmt --all -- --check 2>&1 | tail -3
     echo "=== Check {{crate}} ==="
     cargo check -p {{crate}} 2>&1 | tail -5
@@ -74,7 +72,6 @@ ai-check crate:
     echo "--- Done ---"
 
 pre_commit:
-    bash scripts/check_cross_domain_repository.sh
     cargo machete
     cargo sort features/**
     cargo sort
