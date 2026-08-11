@@ -62,14 +62,6 @@ accept-language = { version = "3.1", default-features = false }
 appctx = { path = "infrastructure/appctx" }
 approval = { path = "cross_domain/approval" }
 argon2 = { version = "0.5", default-features = false, features = ["std"] }
-askama = { version = "0.16", default-features = false, features = [
-    "std",
-    "derive",
-] }
-askama_web = { version = "0.16", default-features = false, features = [
-    "default",
-    "axum-0.8",
-] }
 audit = { path = "features/audit" }
 audit_contract = { path = "features/audit_contract" }
 authn_kit = { path = "libs/authn_kit" }
@@ -86,7 +78,6 @@ axum-extra = { version = "0.12", default-features = false, features = [
     "cookie",
 ] }
 axum-governor = { version = "2.0", default-features = false }
-axum-messages = { version = "0.8", default-features = false }
 axum-tracing-opentelemetry = { version = "0.38", default-features = false }
 axum_typed_multipart = { version = "0.16", default-features = false, features = [
     "tempfile_3",
@@ -139,7 +130,6 @@ lazy-limit = { version = "1.0", default-features = false }
 locale = { path = "infrastructure/locale" }
 migration = { path = "infrastructure/migration" }
 mimalloc = { version = "0.1", default-features = false }
-mockall = { version = "0.15", default-features = false }
 module = { path = "infrastructure/module" }
 # 各基础设施 crate 按需开 services / executor；layers 由代码显式 .layer() 挂载（blob 仅用 LoggingLayer，
 # retry / timeout / concurrent-limit 等层从未启用，不因关 default features 产生行为变化）。
@@ -148,7 +138,6 @@ opendal = { version = "0.58", default-features = false, features = [
 ] }
 planning = { path = "features/planning" }
 planning_contract = { path = "features/planning_contract" }
-postgis = { version = "0.9", default-features = false }
 product = { path = "features/product" }
 product_contract = { path = "features/product_contract" }
 production = { path = "features/production" }
@@ -186,7 +175,6 @@ sea-query-sqlx = { version = "0.9", default-features = false, features = [
 secrecy = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
-serde_qs = { version = "1.1", default-features = false }
 serde_repr = { version = "0.1", default-features = false }
 serde_with = { version = "3.21", default-features = false, features = [
     "alloc",

@@ -10,6 +10,7 @@
 |A级|Feature Flag|
 |B级|AI Agent|
 |B级|Workflow Designer|
+|S级|性能底座（Metrics 埋点 / 压测基线 / 慢 SQL / 备份）→ docs/PERF_ROADMAP.md|
 
 [ ] redis/redb/nats 环境变量整理
 
