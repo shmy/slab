@@ -14,18 +14,23 @@
 | 可插拔后端 | kv / job_queue / event_bus / blob 全 feature 切换，换高性能后端零改业务 |
 | 限流/超时 | axum-governor 50rps（进程内）+ TimeoutLayer |
 | 外呼 | http_client：reqwest + retry（ExponentialBackoff）+ 超时 |
-| 观测管线 | OTLP trace / log / **metrics 三个 provider 已接线**（但 metrics 零埋点） |
+| 观测管线 | OTLP/gRPC 三信号（trace / log / metrics）已接线，10 个指标已埋点并导出（OpenObserve） |
 | 架构接缝 | 10 个只读 Port → 读副本路由有天然接缝 |
 
 ## 二、P0 缺口（先有数据，再谈优化）
 
 1. **Metrics 埋点 ✅（2026-08-11 已落地）** — 全仓从 0 到有：
    - `http.server.request.duration` 直方图（axum 中间件，属性 method / route 模板 / status）
-   - `db.query.duration` 直方图（`SqlxQueryMetricsLayer` 裸 Layer + event_enabled 自过滤，消费 `sqlx::query` 日志事件的 `elapsed_secs`；db 池开 `log_statements(Info)`，日志噪音由 EnvFilter `sqlx::query=off` 屏蔽）
+   - `db.query.duration` 直方图（`SqlxQueryMetricsLayer` tracing Layer，消费 `sqlx::query` 日志事件的 `elapsed_secs`；db 池开 `log_statements(Info)`，日志噪音由 EnvFilter `sqlx::query=off` 屏蔽）
    - `job_queue.pending / running / failed` + `event_bus.pending / failed / deliveries.pending` gauge（`BacklogMetrics` 周期任务每 30s 采样，调 `JobBus::backlog` / `EventBus::backlog` crate API，不碰表）
    - `db.pool.connections / idle` gauge（sqlx 官方 `Pool::size()` / `num_idle()`，对应 issue #1896 的 USE 指标诉求——官方 API 直接采样，无需等官方落地）
-   - **出口：OTLP/HTTP（protobuf，OpenObserve 官方推荐）**——OpenObserve 对 OTLP **gRPC** 直方图存 0 事件（issue #12345，修复 #12615 仅覆盖 OTLP/JSON），HTTP 路径原生正常；端点 `{OTLP_ENDPOINT}/api/{org}/v1/{traces,metrics,logs}`（无尾斜杠，exporter 自动追加 `/v1/...`；认证复用 OTLP_METADATA 的 authorization）。注意 self-hosted 的 HTTP 端口是 **5080**（5081 是 gRPC）
-   - 实现要点：trace_kit 注册全局 meter provider；EnvFilter 改为各日志层 per-layer Filter（避免 `Layered::enabled` AND 链掐断指标事件）；sqlx 指标层为裸 Layer + `event_enabled`/`on_event` 自过滤、注册于 EnvFilter 之前
+   - **出口：OTLP/gRPC（性能优先，HTTP/2 多路复用；端口 5081）**——三信号统一 gRPC + per-layer filter；OpenObserve 对直方图的已知坑与备选路径见下文
+   - 实现要点：trace_kit 注册全局 meter provider；各日志/桥接层独立挂 EnvFilter per-layer Filter（**tracing-subscriber 标准 per-layer filtering，非 hack**——EnvFilter 当全局 Layer 时 `Layered::enabled` AND 链会全局掐断 `sqlx::query=off` 的事件，指标层收不到）；sqlx 指标层 `enabled`/`event_enabled` 恒 true（AND 链不否决）+ `on_event` 过滤，注册于 EnvFilter 之前
+
+   **OpenObserve 直方图坑（重要演进记录）**：OTLP 直方图在 OpenObserve 曾存 0 事件（[issue #12345](https://github.com/openobserve/openobserve/issues/12345)：创建流但数据 0）；修复 #12615 仅覆盖 **OTLP/JSON** 编码路径。排查结论：
+   - gRPC（5081）与 HTTP+protobuf 均实测丢直方图（gauge 正常）
+   - **HTTP + JSON 编码（5080）实测可存**——`db_query_duration_bucket/_sum/_count/_min/_max` 系列全部有数据
+   - 当前选择 gRPC 性能优先——**若 gRPC 实测仍丢直方图，回退已验证的 HTTP+JSON**：`git checkout cb21bc5 -- libs/trace_kit Cargo.lock .env.example`，`.env` 端口改 5080
 2. **响应压缩** — Traefik 层配 gzip（省事）或 tower-http `CompressionLayer`，二选一。JSON API 可压缩 5-10x。
 3. **压测基线** — k6/wrk 打核心链路（登录、列表分页、单据创建），定 QPS/p99 预算，进 CI 防回归。
 4. **DB 慢 SQL 盲区** — docker-compose postgres 加 `shared_preload_libraries=pg_stat_statements`（+auto_explain），先看到最慢 SQL。
