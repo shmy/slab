@@ -6,9 +6,9 @@
 //!
 //! - 请求延迟：`record_request_metrics` axum 中间件，直方图 `http.server.request.duration`
 //!   （OTel 语义约定命名），属性 method / route（MatchedPath 模板）/ status。
-//! - sqlx 耗时：`SqlxQueryMetricsLayer` tracing Layer，消费 `sqlx::query` 日志事件的
-//!   `elapsed_secs` 字段 → 直方图 `db.query.duration`；注册在 EnvFilter 之前（自带 Targets
-//!   过滤，见 trace_kit::init_tracing 注释），日志层由 `sqlx::query=off` 屏蔽噪音。
+//! - sqlx 耗时：`SqlxQueryMetricsLayer` tracing Layer（裸 Layer + 自过滤，见 struct doc），
+//!   消费 `sqlx::query` 日志事件的 `elapsed_secs` 字段 → 直方图 `db.query.duration`；
+//!   日志层由 EnvFilter 的 `sqlx::query=off` 屏蔽同一事件的噪音输出。
 //! - 积压：`internal_jobs.rs` 的 `BacklogMetrics` 周期任务采样（调 `JobBus::backlog` / `EventBus::backlog`）。
 
 use std::sync::OnceLock;
@@ -19,12 +19,10 @@ use axum::response::Response;
 use opentelemetry::KeyValue;
 use opentelemetry::global::meter;
 use opentelemetry::metrics::{Gauge, Histogram};
-use tracing::Level;
+
 use tracing::field::{Field, Visit};
-use tracing::{Event, Subscriber};
-use tracing_subscriber::filter::{Filtered, Targets};
-use tracing_subscriber::layer::{Context, Layer as _};
-use tracing_subscriber::registry::Registry;
+use tracing::{Event, Metadata, Subscriber};
+use tracing_subscriber::layer::Context;
 
 const METER_NAME: &str = "slab";
 
@@ -140,11 +138,31 @@ pub fn event_deliveries_pending() -> &'static Gauge<i64> {
 
 /// sqlx 查询事件 → 耗时直方图的 tracing Layer。
 ///
-/// 只消费 target `sqlx::query` 的事件；自带 Targets 过滤（注册于 EnvFilter 之前，
-/// 不被日志级别掐断），日志层由 EnvFilter 的 `sqlx::query=off` 指令屏蔽同一事件的噪音输出。
+/// 裸 Layer + 自过滤（不依赖 `Filtered`/per-layer filter 注册路径——经 `Box<dyn Layer>` 包装时
+/// Filtered 的 filter 注册不可靠，实测收不到事件）：
+/// - `enabled` 恒 true：默认 `register_callsite` 据此返回 `Interest::always`（贡献 interest、
+///   不短路其他层），且不触发 `Layered::enabled` 的 AND 短路；
+/// - `event_enabled` 恒 true：AND 链上不否决任何事件（见方法注释）；
+/// - `on_event` 校验 target 后取 `elapsed_secs`——真正 per-layer 过滤在这里。
+///
+/// **已知代价**：`enabled` 恒 true 使全部 callsite 获 `Interest::always`，被 EnvFilter 拒绝的
+/// trace/debug 事件仍会被构造并分发（实测为让 sqlx 事件在 `Box<dyn Layer>` 包装下可达所必需，
+/// 构造开销极低，但语义上绕过日志级别过滤）。
 pub(crate) struct SqlxQueryMetricsLayer;
 
 impl<S: Subscriber> tracing_subscriber::layer::Layer<S> for SqlxQueryMetricsLayer {
+    // register_callsite 用默认实现（基于 enabled=true → Interest::always：贡献 interest
+    // 且不短路，sqlx 靠 enabled! 判定是否构造事件）。
+    fn enabled(&self, _metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        true
+    }
+
+    // 必须恒 true：`Layered::event_enabled` 是 AND 链，任一层返回 false 会全局丢弃事件
+    // （Filtered::event_enabled 拒绝时也返回 true，per-layer 语义在 on_event 里实现）。
+    fn event_enabled(&self, _event: &Event<'_>, _ctx: Context<'_, S>) -> bool {
+        true
+    }
+
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         if event.metadata().target() != "sqlx::query" {
             return;
@@ -168,11 +186,6 @@ impl Visit for ElapsedSecs {
     }
     // 其余字段（summary / db.statement / rows_* / elapsed 等）不采集。
     fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
-}
-
-/// 构造 sqlx 指标层：`Filtered` 自带 per-layer Targets 过滤，只放行 `sqlx::query` @ INFO。
-pub(crate) fn sqlx_query_layer() -> Filtered<SqlxQueryMetricsLayer, Targets, Registry> {
-    SqlxQueryMetricsLayer.with_filter(Targets::new().with_target("sqlx::query", Level::INFO))
 }
 
 /// 请求延迟中间件：记录 method / 路由模板（MatchedPath）/ 状态码 → `http.server.request.duration`。
@@ -199,60 +212,81 @@ pub async fn record_request_metrics(req: Request, next: Next) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use opentelemetry::metrics::MeterProvider as _;
+    use crate::metrics::SqlxQueryMetricsLayer;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, Metric, MetricData};
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
-    use tracing_subscriber::filter::Targets;
-    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::layer::{Layer as _, SubscriberExt as _};
 
-    /// 端到端验证：sqlx::query 日志事件（含 elapsed_secs 字段）→ `db.query.duration` 直方图。
-    /// 同时验证 EnvFilter 层的 `sqlx::query=off` 不掐断事件（per-layer Filter 语义，
-    /// Filtered::enabled 恒 true，由 Registry FilterState 按层裁决）。
+    /// 串行验证（避免 set_meter_provider 全局替换 + OnceLock instrument 绑定的测试污染）：
+    /// 1. 裸 Layer 自过滤：sqlx::query 事件 → db.query.duration 直方图，EnvFilter=off 不影响；
+    /// 2. 生产组装复刻：Box<dyn Layer> + and_then reduce + 多层叠 + global dispatch 同样收到。
     #[test]
-    fn sqlx_query_event_records_duration_histogram() {
-        // 1. 内存 exporter + 全局 meter provider（global 只能设一次，本测试进程内唯一）。
+    fn sqlx_query_events_flow_through_metrics_layer() {
         let exporter = InMemoryMetricExporter::default();
         let provider = SdkMeterProvider::builder()
             .with_reader(PeriodicReader::builder(exporter.clone()).build())
             .build();
         opentelemetry::global::set_meter_provider(provider.clone());
 
-        // 2. 模拟 init_tracing 的组合：sqlx 指标层（独立 Targets）+ EnvFilter 过滤的日志层。
+        // 场景 1：裸 Layer + EnvFilter(sqlx::query=off) 的日志层（per-layer 语义互不干扰）。
         let subscriber = tracing_subscriber::registry()
-            .with(
-                SqlxQueryMetricsLayer
-                    .with_filter(Targets::new().with_target("sqlx::query", Level::INFO)),
-            )
+            .with(SqlxQueryMetricsLayer)
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_filter(tracing_subscriber::EnvFilter::new("off,sqlx::query=off")),
             );
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let guard = tracing::subscriber::set_default(subscriber);
 
-        // 3. 模拟 sqlx QueryLogger 的完成事件（target + elapsed_secs 字段）。
         tracing::info!(target: "sqlx::query", summary = "SELECT 1", elapsed_secs = 0.042);
-        // 非 sqlx 事件不应被采集。
         tracing::info!("ordinary log");
+        drop(guard);
 
-        // 4. 冲刷并断言。
+        // 场景 2：生产组装（main.rs 同款）：Box + reduce + 多层 + global dispatch。
+        let extra: Vec<
+            Box<
+                dyn tracing_subscriber::layer::Layer<tracing_subscriber::registry::Registry>
+                    + Send
+                    + Sync,
+            >,
+        > = vec![Box::new(SqlxQueryMetricsLayer)];
+        let stack = extra
+            .into_iter()
+            .reduce(|acc, layer| Box::new(acc.and_then(layer)))
+            .expect("non-empty");
+        let filter = tracing_subscriber::EnvFilter::new("debug");
+        let subscriber = tracing_subscriber::registry()
+            .with(stack)
+            .with(tracing_subscriber::fmt::layer().with_filter(filter.clone()))
+            .with(tracing_subscriber::fmt::layer().with_filter(filter.clone()))
+            .with(tracing_subscriber::fmt::layer().with_filter(filter.clone()));
+        let _ = tracing::subscriber::set_global_default(subscriber);
+
+        tracing::info!(target: "sqlx::query", summary = "SELECT 2", elapsed_secs = 0.017);
+
         provider.force_flush().expect("flush metrics");
-        let finished = exporter
-            .get_finished_metrics()
-            .expect("get finished metrics");
+        let finished = exporter.get_finished_metrics().expect("finished metrics");
         let metric: Option<&Metric> = finished
             .iter()
             .flat_map(|rm| rm.scope_metrics())
             .flat_map(|scope| scope.metrics())
             .find(|m| m.name() == "db.query.duration");
-        let metric = metric.expect("db.query.duration must be recorded");
+        let metric = metric.expect("db.query.duration must be recorded in both scenarios");
         let AggregatedMetrics::F64(MetricData::Histogram(hist)) = metric.data() else {
             panic!("expected f64 histogram for db.query.duration");
         };
-        let mut points = hist.data_points();
-        let dp = points.next().expect("one histogram data point");
-        assert!(points.next().is_none(), "only one data point expected");
-        assert_eq!(dp.count(), 1);
-        assert!((dp.sum() - 0.042).abs() < 1e-9);
+        // 同一 instrument 无属性 → 两场景数据点累积为同一时间序列（count=2, sum=0.059）。
+        // 注意：若未来给直方图加属性/换 instrument，此断言需同步拆成两段验证。
+        let dps: Vec<_> = hist.data_points().collect();
+        assert_eq!(
+            dps.len(),
+            1,
+            "both scenarios aggregate into one time series"
+        );
+        assert_eq!(dps[0].count(), 2, "both scenarios must contribute");
+        assert!(
+            (dps[0].sum() - 0.059).abs() < 1e-9,
+            "sum = {:?}",
+            dps[0].sum()
+        );
     }
 }

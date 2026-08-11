@@ -66,7 +66,7 @@ pub fn init_tracing(
 ) -> TracingGuard {
     let filter = log_filter(&config);
     #[cfg(feature = "console")]
-    let console_layer = tracing_subscriber::fmt::layer().with_ansi(true);
+    let console_layer = tracing_subscriber::fmt::layer().json();
 
     #[cfg(feature = "otlp")]
     let (log_layer, log_provider) = {
@@ -149,9 +149,11 @@ pub fn init_tracing(
         (layer, provider)
     };
 
-    // 各层独立过滤：extra 层（如 sqlx 指标层）自带 Targets 过滤器，放在最前；
-    // 日志/桥接层统一挂 EnvFilter per-layer Filter——注意不能把 EnvFilter 当全局 Layer 注册，
-    // 否则 `Layered::enabled` 的 AND 链会全局掐断被它拒绝的事件（sqlx 指标层将收不到任何事件）。
+    // 各层独立过滤：extra 层（如 sqlx 指标层）放在最前，自带 event_enabled 自过滤
+    // （裸 Layer，不依赖 per-layer Filter 注册路径——经 Box<dyn Layer> 包装时 Filtered 的
+    // filter 注册不可靠，实测收不到事件）；日志/桥接层统一挂 EnvFilter per-layer Filter——
+    // 注意不能把 EnvFilter 当全局 Layer 注册，否则 `Layered::enabled` 的 AND 链会全局
+    // 掐断被它拒绝的事件（sqlx 指标层将收不到任何事件）。
     let extra_stack: Box<dyn Layer<Registry> + Send + Sync> = extra_layers
         .into_iter()
         .reduce(|acc, layer| Box::new(acc.and_then(layer)))

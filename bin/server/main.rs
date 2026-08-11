@@ -34,8 +34,9 @@ async fn main() -> Result<()> {
             &cli.otlp.endpoint,
             cli.otlp.metadata.expose_secret(),
         ),
-        // sqlx 查询耗时指标层：独立 Targets 过滤，注册于 EnvFilter 之前（见 trace_kit::init_tracing 注释）。
-        vec![Box::new(metrics::sqlx_query_layer())],
+        // sqlx 查询耗时指标层：裸 Layer + 自过滤（见 metrics::SqlxQueryMetricsLayer doc），
+        // 注册于 EnvFilter 之前（见 trace_kit::init_tracing 注释）。
+        vec![Box::new(metrics::SqlxQueryMetricsLayer)],
     );
     info!("{:?}", &cli);
     server::serve(cli).await?;

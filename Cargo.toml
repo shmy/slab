@@ -228,7 +228,7 @@ tracing = { version = "0.1", default-features = false, features = [
 ] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
-    "ansi",
+    "json",
 ] }
 tsid = { version = "0.3", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
