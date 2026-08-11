@@ -697,7 +697,6 @@ async fn reenqueue_orphaned(bus: &JobBus, orphan_timeout: Duration) -> Result<i6
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use sqlx::Row as _;
 
     pub(crate) async fn latest_id(bus: &JobBus, job_type: &str) -> Result<i64> {
         match bus {
