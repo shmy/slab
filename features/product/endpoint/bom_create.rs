@@ -110,6 +110,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use product_contract::value_object::BomStatus;
 
     #[sqlx::test]
     async fn test_bom_create_success(pool: sqlx::PgPool) {
@@ -150,7 +151,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.total_qty, 1);
-        assert_eq!(row.status, 0);
+        assert_eq!(row.status, BomStatus::Draft as i16);
 
         let n = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM bom_items WHERE bom_id = $1",
@@ -173,6 +174,6 @@ mod tests {
         assert!(audit_row.before.is_none());
         let after: serde_json::Value = audit_row.after.unwrap();
         assert_eq!(after["name"], "玩具车 BOM");
-        assert_eq!(after["status"], 0);
+        assert_eq!(after["status"], BomStatus::Draft as i16);
     }
 }

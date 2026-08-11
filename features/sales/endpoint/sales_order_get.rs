@@ -79,6 +79,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use sales_contract::value_object::SalesOrderStatus;
 
     #[sqlx::test]
     async fn test_get_order_with_lines(pool: sqlx::PgPool) {
@@ -94,7 +95,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(detail.order.code, "SO-GET-1");
-        assert_eq!(detail.order.status, 0);
+        assert_eq!(detail.order.status, SalesOrderStatus::Draft as i16);
         assert_eq!(detail.lines.len(), 1);
         assert_eq!(detail.lines[0].quantity, 10);
         assert_eq!(detail.lines[0].delivered_qty, 3);

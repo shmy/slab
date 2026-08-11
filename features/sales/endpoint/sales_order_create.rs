@@ -137,6 +137,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use sales_contract::value_object::SalesOrderStatus;
 
     #[sqlx::test]
     async fn test_create_order_success(pool: sqlx::PgPool) {
@@ -178,7 +179,7 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 0);
+        assert_eq!(row.status, SalesOrderStatus::Draft as i16);
         // 10*100 + 5*200 = 2000
         assert_eq!(row.total_amount, 2000);
 

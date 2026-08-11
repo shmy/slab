@@ -129,6 +129,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use sales_contract::value_object::SalesOrderStatus;
 
     async fn seed_order(state: &appctx::AppCtx, code: &str, status: i16) -> ID {
         let customer_id = tests::insert_test_customer(&state.pg_pool, "C-AP-1").await;
@@ -154,7 +155,7 @@ mod tests {
             .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 1);
+        assert_eq!(status, SalesOrderStatus::Submitted as i16);
 
         // 变更历史：update 类型，before.status=0 → after.status=1
         let audit_row = sqlx::query!(
@@ -168,8 +169,8 @@ mod tests {
         assert_eq!(audit_row.entity, "sales_order");
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 0);
-        assert_eq!(after["status"], 1);
+        assert_eq!(before["status"], SalesOrderStatus::Draft as i16);
+        assert_eq!(after["status"], SalesOrderStatus::Submitted as i16);
     }
 
     #[sqlx::test]
@@ -210,7 +211,7 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 2);
+        assert_eq!(row.status, SalesOrderStatus::PendingSupervisor as i16);
         assert!(row.approved_at.is_some());
 
         // 变更历史：update 类型，before.status=1 → after.status=2
@@ -224,8 +225,8 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 1);
-        assert_eq!(after["status"], 2);
+        assert_eq!(before["status"], SalesOrderStatus::Submitted as i16);
+        assert_eq!(after["status"], SalesOrderStatus::PendingSupervisor as i16);
     }
 
     #[sqlx::test]

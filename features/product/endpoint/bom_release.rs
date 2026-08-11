@@ -9,6 +9,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use product_contract::entity::Bom;
 use product_contract::error::ProductError;
+use product_contract::value_object::BomStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -61,12 +62,16 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(ProductError::BomNotFound)?;
-    if before.status != 0 {
+    if before.status != BomStatus::Draft as i16 {
         return Err(ProductError::InvalidStatus.into());
     }
-    sqlx::query!("UPDATE boms SET status = 1 WHERE id = $1", &*path.id)
-        .execute(&mut *txn)
-        .await?;
+    sqlx::query!(
+        "UPDATE boms SET status = $1 WHERE id = $2",
+        BomStatus::Released as i16,
+        &*path.id
+    )
+    .execute(&mut *txn)
+    .await?;
     let after: Bom = sqlx::query_as!(
         Bom,
         r#"SELECT id, code, name, item_id, version, status, total_qty, remark
@@ -85,6 +90,7 @@ mod tests {
     use super::*;
     use crate::tests;
     use migration::run_migrations;
+    use product_contract::value_object::BomStatus;
 
     #[sqlx::test]
     async fn test_release_draft_success(pool: sqlx::PgPool) {
@@ -105,7 +111,7 @@ mod tests {
             .fetch_one(&mut *pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 1);
+        assert_eq!(status, BomStatus::Released as i16);
 
         // 变更历史：update 类型，before/after 快照记录状态流转 0 → 1
         let audit_row = sqlx::query!(
@@ -118,8 +124,8 @@ mod tests {
         assert_eq!(audit_row.action, 2); // Updated
         let before: serde_json::Value = audit_row.before.unwrap();
         let after: serde_json::Value = audit_row.after.unwrap();
-        assert_eq!(before["status"], 0);
-        assert_eq!(after["status"], 1);
+        assert_eq!(before["status"], BomStatus::Draft as i16);
+        assert_eq!(after["status"], BomStatus::Released as i16);
     }
 
     #[sqlx::test]

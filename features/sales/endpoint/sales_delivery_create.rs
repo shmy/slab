@@ -6,6 +6,7 @@ use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use sales_contract::entity::SalesDelivery;
 use sales_contract::error::SalesError;
+use sales_contract::value_object::SalesOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -68,7 +69,7 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(SalesError::NotFound)?;
-    if order.status != 3 {
+    if order.status != SalesOrderStatus::Approved as i16 {
         return Err(SalesError::OrderNotApproved.into());
     }
 
