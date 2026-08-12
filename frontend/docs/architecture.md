@@ -31,6 +31,7 @@ src/
 │   ├── utils.ts                # cn()（clsx + tailwind-merge）+ maskPhone 手机号脱敏
 │   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化（导出 authRequest 供域模块复用）
 │   ├── customers.ts            # 客户 CRUD 域模块（列表/详情/创建/更新/删除，cursor 分页）
+│   ├── accounts.ts             # 账号（用户）CRUD 域模块（列表/详情/创建/更新/删除）
 │   ├── audit.ts                # 审计日志查询（按实体 entity+entity_id）
 │   ├── validators.ts           # 共享 zod schema（passwordSchema，与后端 Password 规则对齐）
 │   ├── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
@@ -45,6 +46,7 @@ src/
 │   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）
 │   ├── PageTabs.tsx           # Chrome 风格多标签页（右键菜单：刷新/关闭当前/关闭其他/关闭全部）
 │   ├── keep-alive.tsx         # 页面 keep-alive（KeepAliveProvider/KeepAliveOutlet/useKeepAlive）
+│   ├── RowActions.tsx         # 表格行操作：查看详情 + ⋯ 菜单（菜单项声明式数组，两页共用）
 │   ├── AuditHistory.tsx       # 实体变更历史抽屉（审计日志 + 字段级 diff，通用组件）
 │   ├── TextField.tsx          # TanStack Form 文本字段控件（label + Input + FieldError 一体）
 │   ├── DataTable.tsx          # 业务表格：VirtualTable 薄封装（固定 features + 声明式列配置，见 §4.7）

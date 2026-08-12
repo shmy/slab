@@ -18,6 +18,7 @@ import { Route as AppContentCategoriesRouteImport } from './routes/_app/content/
 import { Route as AppCustomersIndexRouteImport } from './routes/_app/customers/index'
 import { Route as AppSettingsGeneralRouteImport } from './routes/_app/settings/general'
 import { Route as AppSettingsPermissionsRouteImport } from './routes/_app/settings/permissions'
+import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings/users'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -63,6 +64,11 @@ const AppSettingsPermissionsRoute = AppSettingsPermissionsRouteImport.update({
   path: '/settings/permissions',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsUsersRoute = AppSettingsUsersRouteImport.update({
+  id: '/settings/users',
+  path: '/settings/users',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/content/categories': typeof AppContentCategoriesRoute
   '/settings/general': typeof AppSettingsGeneralRoute
   '/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/customers/': typeof AppCustomersIndexRoute
 }
 export interface FileRoutesByTo {
@@ -82,6 +89,7 @@ export interface FileRoutesByTo {
   '/content/categories': typeof AppContentCategoriesRoute
   '/settings/general': typeof AppSettingsGeneralRoute
   '/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/settings/users': typeof AppSettingsUsersRoute
   '/customers': typeof AppCustomersIndexRoute
 }
 export interface FileRoutesById {
@@ -94,6 +102,7 @@ export interface FileRoutesById {
   '/_app/content/categories': typeof AppContentCategoriesRoute
   '/_app/settings/general': typeof AppSettingsGeneralRoute
   '/_app/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/_app/settings/users': typeof AppSettingsUsersRoute
   '/_app/customers/': typeof AppCustomersIndexRoute
 }
 export interface FileRouteTypes {
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/content/categories'
     | '/settings/general'
     | '/settings/permissions'
+    | '/settings/users'
     | '/customers/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -116,6 +126,7 @@ export interface FileRouteTypes {
     | '/content/categories'
     | '/settings/general'
     | '/settings/permissions'
+    | '/settings/users'
     | '/customers'
   id:
     | '__root__'
@@ -127,6 +138,7 @@ export interface FileRouteTypes {
     | '/_app/content/categories'
     | '/_app/settings/general'
     | '/_app/settings/permissions'
+    | '/_app/settings/users'
     | '/_app/customers/'
   fileRoutesById: FileRoutesById
 }
@@ -200,6 +212,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsPermissionsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/users': {
+      id: '/_app/settings/users'
+      path: '/settings/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof AppSettingsUsersRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -210,6 +229,7 @@ interface AppRouteChildren {
   AppContentCategoriesRoute: typeof AppContentCategoriesRoute
   AppSettingsGeneralRoute: typeof AppSettingsGeneralRoute
   AppSettingsPermissionsRoute: typeof AppSettingsPermissionsRoute
+  AppSettingsUsersRoute: typeof AppSettingsUsersRoute
   AppCustomersIndexRoute: typeof AppCustomersIndexRoute
 }
 
@@ -220,6 +240,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppContentCategoriesRoute: AppContentCategoriesRoute,
   AppSettingsGeneralRoute: AppSettingsGeneralRoute,
   AppSettingsPermissionsRoute: AppSettingsPermissionsRoute,
+  AppSettingsUsersRoute: AppSettingsUsersRoute,
   AppCustomersIndexRoute: AppCustomersIndexRoute,
 }
 

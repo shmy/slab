@@ -12,3 +12,4 @@ account_password_decode_failed = Failed to decode password
 account_password_incorrect = Incorrect password
 account_invalid_credentials = Invalid account or password
 refresh_token_invalid = Refresh token is invalid or expired
+account_protected = This account is privileged and cannot be modified

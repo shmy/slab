@@ -3,6 +3,7 @@ use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
+use identity_contract::error::IdentityError;
 use identity_contract::port::AccountPort;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
@@ -66,6 +67,10 @@ async fn execute(
 ) -> rootcause::Result<UpdateAccountResponse> {
     let mut txn = pg_pool.begin().await?;
     let before = AccountPort::by_id(&mut txn, &path.id).await?;
+    // 特权账号受保护：不可被编辑（前端同时禁用 UI，后端强校验双保险）
+    if before.privileged {
+        return Err(IdentityError::AccountProtected.into());
+    }
     let mut account = before.clone();
     account.name = request.name;
     account.phone = request.phone;
@@ -86,7 +91,8 @@ mod tests {
     use crate::repository::account_repository::AccountRepository;
     use crate::tests;
     use appctx::testing;
-    use identity_contract::port::AccountPort;
+    use identity_contract::error::IdentityError;
+use identity_contract::port::AccountPort;
     use migration::run_migrations;
 
     #[sqlx::test]

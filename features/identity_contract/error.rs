@@ -14,6 +14,8 @@ pub enum IdentityError {
     AccountPasswordIncorrect,
     #[error("account_invalid_credentials")]
     AccountInvalidCredentials,
+    #[error("account_protected")]
+    AccountProtected,
     #[error("refresh_token_invalid")]
     RefreshTokenInvalid,
 }

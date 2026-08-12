@@ -3,6 +3,7 @@ use audit_contract::AuditService;
 use axum::extract::State;
 use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
+use identity_contract::error::IdentityError;
 use identity_contract::port::AccountPort;
 use sqlx::Acquire;
 use web::extract::valid_path::ValidPath;
@@ -61,6 +62,12 @@ async fn execute(
         Err(err) if err.to_string().contains("account_not_found") => None,
         Err(err) => return Err(err),
     };
+    // 特权账号受保护：不可删除（前端同时禁用 UI，后端强校验双保险）
+    if let Some(target) = &before {
+        if target.privileged {
+            return Err(IdentityError::AccountProtected.into());
+        }
+    }
     AccountRepository::delete(&mut txn, &path.id).await?;
     if let Some(before) = before {
         AuditService::record_deleted(&mut txn, "account", &path.id, &ctx, &before).await?;
@@ -78,7 +85,8 @@ mod tests {
     use super::*;
     use crate::tests;
     use appctx::testing;
-    use identity_contract::port::AccountPort;
+    use identity_contract::error::IdentityError;
+use identity_contract::port::AccountPort;
     use migration::run_migrations;
 
     #[sqlx::test]

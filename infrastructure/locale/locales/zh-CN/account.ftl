@@ -12,3 +12,4 @@ account_password_decode_failed = 密码解码失败
 account_password_incorrect = 密码错误
 account_invalid_credentials = 账号或密码错误
 refresh_token_invalid = 刷新令牌无效或已过期
+account_protected = 特权账号不可修改、删除或重置密码

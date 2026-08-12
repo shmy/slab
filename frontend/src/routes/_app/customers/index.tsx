@@ -6,15 +6,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import {
-  Eye,
-  History,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-} from 'lucide-react';
+import { History, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { type FormEvent, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -22,6 +14,7 @@ import { AuditHistorySheet } from '@/components/AuditHistory';
 import { CopyableText } from '@/components/CopyableText';
 import { type DataColumn, DataTable } from '@/components/DataTable';
 import { InfoRow } from '@/components/InfoRow';
+import { RowActions } from '@/components/RowActions';
 import { TextField } from '@/components/TextField';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,13 +26,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   Sheet,
@@ -193,12 +179,31 @@ function CustomersPage() {
         align: 'center',
         render: (c) => (
           <RowActions
-            customer={c}
+            name={c.name}
             busy={opening === c.id}
             onDetail={() => void openDetail(c)}
-            onEdit={() => void openEditor(c)}
-            onHistory={() => setHistoryTarget(c)}
-            onDelete={() => setDeleting(c)}
+            items={[
+              {
+                key: 'edit',
+                label: '编辑',
+                icon: <Pencil className="h-4 w-4" />,
+                onClick: () => void openEditor(c),
+                disabled: opening === c.id,
+              },
+              {
+                key: 'history',
+                label: '历史',
+                icon: <History className="h-4 w-4" />,
+                onClick: () => setHistoryTarget(c),
+              },
+              {
+                key: 'delete',
+                label: '删除',
+                icon: <Trash2 className="h-4 w-4" />,
+                onClick: () => setDeleting(c),
+                destructive: true,
+              },
+            ]}
           />
         ),
       },
@@ -360,73 +365,6 @@ function CustomersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-/** 行操作：查看详情（直接显示）+ 更多（编辑 / 历史 / 删除） */
-function RowActions({
-  customer,
-  busy,
-  onDetail,
-  onEdit,
-  onHistory,
-  onDelete,
-}: {
-  customer: CustomerItem;
-  busy: boolean;
-  onDetail: () => void;
-  onEdit: () => void;
-  onHistory: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-end gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={`查看 ${customer.name} 详情`}
-        title="查看详情"
-        disabled={busy}
-        className="text-ink-soft"
-        onClick={onDetail}
-      >
-        <Eye />
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`${customer.name} 的更多操作`}
-              title="更多"
-              className="text-ink-soft"
-            />
-          }
-        >
-          <MoreHorizontal />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40 p-1.5">
-          <DropdownMenuItem onClick={onEdit} disabled={busy} className="gap-2">
-            <Pencil className="h-4 w-4" />
-            编辑
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onHistory} className="gap-2">
-            <History className="h-4 w-4" />
-            历史
-          </DropdownMenuItem>
-          <DropdownMenuSeparator className="my-1.5" />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={onDelete}
-            className="gap-2"
-          >
-            <Trash2 className="h-4 w-4" />
-            删除
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   );
 }

@@ -3,6 +3,7 @@ use appctx::PgPool;
 use audit_contract::AuditService;
 use axum::extract::State;
 use http_auth::extract::operator::OperatorContext;
+use identity_contract::error::IdentityError;
 use identity_contract::port::AccountPort;
 use identity_contract::value_object::hashed_password::HashedPassword;
 use identity_contract::value_object::password::Password;
@@ -65,6 +66,10 @@ async fn execute(
     let mut conn = pg_pool.acquire().await?;
     // 端点无显式事务：before/after 读取与审计写入共用同一连接（各自隐式事务）
     let before = AccountPort::by_id(&mut conn, &path.id).await?;
+    // 特权账号受保护：不可被重置密码（前端同时禁用 UI，后端强校验双保险）
+    if before.privileged {
+        return Err(IdentityError::AccountProtected.into());
+    }
     AccountRepository::update_password(&mut conn, &path.id, &new_hashed).await?;
     let after = AccountPort::by_id(&mut conn, &path.id).await?;
     AuditService::record_updated(&mut conn, "account", &path.id, &ctx, &before, &after).await?;

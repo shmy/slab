@@ -62,7 +62,7 @@ function ProfilePage() {
                 : 'bg-surface text-ink-soft border-line',
             )}
           >
-            {user.privileged ? '管理员' : '普通用户'}
+            {user.privileged ? '是' : '否'}
           </Badge>
 
           <nav className="mt-6 space-y-1">
@@ -153,8 +153,8 @@ function OverviewCard({ user }: { user: AuthUser }) {
         <InfoRow label="姓名" value={name} />
         <InfoRow label="手机号" value={maskPhone(phone)} />
         <InfoRow
-          label="角色"
-          value={privileged ? '管理员' : '普通用户'}
+          label="特权"
+          value={privileged ? '是' : '否'}
           valueClassName={privileged ? 'text-accent' : undefined}
         />
       </dl>

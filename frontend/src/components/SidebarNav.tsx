@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Users,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
@@ -50,6 +51,7 @@ export const navItems: (NavItem | NavGroup)[] = [
     label: '系统设置',
     icon: Settings,
     children: [
+      { to: '/settings/users', label: '用户管理', icon: Users },
       { to: '/settings/general', label: '通用设置', icon: SlidersHorizontal },
       { to: '/settings/permissions', label: '权限管理', icon: ShieldCheck },
     ],
