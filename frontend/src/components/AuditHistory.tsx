@@ -67,7 +67,7 @@ export function AuditHistorySheet({
       {/* 审计 diff 行较长，抽屉比默认宽；覆盖需带 data-[side=right] 前缀（否则特异性输给默认类）；移动端全屏 */}
       <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
         <SheetHeader>
-          <SheetTitle>变更历史</SheetTitle>
+          <SheetTitle>历史</SheetTitle>
           <SheetDescription>
             该实体的字段级变更记录（审计日志，按时间倒序）。
           </SheetDescription>

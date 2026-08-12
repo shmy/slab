@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import {
+  Eye,
   History,
   MoreHorizontal,
   Pencil,
@@ -18,7 +19,9 @@ import { type FormEvent, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { AuditHistorySheet } from '@/components/AuditHistory';
+import { CopyableText } from '@/components/CopyableText';
 import { type DataColumn, DataTable } from '@/components/DataTable';
+import { InfoRow } from '@/components/InfoRow';
 import { TextField } from '@/components/TextField';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -56,7 +59,7 @@ import {
   type CustomerDetail,
   type CustomerItem,
 } from '@/lib/customers';
-import { cn } from '@/lib/utils';
+import { cn, maskPhone } from '@/lib/utils';
 
 export const Route = createFileRoute('/_app/customers/')({
   staticData: { keepAlive: true },
@@ -78,6 +81,7 @@ function CustomersPage() {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [deleting, setDeleting] = useState<CustomerItem | null>(null);
   const [opening, setOpening] = useState<string | null>(null); // 正在拉取详情的编辑目标 id
+  const [detailTarget, setDetailTarget] = useState<CustomerDetail | null>(null); // 详情抽屉内容
   const [historyTarget, setHistoryTarget] = useState<CustomerItem | null>(null);
 
   // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加
@@ -95,6 +99,21 @@ function CustomersPage() {
 
   const items = customersQuery.data?.pages.flatMap((p) => p.items) ?? [];
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = customersQuery;
+
+  /** 查看详情：拉取完整字段（列表项只有 id/code/name/is_active） */
+  const openDetail = useCallback(async (customer: CustomerItem) => {
+    setOpening(customer.id);
+    try {
+      const detail = await apiGetCustomer(customer.id);
+      setDetailTarget(detail);
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? error.message : '加载客户详情失败',
+      );
+    } finally {
+      setOpening(null);
+    }
+  }, []);
 
   /** 编辑前先取详情（列表项只有 id/code/name/is_active）；内部只用稳定 setter，空依赖安全 */
   const openEditor = useCallback(async (customer: CustomerItem | null) => {
@@ -136,6 +155,17 @@ function CustomersPage() {
   const columns = useMemo<DataColumn<CustomerItem>[]>(
     () => [
       {
+        key: 'id',
+        header: 'ID',
+        width: 180,
+        render: (c) => (
+          <CopyableText
+            value={c.id}
+            className="font-mono text-xs text-ink-soft"
+          />
+        ),
+      },
+      {
         key: 'code',
         header: '编码',
         width: 120,
@@ -164,7 +194,8 @@ function CustomersPage() {
         render: (c) => (
           <RowActions
             customer={c}
-            editingDisabled={opening === c.id}
+            busy={opening === c.id}
+            onDetail={() => void openDetail(c)}
             onEdit={() => void openEditor(c)}
             onHistory={() => setHistoryTarget(c)}
             onDelete={() => setDeleting(c)}
@@ -172,7 +203,7 @@ function CustomersPage() {
         ),
       },
     ],
-    [opening, openEditor],
+    [opening, openDetail, openEditor],
   );
 
   function submitSearch(event: FormEvent) {
@@ -237,6 +268,7 @@ function CustomersPage() {
           data={items}
           columns={columns}
           getRowId={(row) => row.id}
+          selectable
           // 双门控：请求中不传回调（VirtualTable 内部另有 loadingMore 门控）
           onLoadMore={
             hasNextPage && !isFetchingNextPage
@@ -246,6 +278,15 @@ function CustomersPage() {
           loadingMore={isFetchingNextPage}
         />
       )}
+
+      {/* 详情抽屉 */}
+      <CustomerDetailSheet
+        detail={detailTarget}
+        open={detailTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailTarget(null);
+        }}
+      />
 
       {/* 变更历史（实体级审计；entity/entityId 契约见 lib/audit.ts） */}
       <AuditHistorySheet
@@ -323,16 +364,18 @@ function CustomersPage() {
   );
 }
 
-/** 行操作：编辑（直接显示）+ 更多（变更历史 / 删除） */
+/** 行操作：查看详情（直接显示）+ 更多（编辑 / 历史 / 删除） */
 function RowActions({
   customer,
-  editingDisabled,
+  busy,
+  onDetail,
   onEdit,
   onHistory,
   onDelete,
 }: {
   customer: CustomerItem;
-  editingDisabled: boolean;
+  busy: boolean;
+  onDetail: () => void;
   onEdit: () => void;
   onHistory: () => void;
   onDelete: () => void;
@@ -342,13 +385,13 @@ function RowActions({
       <Button
         variant="ghost"
         size="icon"
-        aria-label={`编辑 ${customer.name}`}
-        title="编辑"
-        disabled={editingDisabled}
+        aria-label={`查看 ${customer.name} 详情`}
+        title="查看详情"
+        disabled={busy}
         className="text-ink-soft"
-        onClick={onEdit}
+        onClick={onDetail}
       >
-        <Pencil />
+        <Eye />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -365,9 +408,13 @@ function RowActions({
           <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-40 p-1.5">
+          <DropdownMenuItem onClick={onEdit} disabled={busy} className="gap-2">
+            <Pencil className="h-4 w-4" />
+            编辑
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={onHistory} className="gap-2">
             <History className="h-4 w-4" />
-            变更历史
+            历史
           </DropdownMenuItem>
           <DropdownMenuSeparator className="my-1.5" />
           <DropdownMenuItem
@@ -381,6 +428,53 @@ function RowActions({
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  );
+}
+
+/** 客户详情抽屉（只读；编辑在 ⋯ 菜单里） */
+function CustomerDetailSheet({
+  detail,
+  open,
+  onOpenChange,
+}: {
+  detail: CustomerDetail | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>{detail?.name}</SheetTitle>
+          <SheetDescription>客户详情</SheetDescription>
+        </SheetHeader>
+        <dl className="min-h-0 flex-1 divide-y divide-line overflow-y-auto px-4 pb-6">
+          <InfoRow
+            label="ID"
+            value={
+              detail?.id ? (
+                <CopyableText value={detail.id} className="font-mono text-xs" />
+              ) : undefined
+            }
+          />
+          <InfoRow label="编码" value={detail?.code} />
+          <InfoRow label="联系人" value={detail?.contact_person ?? undefined} />
+          <InfoRow
+            label="手机号"
+            value={detail?.phone ? maskPhone(detail.phone) : undefined}
+          />
+          <InfoRow label="地址" value={detail?.address ?? undefined} />
+          <InfoRow
+            label="结算方式"
+            value={detail?.payment_terms ?? undefined}
+          />
+          <InfoRow
+            label="状态"
+            value={detail ? (detail.is_active ? '启用' : '停用') : undefined}
+          />
+        </dl>
+      </SheetContent>
+    </Sheet>
   );
 }
 

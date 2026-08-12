@@ -6,6 +6,7 @@ import { type FormEvent, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { FieldError } from '@/components/FieldError';
+import { InfoRow } from '@/components/InfoRow';
 import { TextField } from '@/components/TextField';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -161,25 +162,6 @@ function OverviewCard({ user }: { user: AuthUser }) {
         更多资料（头像、邮箱等）后续版本开放。
       </p>
     </Card>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-  valueClassName,
-}: {
-  label: string;
-  value: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between py-3.5">
-      <dt className="text-sm text-ink-soft">{label}</dt>
-      <dd className={cn('text-sm font-medium text-ink', valueClassName)}>
-        {value}
-      </dd>
-    </div>
   );
 }
 
