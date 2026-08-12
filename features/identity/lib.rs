@@ -35,7 +35,8 @@ impl DomainModule for Module {
             .routes(routes!(endpoint::account_reset_password::handler))
             .routes(routes!(
                 endpoint::account_logout::handler,
-                endpoint::account_update_password::handler
+                endpoint::account_update_password::handler,
+                endpoint::profile_current::handler
             ))
     }
 

@@ -69,12 +69,11 @@ src/
 | 登录 | `POST /api/v1/identity/login` `{phone, password}` | `{access_token, refresh_token, token_type, expires_in}` |
 | 刷新 | `POST /api/v1/identity/refresh` `{refresh_token}` | 同上（refresh token 轮换，旧值立即失效） |
 | 登出 | `POST /api/v1/identity/logout?access_token=…`（sendBeacon 场景；Bearer 头亦兼容） | `{logged_out}`（吊销 refresh + jti） |
-| 当前账号 | `GET /api/v1/accounts/{id}`（Bearer） | `{id, name, phone, privileged}` |
+| 当前账号 | `GET /api/v1/profile/current`（Bearer） | `{id, name, phone, privileged}`（从令牌取账号，无需解码 JWT） |
 
 - 错误统一为 RFC 9457 Problem Details（`application/problem+json`）：`{status, error_code, detail, title, trace_id}`；`account_invalid_credentials` → 400，`access_token_*` → 401
 - `detail` 按 `Accept-Language` 渲染（前端固定 `zh-CN`）
 - 鉴权中间件提取令牌：**`Authorization: Bearer` 头优先，回退 `?access_token=` / `?token=` query**（全端点生效，logout 的 sendBeacon 依赖此机制）
-- JWT（HS256）claims 含 `sub` = 账号 id，前端本地解码拿 id 再查账号信息（不验签，仅取公开 claims）
 
 ### 页面流程
 
@@ -98,7 +97,11 @@ login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向
 - `token.ts`：纯本地存储（`auth.tokens` / `auth.user` 两个 key）+ JWT payload 解码；auth store 与 api 层共用，无 UI 依赖
 - `api.ts`（xior）：请求自动附 `Authorization: Bearer`；**401 → 单飞刷新**（并发 401 只发一次 `/refresh`，其余等待同一结果）→ 重试原请求一次；刷新失败或重试仍 401 → 清会话 + 整页跳 `/login?redirect=...`
 - 登录/刷新接口自身的 401 不触发刷新循环（白名单 `AUTH_PATHS`）
-- 登录成功流程：`/login` 拿令牌 → 解码 sub → `/accounts/{id}` 拿用户 → 令牌 + 用户**同一次**写入 localStorage → store 更新（用户信息拉取失败不阻塞登录，sub 兜底）
+- 登录成功流程：`/login` 拿令牌 → **先存令牌** → `/profile/current` 自省（Bearer 取账号）→ 存用户 → store 更新；profile 失败 → 清令牌、登录失败（不留半状态）
+- 页面加载（hydrate）：有令牌 → 主动 fetch `/profile/current` 更新用户（改名/权限即时生效；401 由 api 层自动刷新，刷新失败强制登出回登录页）
+- 刷新（401 单飞）成功后：后台同步用户缓存（`saveUser`），不阻塞请求返回；UI store 由登录/加载时设定
+- **forceLogout 短路**：已在 `/login` 页（主动登出后 in-flight 请求 401）只清状态、不整页刷新，避免丢表单
+- 跨标签页：监听 `storage` 事件——他页登出（令牌清空）→ 本页登出；他页更新 user 缓存 → 同步 store；他页换令牌 → 重新 hydrate
 - 登出：**sendBeacon POST**（sendBeacon 无法设置请求头且实测无论有无 body 都发 POST，故令牌走 query `?access_token=`）→ **`localStorage.clear()` 全量清空**（含主题/字号/侧边栏偏好）→ store 置空。401 强制登出（`forceLogout`）只清 auth 两个 key，不动偏好
 - 守卫用 store 直接读取（模块级单例），未用 router context 注入（纯 CSR 场景功能等价且 router 从不重建）
 

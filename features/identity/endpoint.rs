@@ -8,3 +8,4 @@ pub(crate) mod account_reset_password;
 pub(crate) mod account_search;
 pub(crate) mod account_update;
 pub(crate) mod account_update_password;
+pub(crate) mod profile_current;

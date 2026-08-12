@@ -1,13 +1,17 @@
 // 令牌与用户缓存的本地存储（纯模块，无 UI / store 依赖；api 层与 auth store 共用）。
 
-const TOKENS_KEY = 'auth.tokens';
-const USER_KEY = 'auth.user';
+// 供 auth store 监听跨标签页变更（storage 事件）
+export const TOKENS_KEY = 'auth.tokens';
+export const USER_KEY = 'auth.user';
+
+/** storage 事件里判断是否与本会话相关（跨标签页同步用） */
+export function isAuthStorageKey(key: string | null): boolean {
+  return key === TOKENS_KEY || key === USER_KEY;
+}
 
 export interface StoredTokens {
   accessToken: string;
   refreshToken: string;
-  /** access token 过期时刻（epoch ms） */
-  expiresAt: number;
 }
 
 export interface AuthUser {
@@ -15,6 +19,21 @@ export interface AuthUser {
   name: string;
   phone: string;
   privileged: boolean;
+}
+
+/** profile 响应 → 本地用户模型（登录/加载/刷新三处共用） */
+export function toAuthUser(profile: {
+  id: string;
+  name: string;
+  phone: string;
+  privileged: boolean;
+}): AuthUser {
+  return {
+    id: profile.id,
+    name: profile.name,
+    phone: profile.phone,
+    privileged: profile.privileged,
+  };
 }
 
 function read<T>(key: string): T | null {
@@ -66,25 +85,5 @@ export function clearAllLocalStorage() {
     localStorage.clear();
   } catch {
     // 隐私模式下存储受限，忽略
-  }
-}
-
-/** 解码 JWT payload（不验签，仅取 sub / exp 等公开 claims） */
-export function decodeJwtPayload(
-  token: string,
-): { sub: string; exp: number } | null {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const data = JSON.parse(atob(normalized)) as {
-      sub?: unknown;
-      exp?: unknown;
-    };
-    if (typeof data.sub !== 'string' || typeof data.exp !== 'number')
-      return null;
-    return { sub: data.sub, exp: data.exp };
-  } catch {
-    return null;
   }
 }

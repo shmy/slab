@@ -3,7 +3,13 @@
 
 import xior, { type XiorRequestConfig } from 'xior';
 import type { components } from './api-schema';
-import { clearAuth, loadTokens, saveTokens } from './token';
+import {
+  clearAuth,
+  loadTokens,
+  saveTokens,
+  saveUser,
+  toAuthUser,
+} from './token';
 
 // 契约类型来自 openapi.json（后端 utoipa 生成），重新生成见 scripts/fetch-openapi.mjs
 type LoginResponse = components['schemas']['LoginResponse'];
@@ -101,8 +107,11 @@ function refreshTokensOnce(): Promise<boolean> {
       saveTokens({
         accessToken: result.access_token,
         refreshToken: result.refresh_token,
-        expiresAt: Date.now() + result.expires_in * 1000,
       });
+      // 刷新成功 → 后台同步用户信息到缓存（不阻塞请求返回；UI store 由登录时设定）
+      void apiGetCurrentProfile()
+        .then((profile) => saveUser(toAuthUser(profile)))
+        .catch(() => {});
       return true;
     } catch {
       return false;
@@ -116,6 +125,10 @@ function refreshTokensOnce(): Promise<boolean> {
 /** 刷新失败 / 重试仍 401 → 清理会话并回登录页（整页跳转，保证守卫重新执行） */
 function forceLogout() {
   clearAuth();
+  if (window.location.pathname.startsWith('/login')) {
+    // 已在登录页（如主动登出后 in-flight 请求 401）：只清状态，避免整页刷新丢表单
+    return;
+  }
   const redirect = encodeURIComponent(
     window.location.pathname + window.location.search,
   );
@@ -124,7 +137,7 @@ function forceLogout() {
 
 type RequestConfig = XiorRequestConfig & { _retried?: boolean };
 
-/** 统一请求：附 Bearer → 401 自动刷新重试一次 → 仍失败强制登出 */
+/** 统一请求：附 Bearer → 401 自动刷新重试一次 → 仍失败强制登出（刷新时机统一在 401 拦截，不依赖过期时间预测） */
 async function authRequest<T>(config: RequestConfig): Promise<T> {
   const tokens = loadTokens();
   const headers = { ...(config.headers ?? {}) };
@@ -162,9 +175,9 @@ export function apiLogin(
   });
 }
 
-export function apiGetAccount(id: string): Promise<AccountResponse> {
+export function apiGetCurrentProfile(): Promise<AccountResponse> {
   return authRequest<AccountResponse>({
     method: 'GET',
-    url: `/accounts/${id}`,
+    url: '/profile/current',
   });
 }

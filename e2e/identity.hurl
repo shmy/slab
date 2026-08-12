@@ -29,6 +29,24 @@ jsonpath "$.access_token" matches /^.+$/
 jsonpath "$.refresh_token" matches /^.+$/
 
 ###############################################################################
+# 当前账号自省（profile/current）
+GET {{base_url}}/api/v1/profile/current
+Authorization: Bearer {{admin_at_initial}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.phone" == "{{e2e_admin_phone}}"
+jsonpath "$.privileged" == true
+
+###############################################################################
+# profile/current：无令牌 → 401
+GET {{base_url}}/api/v1/profile/current
+
+HTTP 401
+[Asserts]
+jsonpath "$.error_code" == "access_token_missing"
+
+###############################################################################
 # 登录：手机号过短
 POST {{base_url}}/api/v1/identity/login
 Accept-Language: en-US
