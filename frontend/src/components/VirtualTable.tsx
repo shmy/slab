@@ -189,7 +189,7 @@ export function VirtualTable<TData extends RowData>({
       <div
         ref={scrollRef}
         className={cn(
-          'mt-4 overflow-auto border border-line',
+          'mt-4 overflow-auto rounded-2xl bg-surface shadow-md vt-card',
           height ?? 'flex-1 min-h-0',
         )}
       >

@@ -63,7 +63,7 @@ export const flatNav = navItems.flatMap((item) =>
   'children' in item ? item.children : [item],
 );
 
-// 键盘焦点可见性：深色侧边栏上统一的 focus 环
+// 键盘焦点可见性：统一的 focus 环（颜色随主题）
 const focusRing = 'focus-visible:ring-2 focus-visible:ring-ring/70';
 
 interface SidebarNavProps {
@@ -123,7 +123,7 @@ export function SidebarNav({
 
   // 分组按钮样式（非 Link，无激活态与 hover 冲突问题，颜色可合并）
   const groupClass = cn(
-    'flex w-full items-center rounded-md py-2 text-sm text-nord4 hover:bg-sidebar-hover hover:text-nord6',
+    'flex w-full items-center rounded-md py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent',
     focusRing,
     collapsed && !mobileOpen ? 'justify-center px-0' : 'gap-3 px-2.5',
   );
@@ -145,10 +145,12 @@ export function SidebarNav({
                   ? 'justify-center px-0'
                   : 'gap-3 px-2.5',
               )}
-              // 激活态：品牌色胶囊；深色侧边栏上 hover 用 sidebar-hover 提亮
-              activeProps={{ className: 'bg-accent text-nord6' }}
+              // 激活态：Filament 风格浅底胶囊（bg-sidebar-primary + 深蓝文字）
+              activeProps={{
+                className: 'bg-sidebar-primary text-sidebar-primary-foreground',
+              }}
               inactiveProps={{
-                className: 'text-nord4 hover:bg-sidebar-hover hover:text-nord6',
+                className: 'text-sidebar-foreground hover:bg-sidebar-accent',
               }}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -181,7 +183,8 @@ export function SidebarNav({
                     title={item.label}
                     className={cn(
                       groupClass,
-                      groupActive && 'bg-accent text-nord6 hover:bg-accent',
+                      groupActive &&
+                        'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary',
                     )}
                   >
                     <item.icon className="h-4 w-4 shrink-0" />
@@ -192,11 +195,11 @@ export function SidebarNav({
                 align="start"
                 side="right"
                 sideOffset={12}
-                // 直角 + 侧边栏同款深色背景（侧边栏永远深色，不随主题），无边框无阴影
-                className="w-44 rounded-none bg-sidebar p-1.5 text-nord5 shadow-none ring-0"
+                // 直角 + 侧边栏同款背景（随主题），无边框无阴影
+                className="w-44 rounded-none bg-sidebar p-1.5 text-sidebar-foreground shadow-none ring-0"
               >
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel className="px-2 py-1.5 text-nord4">
+                  <DropdownMenuLabel className="px-2 py-1.5 text-sidebar-foreground">
                     {item.label}
                   </DropdownMenuLabel>
                 </DropdownMenuGroup>
@@ -209,10 +212,10 @@ export function SidebarNav({
                       className={cn(
                         'gap-2 px-2 py-2',
                         // 导航项用小手；hover 只变背景，文字/图标色不变（激活项保持品牌色）
-                        'cursor-pointer focus:bg-sidebar-hover focus:text-nord5',
+                        'cursor-pointer focus:bg-sidebar-accent focus:text-sidebar-accent-foreground',
                         focusRing,
                         active &&
-                          'bg-accent text-nord6 focus:bg-accent focus:text-nord6',
+                          'bg-sidebar-primary text-sidebar-primary-foreground focus:bg-sidebar-primary focus:text-sidebar-primary-foreground',
                       )}
                     >
                       <child.icon className="h-4 w-4" />
@@ -234,8 +237,9 @@ export function SidebarNav({
               onClick={() => toggleGroup(item.label)}
               className={cn(
                 groupClass,
-                // 子项激活时分组高亮，hover 保持品牌色
-                groupActive && 'bg-accent text-nord6 hover:bg-accent',
+                // 子项激活时分组高亮，hover 保持激活底色
+                groupActive &&
+                  'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary',
               )}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -278,10 +282,14 @@ export function SidebarNav({
                         'flex items-center gap-3 rounded-md px-2.5 py-2 text-sm',
                         focusRing,
                       )}
-                      activeProps={{ className: 'bg-accent text-nord6' }}
-                      // hover 只变背景：图标/文字保持 nord4 不变
+                      activeProps={{
+                        className:
+                          'bg-sidebar-primary text-sidebar-primary-foreground',
+                      }}
+                      // hover 只变背景：图标/文字保持前景色不变
                       inactiveProps={{
-                        className: 'text-nord4 hover:bg-sidebar-hover',
+                        className:
+                          'text-sidebar-foreground hover:bg-sidebar-accent',
                       }}
                     >
                       <child.icon className="h-4 w-4 shrink-0" />

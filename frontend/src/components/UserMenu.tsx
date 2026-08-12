@@ -54,7 +54,7 @@ export function UserMenu({ compact, onOpenProfile }: UserMenuProps) {
       <DropdownMenuTrigger
         aria-label="用户菜单"
         className={cn(
-          'flex w-full items-center gap-3 rounded-md p-1 text-left outline-none transition-colors select-none hover:bg-sidebar-hover focus-visible:bg-sidebar-hover',
+          'flex w-full items-center gap-3 rounded-md p-1 text-left outline-none transition-colors select-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent',
           compact && 'justify-center',
         )}
       >
@@ -63,10 +63,10 @@ export function UserMenu({ compact, onOpenProfile }: UserMenuProps) {
         </Avatar>
         {!compact && (
           <>
-            <span className="flex-1 truncate text-sm text-nord5">
+            <span className="flex-1 truncate text-sm text-sidebar-foreground">
               {user?.name}
             </span>
-            <ChevronsUpDown className="h-4 w-4 shrink-0 text-nord4" />
+            <ChevronsUpDown className="h-4 w-4 shrink-0 text-sidebar-foreground" />
           </>
         )}
       </DropdownMenuTrigger>

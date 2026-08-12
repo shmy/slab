@@ -121,12 +121,13 @@ login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向
 ### 4.1 主题系统（index.css）
 
 - **Nord 色板**：16 色（nord0-15）注册进 `@theme`
-- **语义别名**：`canvas`（背景）/ `surface`（卡片面）/ `line`（边框）/ `ink`（文字）/ `accent`（操作色）/ `stripe`（表头+斑马纹）/ `header-line`（顶栏边框）/ `sidebar-line`（侧边栏分隔线，固定暗色）/ `sidebar` / `sidebar-hover`
+- **语义别名**：`canvas`（背景）/ `surface`（卡片面）/ `line`（边框）/ `ink`（文字）/ `accent`（强调色）/ `stripe`（表头+斑马纹）/ `header-line`（顶栏边框）/ `sidebar-line`（侧边栏分隔线，随主题）/ `sidebar`
 - **深浅模式**：组件只用语义类，深浅主题仅切换 CSS 变量值：
   - `:root[data-theme='dark'] { ... }` —— 手动深色
   - `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { ... } }` —— 跟随系统
   - `color-scheme` 同步，原生滚动条等自动适配
-- **关键原则**：侧边栏永远深色 → 其分隔线用固定变量（`sidebar-line`）不随主题变；顶栏背景跟随主题 → 边框用 `header-line`（深浅各一值）
+- **关键原则（Filament Nord 风格）**：侧边栏随主题——亮色下与页面同色（`#f5f8fa`）+ 浅底胶囊激活态（`bg-sidebar-primary` = nord6 底 + primary-800 文字），暗色下 `white/5` 激活/hover；主色 = 冰蓝 `#88c0d0`（nord8），按钮/输入框全圆（rounded-full），表格容器 `rounded-2xl + shadow-md`（暗色渐变底，见 `.vt-card`）
+- **hover 统一**：所有中性 hover 背景 = 菜单选中背景色（`--muted`：亮 `#e5e9f0` / 暗 `white/5`）——菜单项、表格行、侧边栏、ghost/outline 按钮、badge、tabs 全走同一色；`--color-accent` 只做静态强调（头像/徽标），不再承担 hover
 
 ### 4.2 布局（_app.tsx）
 

@@ -92,7 +92,9 @@ function AppLayout() {
       >
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-sidebar-line px-3">
           {(!collapsed || mobileOpen) && (
-            <span className="px-1 font-semibold text-nord6">Admin</span>
+            <span className="px-1 font-semibold text-sidebar-foreground">
+              Admin
+            </span>
           )}
           {mobileOpen && (
             <Button
@@ -100,7 +102,7 @@ function AppLayout() {
               size="icon"
               onClick={() => setMobileOpen(false)}
               aria-label="关闭菜单"
-              className="text-nord4 hover:bg-sidebar-hover hover:text-nord6 md:hidden"
+              className="text-sidebar-foreground hover:bg-sidebar-accent md:hidden"
             >
               <X className="h-4 w-4" />
             </Button>

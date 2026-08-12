@@ -153,7 +153,7 @@ export function PageTabs() {
                   onClick={() => closeTab(tab.to)}
                   // Chrome 风格：非激活标签 hover 时显示关闭按钮，激活标签常显
                   className={cn(
-                    'flex size-4 shrink-0 items-center justify-center rounded-sm text-ink-soft transition-opacity hover:bg-line hover:text-ink focus-visible:ring-2 focus-visible:ring-ring/70',
+                    'flex size-4 shrink-0 items-center justify-center rounded-sm text-ink-soft transition-opacity hover:bg-muted hover:text-ink focus-visible:ring-2 focus-visible:ring-ring/70',
                     active
                       ? 'opacity-100'
                       : 'opacity-0 group-hover:opacity-100',
