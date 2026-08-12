@@ -31,6 +31,7 @@ src/
 │   ├── utils.ts                # cn()（clsx + tailwind-merge）+ maskPhone 手机号脱敏
 │   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化（导出 authRequest 供域模块复用）
 │   ├── customers.ts            # 客户 CRUD 域模块（列表/详情/创建/更新/删除，cursor 分页）
+│   ├── audit.ts                # 审计日志查询（按实体 entity+entity_id）
 │   ├── validators.ts           # 共享 zod schema（passwordSchema，与后端 Password 规则对齐）
 │   ├── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
 │   └── api-schema.d.ts         # openapi.json 生成的契约类型（勿手改；重新生成见 §8）
@@ -44,6 +45,8 @@ src/
 │   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）
 │   ├── PageTabs.tsx           # Chrome 风格多标签页（右键菜单：刷新/关闭当前/关闭其他/关闭全部）
 │   ├── keep-alive.tsx         # 页面 keep-alive（KeepAliveProvider/KeepAliveOutlet/useKeepAlive）
+│   ├── AuditHistory.tsx       # 实体变更历史抽屉（审计日志 + 字段级 diff，通用组件）
+│   ├── TextField.tsx          # TanStack Form 文本字段控件（label + Input + FieldError 一体）
 │   ├── DataTable.tsx          # 业务表格：VirtualTable 薄封装（固定 features + 声明式列配置，见 §4.7）
 │   └── VirtualTable.tsx       # 通用虚拟表格（核心组件，见 §4.4）
 ├── store/
@@ -237,6 +240,9 @@ Biome 的 CSS parser 不识别 `@theme` → `index.css` 在 biome `files.include
 
 ### 5.11 axum Query flatten 的 wire 格式是顶层平铺键
 后端列表端点的分页参数 `#[serde(flatten)] pub paging: CursorPagingQuery`（openapi 呈现为 `paging` inline object）在 **serde_urlencoded 0.7 下展开为 query 顶层键**：`?limit=20&next_cursor=<id>`。实测 `paging[limit]=1` 嵌套形式被**静默忽略**（无报错、走默认 limit=10、cursor 过滤失效），顶层 `limit`/`next_cursor` 才生效。对接列表端点时以 curl 实测为准，别信 openapi 的 object 呈现。
+
+### 5.12 Sheet/Dialog 覆盖类必须带原变体前缀
+组件默认类常带变体前缀（如 SheetContent 的 `data-[side=right]:sm:max-w-sm`），twMerge 对**不同变体组合不判冲突**（两类都保留），而带前缀的默认类**特异性更高**恒赢——覆盖宽度等样式必须写完整前缀（如 `data-[side=right]:sm:max-w-xl`），否则看起来"没生效"。
 
 ## 6. 开发命令
 

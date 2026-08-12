@@ -6,6 +6,7 @@ import { type FormEvent, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { FieldError } from '@/components/FieldError';
+import { TextField } from '@/components/TextField';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -229,20 +230,14 @@ function PasswordCard() {
           validators={{ onChange: oldPasswordSchema }}
         >
           {(field) => (
-            <label htmlFor="old-password" className="block">
-              <span className="text-sm text-ink-soft">当前密码</span>
-              <Input
-                id="old-password"
-                type="password"
-                autoComplete="current-password"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(e) => field.handleChange(e.target.value)}
-                className="mt-1 bg-surface"
-                placeholder="请输入当前密码"
-              />
-              <FieldError field={field} />
-            </label>
+            <TextField
+              field={field}
+              id="old-password"
+              label="当前密码"
+              type="password"
+              autoComplete="current-password"
+              placeholder="请输入当前密码"
+            />
           )}
         </form.Field>
         <form.Field
@@ -250,20 +245,14 @@ function PasswordCard() {
           validators={{ onChange: passwordSchema }}
         >
           {(field) => (
-            <label htmlFor="new-password" className="block">
-              <span className="text-sm text-ink-soft">新密码</span>
-              <Input
-                id="new-password"
-                type="password"
-                autoComplete="new-password"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(e) => field.handleChange(e.target.value)}
-                className="mt-1 bg-surface"
-                placeholder="至少 4 位"
-              />
-              <FieldError field={field} />
-            </label>
+            <TextField
+              field={field}
+              id="new-password"
+              label="新密码"
+              type="password"
+              autoComplete="new-password"
+              placeholder="至少 4 位"
+            />
           )}
         </form.Field>
         <form.Field

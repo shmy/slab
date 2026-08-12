@@ -6,12 +6,20 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import {
+  History,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react';
 import { type FormEvent, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { AuditHistorySheet } from '@/components/AuditHistory';
 import { type DataColumn, DataTable } from '@/components/DataTable';
-import { FieldError } from '@/components/FieldError';
+import { TextField } from '@/components/TextField';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,7 +30,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { ApiError } from '@/lib/api';
 import {
   apiCreateCustomer,
@@ -55,6 +78,7 @@ function CustomersPage() {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [deleting, setDeleting] = useState<CustomerItem | null>(null);
   const [opening, setOpening] = useState<string | null>(null); // 正在拉取详情的编辑目标 id
+  const [historyTarget, setHistoryTarget] = useState<CustomerItem | null>(null);
 
   // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加
   const customersQuery = useInfiniteQuery({
@@ -135,32 +159,16 @@ function CustomersPage() {
       {
         key: 'actions',
         header: '操作',
-        width: 96,
+        width: 88,
         align: 'center',
         render: (c) => (
-          <div className="flex items-center justify-end gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`编辑 ${c.name}`}
-              title="编辑"
-              disabled={opening === c.id}
-              className="text-ink-soft"
-              onClick={() => void openEditor(c)}
-            >
-              <Pencil />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`删除 ${c.name}`}
-              title="删除"
-              className="text-ink-soft hover:text-destructive"
-              onClick={() => setDeleting(c)}
-            >
-              <Trash2 />
-            </Button>
-          </div>
+          <RowActions
+            customer={c}
+            editingDisabled={opening === c.id}
+            onEdit={() => void openEditor(c)}
+            onHistory={() => setHistoryTarget(c)}
+            onDelete={() => setDeleting(c)}
+          />
         ),
       },
     ],
@@ -239,24 +247,34 @@ function CustomersPage() {
         />
       )}
 
-      {/* 创建 / 编辑 */}
-      <Dialog
+      {/* 变更历史（实体级审计；entity/entityId 契约见 lib/audit.ts） */}
+      <AuditHistorySheet
+        entity="customer"
+        entityId={historyTarget?.id ?? ''}
+        open={historyTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setHistoryTarget(null);
+        }}
+      />
+
+      {/* 创建 / 编辑（抽屉） */}
+      <Sheet
         open={editor !== null}
         onOpenChange={(open) => {
           if (!open) setEditor(null);
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
+        <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>
               {editor?.mode === 'create'
                 ? '新增客户'
                 : `编辑客户「${editor?.customer.name}」`}
-            </DialogTitle>
-            <DialogDescription>
+            </SheetTitle>
+            <SheetDescription>
               带 * 为必填项；编码由系统按序列自动生成。
-            </DialogDescription>
-          </DialogHeader>
+            </SheetDescription>
+          </SheetHeader>
           {editor && (
             <CustomerEditorForm
               state={editor}
@@ -268,8 +286,8 @@ function CustomersPage() {
               }}
             />
           )}
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
 
       {/* 删除确认 */}
       <Dialog
@@ -301,6 +319,67 @@ function CustomersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** 行操作：编辑（直接显示）+ 更多（变更历史 / 删除） */
+function RowActions({
+  customer,
+  editingDisabled,
+  onEdit,
+  onHistory,
+  onDelete,
+}: {
+  customer: CustomerItem;
+  editingDisabled: boolean;
+  onEdit: () => void;
+  onHistory: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={`编辑 ${customer.name}`}
+        title="编辑"
+        disabled={editingDisabled}
+        className="text-ink-soft"
+        onClick={onEdit}
+      >
+        <Pencil />
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`${customer.name} 的更多操作`}
+              title="更多"
+              className="text-ink-soft"
+            />
+          }
+        >
+          <MoreHorizontal />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40 p-1.5">
+          <DropdownMenuItem onClick={onHistory} className="gap-2">
+            <History className="h-4 w-4" />
+            变更历史
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="my-1.5" />
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={onDelete}
+            className="gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            删除
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -391,91 +470,63 @@ function CustomerEditorForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-6"
+    >
       <form.Field name="name" validators={{ onChange: nameSchema }}>
         {(field) => (
-          <label htmlFor="customer-name" className="block">
-            <span className="text-sm text-ink-soft">
-              名称 <span className="text-destructive">*</span>
-            </span>
-            <Input
-              id="customer-name"
-              value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(e) => field.handleChange(e.target.value)}
-              className="mt-1"
-              placeholder="客户名称"
-            />
-            <FieldError field={field} />
-          </label>
+          <TextField
+            field={field}
+            id="customer-name"
+            label="名称"
+            required
+            placeholder="客户名称"
+          />
         )}
       </form.Field>
       <form.Field name="contact_person">
         {(field) => (
-          <label htmlFor="customer-contact" className="block">
-            <span className="text-sm text-ink-soft">联系人</span>
-            <Input
-              id="customer-contact"
-              value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(e) => field.handleChange(e.target.value)}
-              className="mt-1"
-              placeholder="联系人姓名"
-            />
-            <FieldError field={field} />
-          </label>
+          <TextField
+            field={field}
+            id="customer-contact"
+            label="联系人"
+            placeholder="联系人姓名"
+          />
         )}
       </form.Field>
       <form.Field name="phone" validators={{ onChange: phoneSchema }}>
         {(field) => (
-          <label htmlFor="customer-phone" className="block">
-            <span className="text-sm text-ink-soft">手机号</span>
-            <Input
-              id="customer-phone"
-              inputMode="numeric"
-              value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(e) => field.handleChange(e.target.value)}
-              className="mt-1"
-              placeholder="11 位手机号（可选）"
-            />
-            <FieldError field={field} />
-          </label>
+          <TextField
+            field={field}
+            id="customer-phone"
+            label="手机号"
+            inputMode="numeric"
+            placeholder="11 位手机号（可选）"
+          />
         )}
       </form.Field>
       <form.Field name="address">
         {(field) => (
-          <label htmlFor="customer-address" className="block">
-            <span className="text-sm text-ink-soft">地址</span>
-            <Input
-              id="customer-address"
-              value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(e) => field.handleChange(e.target.value)}
-              className="mt-1"
-              placeholder="联系地址（可选）"
-            />
-            <FieldError field={field} />
-          </label>
+          <TextField
+            field={field}
+            id="customer-address"
+            label="地址"
+            placeholder="联系地址（可选）"
+          />
         )}
       </form.Field>
       <form.Field name="payment_terms">
         {(field) => (
-          <label htmlFor="customer-terms" className="block">
-            <span className="text-sm text-ink-soft">结算方式</span>
-            <Input
-              id="customer-terms"
-              value={field.state.value}
-              onBlur={field.handleBlur}
-              onChange={(e) => field.handleChange(e.target.value)}
-              className="mt-1"
-              placeholder="如：月结 30 天（可选）"
-            />
-            <FieldError field={field} />
-          </label>
+          <TextField
+            field={field}
+            id="customer-terms"
+            label="结算方式"
+            placeholder="如：月结 30 天（可选）"
+          />
         )}
       </form.Field>
-      <DialogFooter>
+      <SheetFooter>
         <Button
           type="submit"
           disabled={saveMutation.isPending}
@@ -483,7 +534,7 @@ function CustomerEditorForm({
         >
           {saveMutation.isPending ? '保存中…' : '保存'}
         </Button>
-      </DialogFooter>
+      </SheetFooter>
     </form>
   );
 }
