@@ -2,9 +2,11 @@ import { useForm } from '@tanstack/react-form';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { Eye, EyeOff, LayoutDashboard, Lock, User } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
+import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ApiError } from '../lib/api';
 import { authStore, login } from '../store/auth';
 
 // 校验 redirect 目标，防止开放重定向（open redirect）
@@ -29,8 +31,12 @@ export const Route = createFileRoute('/login')({
 
 // Standard Schema（Zod 4 原生兼容）：onChange 实时反馈 + 提交时 validateAllFields('change') 兜底。
 // 注意：form 不保留 schema 的 transform 输出，onSubmit 里仍需自行 trim
-const usernameSchema = z.string().trim().min(1, '请输入用户名');
-const passwordSchema = z.string().min(6, '密码至少 6 位');
+// 手机号规则与后端 PhoneNumber 一致（11 位大陆手机号 1[3-9]xxxxxxxxx）；密码 4–64 位
+const phoneSchema = z
+  .string()
+  .trim()
+  .regex(/^1[3-9]\d{9}$/, '请输入正确的 11 位手机号');
+const passwordSchema = z.string().min(4, '密码至少 4 位');
 
 // zod 等 Standard Schema 校验器返回 issue 对象（{ message }），纯函数返回字符串
 function errorText(error: unknown): string {
@@ -61,15 +67,23 @@ function LoginPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const form = useForm({
     defaultValues: {
-      username: '',
+      phone: '',
       password: '',
     },
-    onSubmit: ({ value }) => {
-      login(value.username.trim());
-      navigate({ to: search.redirect });
+    onSubmit: async ({ value }) => {
+      try {
+        await login(value.phone.trim(), value.password);
+        navigate({ to: search.redirect });
+      } catch (error) {
+        // 后端 Problem Details：ApiError.message 已是 detail/title 的展示文本
+        toast.error(
+          error instanceof ApiError ? error.message : '登录失败，请稍后重试',
+        );
+      }
     },
   });
 
@@ -80,7 +94,12 @@ function LoginPage() {
     event.stopPropagation();
     const errors = await form.validateAllFields('change');
     if (errors.length > 0) return;
-    form.handleSubmit();
+    setSubmitting(true);
+    try {
+      await form.handleSubmit();
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -127,27 +146,25 @@ function LoginPage() {
           >
             <h2 className="text-xl font-semibold">登录</h2>
             <p className="mt-1 text-xs text-ink-soft">
-              任意用户名，密码至少 6 位
+              使用注册手机号登录管理后台
             </p>
             <div className="mt-6 space-y-4">
-              <form.Field
-                name="username"
-                validators={{ onChange: usernameSchema }}
-              >
+              <form.Field name="phone" validators={{ onChange: phoneSchema }}>
                 {(field) => (
-                  <label htmlFor="username" className="block">
-                    <span className="text-sm text-ink-soft">用户名</span>
+                  <label htmlFor="phone" className="block">
+                    <span className="text-sm text-ink-soft">手机号</span>
                     <div className="relative mt-1">
                       <User className="absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-ink-soft" />
                       <Input
-                        id="username"
-                        name="username"
-                        autoComplete="username"
+                        id="phone"
+                        name="phone"
+                        autoComplete="tel"
+                        inputMode="numeric"
                         value={field.state.value}
                         onBlur={field.handleBlur}
                         onChange={(e) => field.handleChange(e.target.value)}
                         className="bg-surface pl-8"
-                        placeholder="请输入用户名"
+                        placeholder="请输入手机号"
                       />
                     </div>
                     {/* 触碰过才显示错误 */}
@@ -196,8 +213,12 @@ function LoginPage() {
                 )}
               </form.Field>
             </div>
-            <Button type="submit" className="mt-6 w-full">
-              登录
+            <Button
+              type="submit"
+              disabled={submitting}
+              className="mt-6 w-full disabled:opacity-60"
+            >
+              {submitting ? '登录中…' : '登录'}
             </Button>
           </form>
         </div>

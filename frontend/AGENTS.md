@@ -15,7 +15,7 @@ You are an expert in JavaScript, Rsbuild, and web application development. You w
 
 ## Project
 
-Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (base-nova, @base-ui/react) + Tailwind 4 + Nord theme. Architecture and pitfall notes: `docs/architecture.md` — read §5 before touching tables / keep-alive / theme.
+Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (base-nova, @base-ui/react) + Tailwind 4 + Nord theme + xior（HTTP，登录已接后端 identity：JWT access/refresh、401 单飞刷新）。Architecture and pitfall notes: `docs/architecture.md` — read §5 before touching tables / keep-alive / theme.
 
 ## Commands
 
@@ -34,6 +34,7 @@ Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (
 - **Layout** (`src/routes/_app.tsx`): login guard (`beforeLoad`) + sidebar + header (breadcrumbs) + `PageTabs` + `KeepAliveOutlet`.
 - **Multi-tabs**: `src/store/tabs.ts` (session store) + `src/components/PageTabs.tsx`. Home tab `/` is pinned: not closable, no context menu.
 - **Keep-alive**: `src/components/keep-alive.tsx` — `KeepAliveProvider` (root) + `KeepAliveOutlet` (replaces `<Outlet />` in layout). A page opts in with `staticData: { keepAlive: true }` in its route options. PageTabs calls `useKeepAlive()`'s `destroy`/`refresh` when closing/refreshing tabs.
+- **Auth**: `src/lib/api.ts`（xior，自动附 Bearer，401 单飞刷新，Problem Details 归一化）+ `src/lib/token.ts`（localStorage 令牌/用户）+ `src/store/auth.ts`（react-store）。dev 代理 `/api` → `http://127.0.0.1:8081`（rsbuild.config.ts `server.proxy`）。
 - **State**: `@tanstack/react-store` (`createStore` + `useSelector`); stores in `src/store/` (auth/theme/fontSize/sidebar/tabs).
 - **Tables**: `src/components/VirtualTable.tsx` (TanStack Table v9 + virtual scrolling). Files using it (`VirtualTable.tsx`, `users.tsx`) carry `'use no memo'` — do not remove.
 - **Theme**: semantic CSS variables (`canvas/surface/line/ink/accent/...`) in `index.css` for light/dark; components use semantic classes, **no `dark:` variants**. Sidebar is always dark regardless of theme.

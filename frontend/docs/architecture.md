@@ -16,6 +16,7 @@
 | 组件库 | shadcn/ui | 4.16 | base-nova 风格，基于 @base-ui/react；变量映射到 Nord |
 | 类名工具 | clsx + tailwind-merge | | `cn()` 在 src/lib/utils.ts |
 | 虚拟滚动 | @tanstack/react-virtual | 3.14 | |
+| HTTP | xior | 0.8 | fetch 封装（axios 兼容 API）：拦截器、401 单飞刷新 |
 | 图标 | lucide-react | 1.31 | |
 | 样式 | Tailwind CSS | 4.x | `@theme` 自定义色板 |
 | 质量 | Biome / TypeScript | 2.4 / 7 | lint + format + typecheck |
@@ -27,7 +28,9 @@ src/
 ├── index.tsx                  # 入口：createRouter（preload/scrollRestoration）+ Toaster
 ├── index.css                  # Tailwind 4：Nord 色板 + 语义变量 + shadcn 变量映射 + 深浅模式
 ├── lib/
-│   └── utils.ts                # cn()（clsx + tailwind-merge）
+│   ├── utils.ts                # cn()（clsx + tailwind-merge）
+│   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化
+│   └── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
 ├── components/
 │   ├── ui/                     # shadcn 组件（button/input/checkbox/badge/avatar/dropdown-menu/context-menu/dialog/sheet/sonner）
 │   ├── ThemeToggle.tsx        # 主题切换
@@ -57,6 +60,22 @@ src/
 
 ## 3. 认证流
 
+### 接口契约（后端 `identity` 域；扁平 JSON / Problem Details）
+
+| 动作 | 请求 | 响应 |
+|---|---|---|
+| 登录 | `POST /api/v1/identity/login` `{phone, password}` | `{access_token, refresh_token, token_type, expires_in}` |
+| 刷新 | `POST /api/v1/identity/refresh` `{refresh_token}` | 同上（refresh token 轮换，旧值立即失效） |
+| 登出 | `POST /api/v1/identity/logout?access_token=…`（sendBeacon 场景；Bearer 头亦兼容） | `{logged_out}`（吊销 refresh + jti） |
+| 当前账号 | `GET /api/v1/accounts/{id}`（Bearer） | `{id, name, phone, privileged}` |
+
+- 错误统一为 RFC 9457 Problem Details（`application/problem+json`）：`{status, error_code, detail, title, trace_id}`；`account_invalid_credentials` → 400，`access_token_*` → 401
+- `detail` 按 `Accept-Language` 渲染（前端固定 `zh-CN`）
+- 鉴权中间件提取令牌：**`Authorization: Bearer` 头优先，回退 `?access_token=` / `?token=` query**（全端点生效，logout 的 sendBeacon 依赖此机制）
+- JWT（HS256）claims 含 `sub` = 账号 id，前端本地解码拿 id 再查账号信息（不验签，仅取公开 claims）
+
+### 页面流程
+
 ```
 未登录访问 /users
     │
@@ -69,10 +88,16 @@ _app.tsx beforeLoad
 login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向）
     │
     ├─ 已登录 → redirect 回 redirect 目标
-    └─ 提交：validateAllFields('change') 兜底 → login() → navigate(redirect)
+    └─ 提交：validateAllFields('change') 兜底 → login(phone, password) → navigate(redirect)
 ```
 
-- 登录态：`src/store/auth.ts`，localStorage `auth.user`，store 模块加载时读入
+### 令牌生命周期（`src/lib/api.ts` + `src/lib/token.ts`）
+
+- `token.ts`：纯本地存储（`auth.tokens` / `auth.user` 两个 key）+ JWT payload 解码；auth store 与 api 层共用，无 UI 依赖
+- `api.ts`（xior）：请求自动附 `Authorization: Bearer`；**401 → 单飞刷新**（并发 401 只发一次 `/refresh`，其余等待同一结果）→ 重试原请求一次；刷新失败或重试仍 401 → 清会话 + 整页跳 `/login?redirect=...`
+- 登录/刷新接口自身的 401 不触发刷新循环（白名单 `AUTH_PATHS`）
+- 登录成功流程：`/login` 拿令牌 → 解码 sub → `/accounts/{id}` 拿用户 → 令牌 + 用户**同一次**写入 localStorage → store 更新（用户信息拉取失败不阻塞登录，sub 兜底）
+- 登出：**sendBeacon POST**（sendBeacon 无法设置请求头且实测无论有无 body 都发 POST，故令牌走 query `?access_token=`）→ **`localStorage.clear()` 全量清空**（含主题/字号/侧边栏偏好）→ store 置空。401 强制登出（`forceLogout`）只清 auth 两个 key，不动偏好
 - 守卫用 store 直接读取（模块级单例），未用 router context 注入（纯 CSR 场景功能等价且 router 从不重建）
 
 ## 4. 核心设计

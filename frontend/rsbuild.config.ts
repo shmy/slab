@@ -19,6 +19,15 @@ export default defineConfig({
       '@': './src',
     },
   },
+  server: {
+    proxy: {
+      // 后端无 CORS，dev 用同源代理转发 /api
+      '/api': {
+        target: 'http://127.0.0.1:8081',
+        changeOrigin: true,
+      },
+    },
+  },
   tools: {
     rspack: {
       plugins: [

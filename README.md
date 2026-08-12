@@ -75,7 +75,7 @@ frontend/                  ← 管理后台 SPA（React 19 + Rsbuild + TanStack 
 | 可观测性 | OpenTelemetry（OTLP） |
 | API 文档 | OpenAPI + Scalar UI |
 | 内存分配器 | mimalloc |
-| 前端 | React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui + Tailwind 4（`frontend/`，端口 3000，未接后端 API） |
+| 前端 | React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui + Tailwind 4 + xior（`frontend/`，端口 3000，已接登录/刷新/登出 API，dev 代理 127.0.0.1:8081） |
 
 ## 快速开始
 

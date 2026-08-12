@@ -59,14 +59,12 @@ export function UserMenu({ compact, onOpenProfile }: UserMenuProps) {
         )}
       >
         <Avatar className="shrink-0 bg-accent text-nord6">
-          <AvatarFallback>
-            {user?.username.charAt(0).toUpperCase()}
-          </AvatarFallback>
+          <AvatarFallback>{user?.name.charAt(0).toUpperCase()}</AvatarFallback>
         </Avatar>
         {!compact && (
           <>
             <span className="flex-1 truncate text-sm text-nord5">
-              {user?.username}
+              {user?.name}
             </span>
             <ChevronsUpDown className="h-4 w-4 shrink-0 text-nord4" />
           </>
@@ -104,7 +102,7 @@ export function UserMenu({ compact, onOpenProfile }: UserMenuProps) {
           <DialogHeader>
             <DialogTitle>确认退出登录</DialogTitle>
             <DialogDescription>
-              确定要退出当前账号「{user?.username}」吗？
+              确定要退出当前账号「{user?.name}」吗？
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

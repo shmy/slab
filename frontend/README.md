@@ -13,6 +13,7 @@
 | 路由 | @tanstack/react-router（文件式路由 + 自动代码分割） |
 | 状态 | @tanstack/react-store |
 | 表格 | @tanstack/react-table v9 + react-virtual（虚拟滚动） |
+| HTTP | xior（fetch 封装，Bearer JWT + 401 自动刷新） |
 | 表单/校验 | @tanstack/react-form + zod |
 | 组件库 | shadcn/ui（base-nova 风格，基于 @base-ui/react） |
 | 质量 | Biome + TypeScript |
@@ -24,7 +25,7 @@
 - **Chrome 风格多标签页**：自动打开/去重、激活标签自动滚入视野、右键菜单（刷新 / 关闭当前 / 关闭其他 / 关闭全部）、首页固定不可关闭
 - **页面 keep-alive**：切走保留页面状态（输入框、表格筛选等），关闭标签销毁缓存，右键「刷新」重建页面
 - **虚拟滚动表格**：固定列、滚动阴影、无限加载
-- **认证守卫**：未登录跳转登录页（记录来源页），TanStack Form + Zod 校验
+- **认证守卫**：手机号 + 密码登录（接后端 identity：JWT access/refresh 双令牌、401 自动刷新、登出吊销），未登录跳转登录页（记录来源页），TanStack Form + Zod 校验
 
 ## 命令
 

@@ -19,29 +19,33 @@ function ProfilePage() {
       <div className="mt-4 rounded-xl border border-line bg-surface p-6">
         <div className="flex items-center gap-4">
           <Avatar className="h-16 w-16 bg-accent text-2xl text-nord6">
-            <AvatarFallback>
-              {user.username.charAt(0).toUpperCase()}
-            </AvatarFallback>
+            <AvatarFallback>{user.name.charAt(0).toUpperCase()}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
             <div className="truncate text-lg font-semibold text-ink">
-              {user.username}
+              {user.name}
             </div>
             <div className="text-sm text-ink-soft">当前登录账号</div>
           </div>
         </div>
         <dl className="mt-6 divide-y divide-line border-t border-line">
           <div className="flex items-center justify-between py-3">
-            <dt className="text-sm text-ink-soft">用户名</dt>
-            <dd className="text-sm text-ink">{user.username}</dd>
+            <dt className="text-sm text-ink-soft">姓名</dt>
+            <dd className="text-sm text-ink">{user.name}</dd>
+          </div>
+          <div className="flex items-center justify-between py-3">
+            <dt className="text-sm text-ink-soft">手机号</dt>
+            <dd className="text-sm text-ink">{user.phone}</dd>
           </div>
           <div className="flex items-center justify-between py-3">
             <dt className="text-sm text-ink-soft">角色</dt>
-            <dd className="text-sm text-ink">管理员</dd>
+            <dd className="text-sm text-ink">
+              {user.privileged ? '管理员' : '普通用户'}
+            </dd>
           </div>
         </dl>
         <p className="mt-4 text-xs text-ink-soft">
-          更多资料（头像、邮箱等）待接入后端后展示。
+          更多资料（头像、邮箱等）后续版本开放。
         </p>
       </div>
     </div>

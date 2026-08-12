@@ -128,7 +128,7 @@ caches                 — 热点 KV（UNLOGGED）
 
 `frontend/` 目录，独立于后端 workspace（pnpm 管理，开发端口 3000）。技术栈：React 19 + Rsbuild（React Compiler 自动优化）+ TanStack Router / Store / Table v9 + shadcn/ui（base-nova，基于 @base-ui/react）+ Tailwind 4（Nord 色板，语义 CSS 变量适配深浅主题）。
 
-已实现：登录（本地 mock，localStorage 持久化，未接后端 API）、仪表盘、用户管理（VirtualTable 示例）、文章/分类管理、通用/权限设置、个人信息；Chrome 风格多标签页 + 页面 keep-alive + 虚拟滚动表格 + 主题/字号持久化。
+已实现：登录（对接后端 `identity`：JWT access/refresh、401 自动刷新、登出吊销）、仪表盘、用户管理（VirtualTable 示例）、文章/分类管理、通用/权限设置、个人信息；Chrome 风格多标签页 + 页面 keep-alive + 虚拟滚动表格 + 主题/字号持久化。
 
 架构与踩坑记录见 `frontend/docs/architecture.md`，开发约定见 `frontend/AGENTS.md`。
 

@@ -11,7 +11,7 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 - 文件式路由 `frontend/src/routes/`，`routeTree.gen.ts` 自动生成（禁手改）；布局 `_app.tsx` = 登录守卫 + 侧边栏 + 顶栏 + PageTabs + KeepAliveOutlet
 - 多标签页 / keep-alive：`components/PageTabs.tsx` + `components/keep-alive.tsx`（Suspense 挂起冻结，**勿换回 `<Activity>`**）；页面用 `staticData: { keepAlive: true }` 参与缓存
 - 表格：`components/VirtualTable.tsx`（TanStack Table v9 `useTable` + 虚拟滚动）；`VirtualTable.tsx` / `users.tsx` 顶部 `'use no memo'` 豁免（React Compiler 冲突）**不可删**
-- 状态：`@tanstack/react-store`，`store/`（auth/theme/fontSize/sidebar/tabs）；登录为本地 mock（localStorage），未接后端 API
+- 状态：`@tanstack/react-store`，`store/`（auth/theme/fontSize/sidebar/tabs）；登录已接后端 `identity`（xior，Bearer JWT + 401 单飞刷新；dev 走 rsbuild proxy `/api` → `127.0.0.1:8081`）
 - 命令：`pnpm run dev` / `typecheck` / `check` / `build`；改完跑 `pnpm exec tsc --noEmit && pnpm run check && pnpm run build`
 
 ## 代码导航
