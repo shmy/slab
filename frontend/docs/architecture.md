@@ -70,6 +70,8 @@ src/
 | 刷新 | `POST /api/v1/identity/refresh` `{refresh_token}` | 同上（refresh token 轮换，旧值立即失效） |
 | 登出 | `POST /api/v1/identity/logout?access_token=…`（sendBeacon 场景；Bearer 头亦兼容） | `{logged_out}`（吊销 refresh + jti） |
 | 当前账号 | `GET /api/v1/profile/current`（Bearer） | `{id, name, phone, privileged}`（从令牌取账号，无需解码 JWT） |
+| 改自己密码 | `PATCH /api/v1/identity/password` `{old_password, new_password}` | `{updated}`（不吊销令牌，改密后会话继续） |
+| 重置他人密码 | `PATCH /api/v1/accounts/password/{id}` `{new_password}` | `{updated}`（管理员操作；后端暂无 privileged 校验） |
 
 - 错误统一为 RFC 9457 Problem Details（`application/problem+json`）：`{status, error_code, detail, title, trace_id}`；`account_invalid_credentials` → 400，`access_token_*` → 401
 - `detail` 按 `Accept-Language` 渲染（前端固定 `zh-CN`）

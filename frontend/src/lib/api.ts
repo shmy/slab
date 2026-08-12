@@ -14,6 +14,8 @@ import {
 // 契约类型来自 openapi.json（后端 utoipa 生成），重新生成见 scripts/fetch-openapi.mjs
 type LoginResponse = components['schemas']['LoginResponse'];
 type AccountResponse = components['schemas']['GetAccountResponse'];
+type UpdatePasswordResponse = components['schemas']['UpdatePasswordResponse'];
+type ResetPasswordResponse = components['schemas']['ResetPasswordResponse'];
 
 /** 后端 Problem Details 或网络层错误（status 0 = 网络/未知错误） */
 export class ApiError extends Error {
@@ -179,5 +181,29 @@ export function apiGetCurrentProfile(): Promise<AccountResponse> {
   return authRequest<AccountResponse>({
     method: 'GET',
     url: '/profile/current',
+  });
+}
+
+/** 改自己的密码：需旧密码（PATCH /identity/password，后端不吊销令牌） */
+export function apiUpdateMyPassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<UpdatePasswordResponse> {
+  return authRequest<UpdatePasswordResponse>({
+    method: 'PATCH',
+    url: '/identity/password',
+    data: { old_password: oldPassword, new_password: newPassword },
+  });
+}
+
+/** 管理员重置他人密码：只需新密码（PATCH /accounts/password/{id}） */
+export function apiResetAccountPassword(
+  id: string,
+  newPassword: string,
+): Promise<ResetPasswordResponse> {
+  return authRequest<ResetPasswordResponse>({
+    method: 'PATCH',
+    url: `/accounts/password/${id}`,
+    data: { new_password: newPassword },
   });
 }

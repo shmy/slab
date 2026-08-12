@@ -4,9 +4,11 @@ import { Eye, EyeOff, LayoutDashboard, Lock, User } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { FieldError } from '@/components/FieldError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ApiError } from '../lib/api';
+import { passwordSchema } from '../lib/validators';
 import { authStore, login } from '../store/auth';
 
 // 校验 redirect 目标，防止开放重定向（open redirect）
@@ -36,32 +38,6 @@ const phoneSchema = z
   .string()
   .trim()
   .regex(/^1[3-9]\d{9}$/, '请输入正确的 11 位手机号');
-const passwordSchema = z.string().min(4, '密码至少 4 位');
-
-// zod 等 Standard Schema 校验器返回 issue 对象（{ message }），纯函数返回字符串
-function errorText(error: unknown): string {
-  if (typeof error === 'string') return error;
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    return String(error.message);
-  }
-  return String(error);
-}
-
-// 触碰过才显示错误，去重后展示（change+submit 双事件源会重复入列）
-interface FieldMeta {
-  state: { meta: { isTouched: boolean; errors: unknown[] } };
-}
-
-function FieldError({ field }: { field: FieldMeta }) {
-  if (!field.state.meta.isTouched || field.state.meta.errors.length === 0) {
-    return null;
-  }
-  return (
-    <p className="mt-1 text-sm text-nord11">
-      {[...new Set(field.state.meta.errors.map(errorText))].join('、')}
-    </p>
-  );
-}
 
 function LoginPage() {
   const search = Route.useSearch();
@@ -76,7 +52,7 @@ function LoginPage() {
     },
     onSubmit: async ({ value }) => {
       try {
-        await login(value.phone.trim(), value.password);
+        await login(value.phone.trim(), value.password.trim());
         navigate({ to: search.redirect });
       } catch (error) {
         // 后端 Problem Details：ApiError.message 已是 detail/title 的展示文本
