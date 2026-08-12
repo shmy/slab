@@ -16,6 +16,7 @@
 | [EVENT_BUS.md](EVENT_BUS.md) | 事件总线（广播）设计、at-least-once 语义 | 加新事件/订阅者、切换后端时 |
 | [KV.md](KV.md) | 可插拔 KV 缓存后端（Pg / redb / redis）设计、Token 吊销实现 | 操作 token 吊销/缓存状态、切换后端时 |
 | [FLOW.md](FLOW.md) | sayiir 持久化工作流（信号/超时/分流编排）、适用场景与陷阱 | 加长流程/跨单据联动/审批超时升级前 |
+| [frontend/docs/architecture.md](../frontend/docs/architecture.md) | 前端架构：多标签页 / keep-alive / 虚拟表格 / React Compiler 踩坑 | 改前端表格、标签页、主题前 |
 
 ## 测试
 
@@ -28,6 +29,7 @@
 | 文件 | 内容 | 使用对象 |
 |------|------|----------|
 | [AGENTS.md](../AGENTS.md) | 仓库完整上下文（架构、约定、决策树、命令） | Claude Code / 其他 AI 助手 |
+| [frontend/AGENTS.md](../frontend/AGENTS.md) | 前端上下文（React 19 + Rsbuild + TanStack 约定、三查命令） | AI（改前端代码时） |
 | [.agents/skills/rust-backend/SKILL.md](../.agents/skills/rust-backend/SKILL.md) | 后端垂直切片实现规范 | AI（触发式加载） |
 | [.agents/skills/rust-tests/SKILL.md](../.agents/skills/rust-tests/SKILL.md) | 测试编写规范 | AI（触发式加载） |
 

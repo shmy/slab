@@ -49,7 +49,7 @@
 11. CDC 评估（wal2json / Debezium vs outbox，高吞吐场景）。
 12. 大表分区（inventory_ledger 被 4 域直写，最该分区；pg_partman 维护）。
 13. tokio-console（运行时内省）+ pprof / DHAT（CPU/内存剖析）。
-14. 前端产物接线（axum-embed 已声明未用）。
+14. 前端产物接线（axum-embed 已声明未用；`frontend/` 已就位，`frontend/dist` 待托管）。
 
 ## 五、扩展：通用底座组件（与业务无关）
 
@@ -97,7 +97,7 @@
 ### 已声明未接线（workspace deps，0 使用）
 | 依赖 | 用途 |
 |---|---|
-| `axum-embed` | 前端产物嵌入单二进制（dist 未托管） |
+| `axum-embed` | 前端产物嵌入单二进制（frontend/dist 已可构建，待托管） |
 
 ## 六、落地顺序
 

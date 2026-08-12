@@ -2,7 +2,7 @@
 
 ## 一、项目概述
 
-通用 ERP 后端系统，基于 DDD 垂直切片架构（Rust / Axum / PostgreSQL）。
+通用 ERP 后端系统，基于 DDD 垂直切片架构（Rust / Axum / PostgreSQL）。配套管理后台 SPA 位于 `frontend/`（React 19 + Rsbuild + TanStack，详见末尾「六、前端」）。
 
 **当前阶段：Phase 4 完成。** 覆盖采购→质检→销售→生产→财务全线。
 
@@ -124,7 +124,15 @@ caches                 — 热点 KV（UNLOGGED）
 
 ---
 
-## 六、可扩展方向
+## 六、前端（管理后台 SPA）
+
+`frontend/` 目录，独立于后端 workspace（pnpm 管理，开发端口 3000）。技术栈：React 19 + Rsbuild（React Compiler 自动优化）+ TanStack Router / Store / Table v9 + shadcn/ui（base-nova，基于 @base-ui/react）+ Tailwind 4（Nord 色板，语义 CSS 变量适配深浅主题）。
+
+已实现：登录（本地 mock，localStorage 持久化，未接后端 API）、仪表盘、用户管理（VirtualTable 示例）、文章/分类管理、通用/权限设置、个人信息；Chrome 风格多标签页 + 页面 keep-alive + 虚拟滚动表格 + 主题/字号持久化。
+
+架构与踩坑记录见 `frontend/docs/architecture.md`，开发约定见 `frontend/AGENTS.md`。
+
+## 七、可扩展方向
 
 - 成本核算（item_costs 已有表，缺少加权平均/先进先出算法）
 - 财务报表（应收/应付明细、现金流）

@@ -3,6 +3,17 @@
 DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 跨域通道：只读 Port、Outbox/Inbox 事件、模块内领域事件；**例外**——跨域同事务写 Port（`audit_contract::AuditService` 先例，动词方法 `record_create` / `record_updated` / `record_deleted`，与只读 Port 名词方法区分）。
 
+## 前端（`frontend/`）
+
+管理后台 SPA：**React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui（base-nova，@base-ui/react）+ Tailwind 4（Nord 语义变量主题）**。独立于后端 workspace（pnpm 管理，开发端口 3000）。
+
+- 前端上下文以 `frontend/AGENTS.md` 为准；改表格 / keep-alive / 主题前必读 `frontend/docs/architecture.md`（§5 踩坑记录）
+- 文件式路由 `frontend/src/routes/`，`routeTree.gen.ts` 自动生成（禁手改）；布局 `_app.tsx` = 登录守卫 + 侧边栏 + 顶栏 + PageTabs + KeepAliveOutlet
+- 多标签页 / keep-alive：`components/PageTabs.tsx` + `components/keep-alive.tsx`（Suspense 挂起冻结，**勿换回 `<Activity>`**）；页面用 `staticData: { keepAlive: true }` 参与缓存
+- 表格：`components/VirtualTable.tsx`（TanStack Table v9 `useTable` + 虚拟滚动）；`VirtualTable.tsx` / `users.tsx` 顶部 `'use no memo'` 豁免（React Compiler 冲突）**不可删**
+- 状态：`@tanstack/react-store`，`store/`（auth/theme/fontSize/sidebar/tabs）；登录为本地 mock（localStorage），未接后端 API
+- 命令：`pnpm run dev` / `typecheck` / `check` / `build`；改完跑 `pnpm exec tsc --noEmit && pnpm run check && pnpm run build`
+
 ## 代码导航
 
 | 想做什么 | 用什么 |
@@ -132,3 +143,4 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `just pre_commit` | machete → cargo-sort → fmt → clippy |
 | `just e2e` | Hurl E2E |
 | `just sqlx_up` | 迁移数据库 |
+| `cd frontend && pnpm run dev` | 前端开发服务器（端口 3000） |

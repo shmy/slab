@@ -45,6 +45,8 @@ infrastructure/
 └── ...                    ← approval / blob / jwt / costing 等领域基础设施
 
 bin/server/                ← 组装点：路由、中间件、任务编排
+
+frontend/                  ← 管理后台 SPA（React 19 + Rsbuild + TanStack + shadcn/ui，独立 workspace）
 ```
 
 ## 核心原则
@@ -73,6 +75,7 @@ bin/server/                ← 组装点：路由、中间件、任务编排
 | 可观测性 | OpenTelemetry（OTLP） |
 | API 文档 | OpenAPI + Scalar UI |
 | 内存分配器 | mimalloc |
+| 前端 | React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui + Tailwind 4（`frontend/`，端口 3000，未接后端 API） |
 
 ## 快速开始
 
@@ -89,6 +92,10 @@ cp .env.example .env
 
 # 迁移 + 启动
 cargo run -p server
+
+# 前端（另开终端）
+cd frontend && pnpm install
+pnpm run dev              # http://localhost:3000
 
 # 测试
 cargo test -p server arch_test     # 架构边界检查
@@ -121,6 +128,8 @@ cargo test -p server arch_test
 - `docs/KV.md` — KV 缓存设计
 - `docs/E2E_HURL.md` — E2E 测试约定
 - `AGENTS.md` — AI 助手上下文
+- `frontend/AGENTS.md` — 前端 AI 助手上下文（React/Rsbuild/TanStack 约定）
+- `frontend/docs/architecture.md` — 前端架构与踩坑记录（多标签/keep-alive/虚拟表格/React Compiler）
 
 Event:
 Pg/NATS

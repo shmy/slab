@@ -221,3 +221,7 @@
 3. **可删除性**（Deletion Test）：如果删除该模块，相关域必须各自重新实现相同逻辑——这是「深」的标志。
 4. **豁免规则**：feature crate 可以依赖 `infrastructure/` 下的深度模块，但必须通过 contract 的端口间接使用（即仍禁止依赖其他 feature 的 runtime crate）。
 5. **有限数量**：整个代码库中深度模块的数量应保持在个位数。每新增一个，应检查是否真的「跨域 + 写 + 有不变量」，还是可以拆回各域。
+
+---
+
+> 前端（管理后台 SPA：`frontend/`，React 19 + Rsbuild + TanStack）不在本文范围，见 [frontend/docs/architecture.md](../frontend/docs/architecture.md)。
