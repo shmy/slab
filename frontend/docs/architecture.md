@@ -30,7 +30,9 @@ src/
 ├── lib/
 │   ├── utils.ts                # cn()（clsx + tailwind-merge）
 │   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化
-│   └── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
+│   ├── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
+│   └── api-schema.d.ts         # openapi.json 生成的契约类型（勿手改；重新生成见 §8）
+├── openapi.json                # 后端 OpenAPI 契约快照（pnpm gen:api 刷新，scripts/fetch-openapi.mjs）
 ├── components/
 │   ├── ui/                     # shadcn 组件（button/input/checkbox/badge/avatar/dropdown-menu/context-menu/dialog/sheet/sonner）
 │   ├── ThemeToggle.tsx        # 主题切换
@@ -219,3 +221,20 @@ pnpm run format     # biome format --write
 - **新表格**：定义 features（只注册用到的）+ columns（`columnHelper.columns`），套 `<VirtualTable>`；需要弹性列时传 `growColumnId`
 - **新下拉/右键菜单**：复用 `dropdown-menu.tsx` / `context-menu.tsx`（base-ui）
 - **换品牌色**：只改 `index.css` 的 `--color-accent*` 等语义变量，深浅两处
+
+## 8. 对接后端契约（省 token 工作流）
+
+后端（Rust + utoipa）的 OpenAPI 契约可从运行中的服务直接提取，**不要为拿契约逐个读后端源码**：
+
+1. **`openapi.json`**（仓库内契约快照）：`pnpm gen:api` → 直拉后端原生 `GET /openapi.json`（运行时序列化 `ApiDoc::openapi()`，与运行二进制永远一致）。
+2. **`src/lib/api-schema.d.ts`**：由 spec 生成的类型，`api.ts` 已引用 `components['schemas'][...]`；对接新端点时优先用生成类型而非手写接口。重新生成（当前 TS7 与生成器不兼容，需临时 TS5 环境）：
+   ```bash
+   cd /tmp && npm i typescript@5 openapi-typescript \
+   && npx openapi-typescript <frontend>/openapi.json -o <frontend>/src/lib/api-schema.d.ts
+   ```
+3. **`e2e/*.hurl`**：真实请求/响应样本（含 token 捕获、错误断言），比源码精炼。
+4. **curl 实测**运行中的后端（`http://127.0.0.1:8081`），确认实际 JSON 形状（扁平响应、Problem Details）。
+
+最后仍需要时才读后端源码，且只看契约面（`endpoint/*.rs` 的 DTO + `*_contract` 的 value object / error），不看 SQL 与业务实现。
+
+注意：spec 中的响应 schema 是 `JsonResponse_*` 包装（utoipa 的 untagged 单成员枚举），实际 HTTP 响应是**扁平 JSON**——以 hurl/curl 实测为准。

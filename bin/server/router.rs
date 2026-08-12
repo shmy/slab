@@ -50,6 +50,18 @@ pub fn build(state: AppCtx, request_timeout: Duration, scalar_ui_enabled: bool) 
 
     let mut router = Router::new().merge(api_router);
 
+    // 机器可读契约端点：OpenAPI JSON（前端 pnpm gen:api 直接拉取）
+    router = router.route(
+        "/openapi.json",
+        axum::routing::get({
+            let spec = open_api.clone();
+            move || {
+                let spec = spec.clone();
+                async move { axum::Json(spec) }
+            }
+        }),
+    );
+
     if scalar_ui_enabled {
         router = router
             .merge(utoipa_scalar::Scalar::with_url("/scalar", open_api).custom_html(CUSTOM_HTML));

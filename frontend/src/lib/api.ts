@@ -2,21 +2,12 @@
 // 后端响应为扁平 JSON（无 data 包装），错误为 RFC 9457 Problem Details。
 
 import xior, { type XiorRequestConfig } from 'xior';
+import type { components } from './api-schema';
 import { clearAuth, loadTokens, saveTokens } from './token';
 
-export interface LoginResult {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_in: number;
-}
-
-export interface Account {
-  id: string;
-  name: string;
-  phone: string;
-  privileged: boolean;
-}
+// 契约类型来自 openapi.json（后端 utoipa 生成），重新生成见 scripts/fetch-openapi.mjs
+type LoginResponse = components['schemas']['LoginResponse'];
+type AccountResponse = components['schemas']['GetAccountResponse'];
 
 /** 后端 Problem Details 或网络层错误（status 0 = 网络/未知错误） */
 export class ApiError extends Error {
@@ -101,7 +92,7 @@ function refreshTokensOnce(): Promise<boolean> {
     const tokens = loadTokens();
     if (!tokens?.refreshToken) return false;
     try {
-      const result = await client.post<LoginResult, LoginResult>(
+      const result = await client.post<LoginResponse, LoginResponse>(
         '/identity/refresh',
         {
           refresh_token: tokens.refreshToken,
@@ -163,14 +154,17 @@ async function authRequest<T>(config: RequestConfig): Promise<T> {
 export function apiLogin(
   phone: string,
   password: string,
-): Promise<LoginResult> {
-  return authRequest<LoginResult>({
+): Promise<LoginResponse> {
+  return authRequest<LoginResponse>({
     method: 'POST',
     url: '/identity/login',
     data: { phone, password },
   });
 }
 
-export function apiGetAccount(id: string): Promise<Account> {
-  return authRequest<Account>({ method: 'GET', url: `/accounts/${id}` });
+export function apiGetAccount(id: string): Promise<AccountResponse> {
+  return authRequest<AccountResponse>({
+    method: 'GET',
+    url: `/accounts/${id}`,
+  });
 }

@@ -8,6 +8,7 @@
     "check": "biome check --write",
     "dev": "rsbuild --open",
     "format": "biome format --write",
+    "gen:api": "node scripts/fetch-openapi.mjs",
     "preview": "rsbuild preview",
     "typecheck": "tsc --noEmit"
   },
