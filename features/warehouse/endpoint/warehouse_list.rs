@@ -30,7 +30,9 @@ pub(crate) async fn handler(State(pg_pool): State<PgPool>) -> JsonResponseType<V
 async fn execute(pg_pool: &PgPool) -> rootcause::Result<Vec<WarehouseItem>> {
     let mut conn = pg_pool.acquire().await?;
     let rows =
-        sqlx::query!(r#"SELECT id, code, name, type, is_active FROM warehouses ORDER BY code"#)
+        sqlx::query!(
+            r#"SELECT id, code, name, type, is_active FROM warehouses WHERE is_active = TRUE ORDER BY code"#
+        )
             .fetch_all(&mut *conn)
             .await?;
     Ok(rows
