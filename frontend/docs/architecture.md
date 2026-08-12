@@ -28,8 +28,10 @@ src/
 ├── index.tsx                  # 入口：createRouter（preload/scrollRestoration）+ Toaster
 ├── index.css                  # Tailwind 4：Nord 色板 + 语义变量 + shadcn 变量映射 + 深浅模式
 ├── lib/
-│   ├── utils.ts                # cn()（clsx + tailwind-merge）
-│   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化
+│   ├── utils.ts                # cn()（clsx + tailwind-merge）+ maskPhone 手机号脱敏
+│   ├── api.ts                  # xior 客户端：Bearer 附加、401 单飞刷新、Problem Details 归一化（导出 authRequest 供域模块复用）
+│   ├── customers.ts            # 客户 CRUD 域模块（列表/详情/创建/更新/删除，cursor 分页）
+│   ├── validators.ts           # 共享 zod schema（passwordSchema，与后端 Password 规则对齐）
 │   ├── token.ts                # 令牌/用户本地存储 + JWT payload 解码（无 UI 依赖，auth 与 api 共用）
 │   └── api-schema.d.ts         # openapi.json 生成的契约类型（勿手改；重新生成见 §8）
 ├── openapi.json                # 后端 OpenAPI 契约快照（pnpm gen:api 刷新，scripts/fetch-openapi.mjs）
@@ -38,9 +40,11 @@ src/
 │   ├── ThemeToggle.tsx        # 主题切换
 │   ├── FontSizeToggle.tsx     # 整站字体大小
 │   ├── UserMenu.tsx           # 侧边栏用户区菜单（个人信息/退出登录+确认）
+│   ├── FieldError.tsx         # 表单字段错误展示（TanStack Form field，触碰门控 + 去重）
 │   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）
 │   ├── PageTabs.tsx           # Chrome 风格多标签页（右键菜单：刷新/关闭当前/关闭其他/关闭全部）
 │   ├── keep-alive.tsx         # 页面 keep-alive（KeepAliveProvider/KeepAliveOutlet/useKeepAlive）
+│   ├── DataTable.tsx          # 业务表格：VirtualTable 薄封装（固定 features + 声明式列配置，见 §4.7）
 │   └── VirtualTable.tsx       # 通用虚拟表格（核心组件，见 §4.4）
 ├── store/
 │   ├── auth.ts                # 认证：createStore + localStorage 持久化
@@ -49,12 +53,12 @@ src/
 │   ├── sidebar.ts             # 侧边栏折叠状态（localStorage 持久化）
 │   └── tabs.ts                # 多标签页列表（会话级，addTab 去重 / removeTab）
 └── routes/
-    ├── __root.tsx             # 根路由：KeepAliveProvider 包裹 <Outlet />
+    ├── __root.tsx             # 根路由：QueryClientProvider（react-query）+ KeepAliveProvider 包裹 <Outlet />
     ├── login.tsx              # 登录页：左右分栏 + TanStack Form + Zod
     ├── _app.tsx               # 布局路由：登录守卫 + 侧边栏/顶栏/多标签页/KeepAliveOutlet
     └── _app/
         ├── index.tsx          # 仪表盘
-        ├── users.tsx          # 用户管理（VirtualTable 业务示例：编辑 Sheet/删除 Dialog/toast）
+        ├── customers/         # 客户管理（真实 CRUD：TanStack Query 无限滚动 + DataTable + 创建/编辑 Dialog + 删除确认）
         ├── profile.tsx        # 个人信息
         ├── content/           # 文章管理、分类管理
         └── settings/          # 通用设置、权限管理
@@ -80,12 +84,12 @@ src/
 ### 页面流程
 
 ```
-未登录访问 /users
+未登录访问 /customers
     │
     ▼
 _app.tsx beforeLoad
     ├─ authStore.state.user 有值 → 放行
-    └─ 无值 → redirect('/login?redirect=/users')   ← 用 location.searchStr（坑，见 §5.2）
+    └─ 无值 → redirect('/login?redirect=/customers')   ← 用 location.searchStr（坑，见 §5.2）
                         │
                         ▼
 login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向）
@@ -164,6 +168,29 @@ Props：`features / columns / data / initialState / growColumnId / onLoadMore / 
 - 关闭标签调 `destroy(pathname)`（缓存条目删除 → 页面卸载释放状态）；右键「刷新」调 `refresh(pathname)`（version+1 → CacheView key 变化 → 重建页面，状态重置、重新加载）
 - 缓存条目（未登记路径）由 fallback `<Outlet />` 兜底渲染当前路由
 
+### 4.6 服务端状态（@tanstack/react-query）
+- 根路由 `QueryClientProvider`（全局单例）：`staleTime 30s / retry 1 / refetchOnWindowFocus false`；keep-alive 页面共享同一缓存，切走切回不重复请求
+- **列表范式（customers 页）**：`useInfiniteQuery` + 游标分页——`initialPageParam: null`、`getNextPageParam: (last) => last.nextCursor`、`queryKey: ['customers', query]`（搜索词入 key，换词即换批数据）；无限滚动用底部 sentinel + `IntersectionObserver`（`rootMargin: 200px` 预取），`hasNextPage`/`isFetchingNextPage` 门控防重复
+- **变更范式**：`useMutation`（create/update/delete）→ `onSuccess` 里 `invalidateQueries({ queryKey: ['customers'] })`（infinite 保留当前页位置自动刷新）+ 关闭 Dialog + toast；删除确认按钮 `isPending` 防连点
+- 详情类一次性读取（如编辑前 `apiGetCustomer`）不缓存，保持简单
+
+### 4.7 DataTable（业务表格）
+`DataTable` 是 VirtualTable 的薄封装：内部固定 features（排序 + 固定列），业务方零 tanstack 知识。
+
+```tsx
+const columns: DataColumn<Item>[] = [
+  { key: 'code', header: '编码', width: 120 },
+  { key: 'name', header: '名称', grow: true, render: (r) => <b>{r.name}</b> },
+  { key: 'is_active', header: '状态', render: (r) => <StatusBadge active={r.is_active} /> },
+  { key: 'actions', header: '操作', width: 96, align: 'center', render: (r) => <Actions /> },
+];
+<DataTable data={items} columns={columns} getRowId={(r) => r.id}
+  onLoadMore={hasNextPage ? fetchNextPage : undefined} loadingMore={isFetchingNextPage} />
+```
+
+- 列配置：`key`（字段名或自定义标识）、`header`、`width`、`align`、`grow`（撑满一列）、`pinned`（固定列 start/end）、`render`（缺省显示原始值字符串）
+- 动态 string key 在泛型组件中用函数式 accessor 表达（v9 泛型签名限制）；pinning state 字段是 `start`/`end`（非 left/right）
+
 ## 5. 踩坑记录（重要）
 
 ### 5.1 TanStack Table v9 是重写版
@@ -190,7 +217,7 @@ Biome 的 CSS parser 不识别 `@theme` → `index.css` 在 biome `files.include
 ### 5.8 React Compiler 与 TanStack Table v9 不兼容（文件级豁免）
 `useTable` 使用 render-phase store（`get`/`markCommitted` 配对的状态机），React Compiler 自动 memo 化会缓存渲染期间的读取，导致 `table.state`/引用不更新——表现：全选后行选中正常但表头 checkbox 卡在初始值、`getIsAllRowsSelected()` 恒为 false。诊断要点：`table.state` 在 effect 中读取会返回 undefined（render-phase 值仅渲染期有效）；table-core 层逻辑正常（node 复刻验证 `toggleAllRowsSelected` 后 all/some 均 true）。
 
-**当前方案**：`reactCompiler: true` 全局启用，受影响文件（`VirtualTable.tsx`、`users.tsx`）顶部加 `"use no memo"` 指令豁免（React Compiler 官方文件级禁用机制），其余文件继续享受编译优化。
+**当前方案**：`reactCompiler: true` 全局启用，受影响文件（`VirtualTable.tsx`、`DataTable.tsx`）顶部加 `"use no memo"` 指令豁免（React Compiler 官方文件级禁用机制），其余文件继续享受编译优化。
 
 ### 5.9 shadcn/ui 接入
 - 变量全部映射到 Nord 语义（`--primary: #5e81ac`、`--background/foreground/border/ring` 对应 canvas/ink/line/accent-soft），深浅主题三套变量（:root / data-theme='dark' / media query）自动切换
@@ -207,6 +234,9 @@ Biome 的 CSS parser 不识别 `@theme` → `index.css` 在 biome `files.include
 - **测试输入必须用真实键盘**：原生 `setter + dispatchEvent('input')` 不更新 React state（React 19 value tracker 会在下次渲染重置）；headless 验证用 CDP `Input.insertText`（先 focus 可见 input）
 - **dev server 产物缓存**：外部改文件偶发不触发重编译（或浏览器缓存旧 chunk），验证"没生效"前先重启 dev + 清 `node_modules/.cache` + 换全新浏览器 profile（曾因此误判多次）
 - **第三方 keep-alive 库均不可用**：react-activation（React 19 不兼容）、tanstack-router-keepalive（依赖旧 `getRouterContext`）、tanstack-router-cache（依赖 router.stores 内部结构，1.171 重构后崩溃）→ 最终用官方公开 API 自研（见 §4.5）
+
+### 5.11 axum Query flatten 的 wire 格式是顶层平铺键
+后端列表端点的分页参数 `#[serde(flatten)] pub paging: CursorPagingQuery`（openapi 呈现为 `paging` inline object）在 **serde_urlencoded 0.7 下展开为 query 顶层键**：`?limit=20&next_cursor=<id>`。实测 `paging[limit]=1` 嵌套形式被**静默忽略**（无报错、走默认 limit=10、cursor 过滤失效），顶层 `limit`/`next_cursor` 才生效。对接列表端点时以 curl 实测为准，别信 openapi 的 object 呈现。
 
 ## 6. 开发命令
 
@@ -243,3 +273,5 @@ pnpm run format     # biome format --write
 最后仍需要时才读后端源码，且只看契约面（`endpoint/*.rs` 的 DTO + `*_contract` 的 value object / error），不看 SQL 与业务实现。
 
 注意：spec 中的响应 schema 是 `JsonResponse_*` 包装（utoipa 的 untagged 单成员枚举），实际 HTTP 响应是**扁平 JSON**——以 hurl/curl 实测为准。
+
+另见 §5.11：列表 query 参数（flatten 分页对象）的 wire 格式同样以 curl 实测为准（顶层平铺键，非 openapi 呈现的嵌套对象）。

@@ -154,13 +154,18 @@ export function VirtualTable<TData extends RowData>({
   // 用 ref 保存最新闭包，滚动监听只绑定一次
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
+  // loadingMore 也要最新值：请求进行中忽略后续触发（防竞态/重复请求）
+  const loadingMoreRef = useRef(loadingMore);
+  loadingMoreRef.current = loadingMore;
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
+      // 门控：没有回调，或上一批还在请求中 → 忽略
       if (
         onLoadMoreRef.current &&
+        !loadingMoreRef.current &&
         el.scrollTop + el.clientHeight >= el.scrollHeight - 60
       ) {
         onLoadMoreRef.current();

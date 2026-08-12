@@ -139,8 +139,8 @@ function forceLogout() {
 
 type RequestConfig = XiorRequestConfig & { _retried?: boolean };
 
-/** 统一请求：附 Bearer → 401 自动刷新重试一次 → 仍失败强制登出（刷新时机统一在 401 拦截，不依赖过期时间预测） */
-async function authRequest<T>(config: RequestConfig): Promise<T> {
+/** 统一请求：附 Bearer → 401 自动刷新重试一次 → 仍失败强制登出（刷新时机统一在 401 拦截，不依赖过期时间预测）。域 API 模块（如 lib/customers.ts）复用此函数 */
+export async function authRequest<T>(config: RequestConfig): Promise<T> {
   const tokens = loadTokens();
   const headers = { ...(config.headers ?? {}) };
   if (tokens?.accessToken) {

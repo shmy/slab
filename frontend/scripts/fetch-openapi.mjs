@@ -12,7 +12,7 @@ if (!res.ok)
 const spec = await res.json();
 
 const out = resolve(process.cwd(), 'openapi.json');
-writeFileSync(out, JSON.stringify(spec, null, 2) + '\n');
+writeFileSync(out, `${JSON.stringify(spec, null, 2)}\n`);
 console.log(
   `✓ ${Object.keys(spec.paths).length} paths / ${
     Object.keys(spec.components?.schemas ?? {}).length

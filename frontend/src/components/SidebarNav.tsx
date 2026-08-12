@@ -1,6 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router';
 import type { LucideIcon } from 'lucide-react';
 import {
+  Building2,
   ChevronDown,
   FileText,
   FolderTree,
@@ -9,7 +10,6 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  Users,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
@@ -37,7 +37,7 @@ interface NavGroup {
 
 export const navItems: (NavItem | NavGroup)[] = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard },
-  { to: '/users', label: '用户管理', icon: Users },
+  { to: '/customers', label: '客户管理', icon: Building2 },
   {
     label: '内容管理',
     icon: FileText,

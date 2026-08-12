@@ -13,9 +13,9 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppProfileRouteImport } from './routes/_app/profile'
-import { Route as AppUsersRouteImport } from './routes/_app/users'
 import { Route as AppContentArticlesRouteImport } from './routes/_app/content/articles'
 import { Route as AppContentCategoriesRouteImport } from './routes/_app/content/categories'
+import { Route as AppCustomersIndexRouteImport } from './routes/_app/customers/index'
 import { Route as AppSettingsGeneralRouteImport } from './routes/_app/settings/general'
 import { Route as AppSettingsPermissionsRouteImport } from './routes/_app/settings/permissions'
 
@@ -38,11 +38,6 @@ const AppProfileRoute = AppProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => AppRoute,
 } as any)
-const AppUsersRoute = AppUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppContentArticlesRoute = AppContentArticlesRouteImport.update({
   id: '/content/articles',
   path: '/content/articles',
@@ -51,6 +46,11 @@ const AppContentArticlesRoute = AppContentArticlesRouteImport.update({
 const AppContentCategoriesRoute = AppContentCategoriesRouteImport.update({
   id: '/content/categories',
   path: '/content/categories',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
+  id: '/customers/',
+  path: '/customers/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsGeneralRoute = AppSettingsGeneralRouteImport.update({
@@ -68,33 +68,33 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/profile': typeof AppProfileRoute
-  '/users': typeof AppUsersRoute
   '/content/articles': typeof AppContentArticlesRoute
   '/content/categories': typeof AppContentCategoriesRoute
   '/settings/general': typeof AppSettingsGeneralRoute
   '/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/customers/': typeof AppCustomersIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/profile': typeof AppProfileRoute
-  '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
   '/content/articles': typeof AppContentArticlesRoute
   '/content/categories': typeof AppContentCategoriesRoute
   '/settings/general': typeof AppSettingsGeneralRoute
   '/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/customers': typeof AppCustomersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/profile': typeof AppProfileRoute
-  '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
   '/_app/content/articles': typeof AppContentArticlesRoute
   '/_app/content/categories': typeof AppContentCategoriesRoute
   '/_app/settings/general': typeof AppSettingsGeneralRoute
   '/_app/settings/permissions': typeof AppSettingsPermissionsRoute
+  '/_app/customers/': typeof AppCustomersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -102,32 +102,32 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/profile'
-    | '/users'
     | '/content/articles'
     | '/content/categories'
     | '/settings/general'
     | '/settings/permissions'
+    | '/customers/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
     | '/profile'
-    | '/users'
     | '/'
     | '/content/articles'
     | '/content/categories'
     | '/settings/general'
     | '/settings/permissions'
+    | '/customers'
   id:
     | '__root__'
     | '/_app'
     | '/login'
     | '/_app/profile'
-    | '/_app/users'
     | '/_app/'
     | '/_app/content/articles'
     | '/_app/content/categories'
     | '/_app/settings/general'
     | '/_app/settings/permissions'
+    | '/_app/customers/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -165,13 +165,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProfileRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/users': {
-      id: '/_app/users'
-      path: '/users'
-      fullPath: '/users'
-      preLoaderRoute: typeof AppUsersRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/content/articles': {
       id: '/_app/content/articles'
       path: '/content/articles'
@@ -184,6 +177,13 @@ declare module '@tanstack/react-router' {
       path: '/content/categories'
       fullPath: '/content/categories'
       preLoaderRoute: typeof AppContentCategoriesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/customers/': {
+      id: '/_app/customers/'
+      path: '/customers'
+      fullPath: '/customers/'
+      preLoaderRoute: typeof AppCustomersIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings/general': {
@@ -205,22 +205,22 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppProfileRoute: typeof AppProfileRoute
-  AppUsersRoute: typeof AppUsersRoute
   AppIndexRoute: typeof AppIndexRoute
   AppContentArticlesRoute: typeof AppContentArticlesRoute
   AppContentCategoriesRoute: typeof AppContentCategoriesRoute
   AppSettingsGeneralRoute: typeof AppSettingsGeneralRoute
   AppSettingsPermissionsRoute: typeof AppSettingsPermissionsRoute
+  AppCustomersIndexRoute: typeof AppCustomersIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppProfileRoute: AppProfileRoute,
-  AppUsersRoute: AppUsersRoute,
   AppIndexRoute: AppIndexRoute,
   AppContentArticlesRoute: AppContentArticlesRoute,
   AppContentCategoriesRoute: AppContentCategoriesRoute,
   AppSettingsGeneralRoute: AppSettingsGeneralRoute,
   AppSettingsPermissionsRoute: AppSettingsPermissionsRoute,
+  AppCustomersIndexRoute: AppCustomersIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
