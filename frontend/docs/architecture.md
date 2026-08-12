@@ -1,0 +1,196 @@
+# 前端架构文档
+
+> 管理后台 SPA，基于 Rsbuild + React 19 + TanStack 全家桶，Nord 主题风格。
+
+## 1. 技术栈
+
+| 领域 | 选型 | 版本 | 说明 |
+|---|---|---|---|
+| 构建 | Rsbuild / Rspack | 2.x | 启用 React Compiler 自动优化 |
+| UI | React | 19.2 | |
+| 路由 | @tanstack/react-router | 1.170 | 文件式路由 + `routeTree.gen.ts` 自动生成 + 自动代码分割 |
+| 状态 | @tanstack/react-store | 0.11 | `createStore` / `useSelector` |
+| 表格 | @tanstack/react-table | 9.1 | v9 重写版 API（`useTable` + `tableFeatures`） |
+| 表单 | @tanstack/react-form | 1.33 | `useForm` + `form.Field` + Standard Schema |
+| 校验 | zod | 4.x | 原生兼容 Standard Schema v1 |
+| 组件库 | shadcn/ui | 4.16 | base-nova 风格，基于 @base-ui/react；变量映射到 Nord |
+| 类名工具 | clsx + tailwind-merge | | `cn()` 在 src/lib/utils.ts |
+| 虚拟滚动 | @tanstack/react-virtual | 3.14 | |
+| 图标 | lucide-react | 1.31 | |
+| 样式 | Tailwind CSS | 4.x | `@theme` 自定义色板 |
+| 质量 | Biome / TypeScript | 2.4 / 7 | lint + format + typecheck |
+
+## 2. 目录结构
+
+```
+src/
+├── index.tsx                  # 入口：createRouter（preload/scrollRestoration）+ Toaster
+├── index.css                  # Tailwind 4：Nord 色板 + 语义变量 + shadcn 变量映射 + 深浅模式
+├── lib/
+│   └── utils.ts                # cn()（clsx + tailwind-merge）
+├── components/
+│   ├── ui/                     # shadcn 组件（button/input/checkbox/badge/avatar/dropdown-menu/context-menu/dialog/sheet/sonner）
+│   ├── ThemeToggle.tsx        # 主题切换
+│   ├── FontSizeToggle.tsx     # 整站字体大小
+│   ├── UserMenu.tsx           # 侧边栏用户区菜单（个人信息/退出登录+确认）
+│   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）
+│   ├── PageTabs.tsx           # Chrome 风格多标签页（右键菜单：刷新/关闭当前/关闭其他/关闭全部）
+│   ├── keep-alive.tsx         # 页面 keep-alive（KeepAliveProvider/KeepAliveOutlet/useKeepAlive）
+│   └── VirtualTable.tsx       # 通用虚拟表格（核心组件，见 §4.4）
+├── store/
+│   ├── auth.ts                # 认证：createStore + localStorage 持久化
+│   ├── theme.ts               # 主题模式（html[data-theme] 应用）
+│   ├── fontSize.ts            # 字体档位（html style.fontSize 应用）
+│   ├── sidebar.ts             # 侧边栏折叠状态（localStorage 持久化）
+│   └── tabs.ts                # 多标签页列表（会话级，addTab 去重 / removeTab）
+└── routes/
+    ├── __root.tsx             # 根路由：KeepAliveProvider 包裹 <Outlet />
+    ├── login.tsx              # 登录页：左右分栏 + TanStack Form + Zod
+    ├── _app.tsx               # 布局路由：登录守卫 + 侧边栏/顶栏/多标签页/KeepAliveOutlet
+    └── _app/
+        ├── index.tsx          # 仪表盘
+        ├── users.tsx          # 用户管理（VirtualTable 业务示例：编辑 Sheet/删除 Dialog/toast）
+        ├── profile.tsx        # 个人信息
+        ├── content/           # 文章管理、分类管理
+        └── settings/          # 通用设置、权限管理
+```
+
+## 3. 认证流
+
+```
+未登录访问 /users
+    │
+    ▼
+_app.tsx beforeLoad
+    ├─ authStore.state.user 有值 → 放行
+    └─ 无值 → redirect('/login?redirect=/users')   ← 用 location.searchStr（坑，见 §5.2）
+                        │
+                        ▼
+login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向）
+    │
+    ├─ 已登录 → redirect 回 redirect 目标
+    └─ 提交：validateAllFields('change') 兜底 → login() → navigate(redirect)
+```
+
+- 登录态：`src/store/auth.ts`，localStorage `auth.user`，store 模块加载时读入
+- 守卫用 store 直接读取（模块级单例），未用 router context 注入（纯 CSR 场景功能等价且 router 从不重建）
+
+## 4. 核心设计
+
+### 4.1 主题系统（index.css）
+
+- **Nord 色板**：16 色（nord0-15）注册进 `@theme`
+- **语义别名**：`canvas`（背景）/ `surface`（卡片面）/ `line`（边框）/ `ink`（文字）/ `accent`（操作色）/ `stripe`（表头+斑马纹）/ `header-line`（顶栏边框）/ `sidebar-line`（侧边栏分隔线，固定暗色）/ `sidebar` / `sidebar-hover`
+- **深浅模式**：组件只用语义类，深浅主题仅切换 CSS 变量值：
+  - `:root[data-theme='dark'] { ... }` —— 手动深色
+  - `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { ... } }` —— 跟随系统
+  - `color-scheme` 同步，原生滚动条等自动适配
+- **关键原则**：侧边栏永远深色 → 其分隔线用固定变量（`sidebar-line`）不随主题变；顶栏背景跟随主题 → 边框用 `header-line`（深浅各一值）
+
+### 4.2 布局（_app.tsx）
+
+- **桌面**：侧边栏 `w-56 ↔ w-14` 折叠（收起按钮在顶栏左侧）
+- **移动端**（<md）：侧边栏为抽屉（`-translate-x-full` 隐藏）+ 全屏遮罩 + 汉堡按钮
+- **高度链**：`h-screen → main(flex-1) → 页面根(flex-1) → VirtualTable(flex-1 min-h-0)` 逐层传递，表格充满剩余区域
+- 顶栏：左侧 = 汉堡(移动) + 收起(桌面) + 面包屑（`getBreadcrumbs` 按 navItems 层级推导，ChevronRight 分隔）；右侧 = 日期 + 字体 + 主题
+- 多标签页栏在顶栏下方（`PageTabs`），内容区用 `KeepAliveOutlet` 渲染（见 §4.5）；main 滚动容器路由切换时手动回顶
+- 侧边栏底部：用户区（头像首字母 + 用户名 + 退出）
+
+### 4.3 表单（login.tsx）
+
+- `useForm({ defaultValues, onSubmit })` + `form.Field` render-prop
+- **校验**：字段级 zod schema 只配 `onChange`（单一事件源，避免 change+submit 双事件重复错误）；提交时 `form.validateAllFields('change')` 兜底（自动标 touched，未触碰直接提交也能显示错误）
+- 错误显示：`isTouched` 门控 + Set 去重 + issue 对象转文本
+- 注意：form 不保留 schema transform 输出 → 提交时自行 trim
+
+### 4.4 VirtualTable（通用组件）
+
+Props：`features / columns / data / initialState / growColumnId / onLoadMore / loadingMore / height / toolbar`
+
+能力：
+- **虚拟滚动**：`useVirtualizer` + `measureElement`（行高动态测量），`getItemKey` 用行 id
+- **固定列**：`columnPinningFeature` 算偏移，renderer 自己贴 sticky CSS（`pinnedStyle`：`insetInlineStart/End` + `getStart/getAfter` + `getSize` 宽度 + `flexShrink: 0` + zIndex）
+- **滚动阴影**：滚动位置检测（`scrollLeft` 边界），start/end 固定列投影，滚到边缘消失
+- **无限滚动**：`onLoadMore` 可选，滚动接近底部触发（ref 保存闭包，监听只绑一次）
+- **宽度策略**：表格 100% 宽，`growColumnId` 列 `flexGrow` 吸收剩余空间——宽屏充满；窄屏无剩余空间 flexGrow 自动失效，各列保持模型宽，sticky 偏移精确（end 固定列安全的必要条件）
+- **渲染**：div + flex 结构（绝对定位行），`role="table/row/cell"` 保语义；背景在单元格上（横向滚动不透视）；斑马纹 + `group-hover` 行 hover
+- 类型上使用 `TableColumnApi` 契约接口（v9 泛型限制，见 §5.3）
+
+### 4.5 多标签页与 keep-alive
+
+**多标签页**（`PageTabs.tsx` + `store/tabs.ts`）：
+- 路由变化自动开标签（`addTab` 去重）；标签存储是**会话级**（刷新后仅当前页一个标签）
+- 激活标签自动滚入视野：`useEffect + requestAnimationFrame` 后手动 `scrollLeft` 计算（`scrollIntoView` 在部分浏览器对横向溢出容器不生效——用户环境实测；rAF 确保布局稳定后再算）
+- 首页 `/` 固定：不可关闭、不弹右键菜单
+- 右键菜单与右端操作菜单共用配置（`TAB_REFRESH_ACTIONS` / `TAB_CLOSE_ACTIONS`）：刷新 / 关闭当前 / 关闭其他 / 关闭全部
+
+**keep-alive**（`keep-alive.tsx`）：
+- `KeepAliveProvider`（根路由持有缓存路由集合：`{ pathname: { version } }`）+ `KeepAliveOutlet`（替代布局 `<Outlet />`）
+- 页面路由声明 `staticData: { keepAlive: true }` 参与缓存；首次访问登记，之后切走/切回复用同一棵组件树
+- **冻结机制 = Suspense 挂起**（`throw` 未 resolve 的 promise）：hidden 时不渲染 children、保留已提交 DOM 与状态、不响应更新；visible 时 resolve 唤醒恢复
+- **激活判断用 `useMatches` 叶子 pathname**（非 `useLocation`）：路由 transition 中 location 先变、matches 后变，若提前解冻缓存页，Outlet 会读到中间态路由导致重建
+- 关闭标签调 `destroy(pathname)`（缓存条目删除 → 页面卸载释放状态）；右键「刷新」调 `refresh(pathname)`（version+1 → CacheView key 变化 → 重建页面，状态重置、重新加载）
+- 缓存条目（未登记路径）由 fallback `<Outlet />` 兜底渲染当前路由
+
+## 5. 踩坑记录（重要）
+
+### 5.1 TanStack Table v9 是重写版
+`useReactTable` → `useTable`；`getCoreRowModel()` → features 槽位（`coreRowModel: createCoreRowModel()` 放 `tableFeatures` 内）；列定义用 `columnHelper.columns([...])` 保类型；features 需静态定义（`tableFeatures({...})`）。`getIsPinned()` 返回 `'start' | 'end' | false`（不是 'center'）。
+
+### 5.2 location.search 是对象
+TanStack Router 新版 `ParsedLocation.search` 是解析后的对象，拼接 URL 要用 `location.searchStr`（带前导 `?`）。`pathname + search` 会抛 "Cannot convert object to primitive value"——该 bug 只在无登录态（如隐身模式）时触发，因为登录态下 beforeLoad 不会执行拼接分支。
+
+### 5.3 v9 泛型限制
+`Column<TFeatures, TData>` 在通用组件泛型场景下退化为 `Column_Core` union，feature API 不可见。VirtualTable 用最小契约接口 `TableColumnApi` + `as unknown as` 转换，调用方（具体 features 类型）仍获完整推断。
+
+### 5.4 CSS 特异性陷阱
+`hover:bg-*`（伪类，0,2,0）永远压过 `bg-*`（0,1,0）。激活态导航若同时存在 hover 背景类，hover 时会被覆盖成错误颜色 → 激活/非激活样式必须通过 `activeProps`/`inactiveProps` 彻底分离。
+
+### 5.5 sticky 必须不透明背景
+固定列/表头若无自己的不透明背景，滚动内容会从下方透出。背景不能放行级（行盒宽度=视口宽，横向滚动覆盖不到右侧），必须放单元格；且不能用 inline style（否则 `group-hover` 类压不过，固定列 hover 失效）。
+
+### 5.6 Tailwind 4 深浅模式
+Biome 的 CSS parser 不识别 `@theme` → `index.css` 在 biome `files.includes` 排除。深色覆盖用 CSS 变量（语义类自动适配），组件代码零 `dark:` 类。
+
+### 5.7 主题/字体持久化
+`store/theme.ts`、`store/fontSize.ts` 模块加载即应用（localStorage + html 属性/inline style），避免闪烁。隐身模式下 localStorage 可能受限，读操作需 try/catch（auth 已有，theme/fontSize 的 setItem 若需健壮可加）。
+
+### 5.8 React Compiler 与 TanStack Table v9 不兼容（文件级豁免）
+`useTable` 使用 render-phase store（`get`/`markCommitted` 配对的状态机），React Compiler 自动 memo 化会缓存渲染期间的读取，导致 `table.state`/引用不更新——表现：全选后行选中正常但表头 checkbox 卡在初始值、`getIsAllRowsSelected()` 恒为 false。诊断要点：`table.state` 在 effect 中读取会返回 undefined（render-phase 值仅渲染期有效）；table-core 层逻辑正常（node 复刻验证 `toggleAllRowsSelected` 后 all/some 均 true）。
+
+**当前方案**：`reactCompiler: true` 全局启用，受影响文件（`VirtualTable.tsx`、`users.tsx`）顶部加 `"use no memo"` 指令豁免（React Compiler 官方文件级禁用机制），其余文件继续享受编译优化。
+
+### 5.9 shadcn/ui 接入
+- 变量全部映射到 Nord 语义（`--primary: #5e81ac`、`--background/foreground/border/ring` 对应 canvas/ink/line/accent-soft），深浅主题三套变量（:root / data-theme='dark' / media query）自动切换
+- **accent 冲突**：shadcn 的 accent（悬停背景）与我们的 `--color-accent`（主色）同名，保留主色语义，shadcn 组件的 `bg-accent` 落为主色
+- `@custom-variant dark (&:is([data-theme='dark'] *))` 匹配项目切换机制（跟随系统模式下 dark: 类不触发，变量机制保证颜色正确）
+- **CLI 不可用**：MCP SDK 的 `zod/v3` 导入与 pnpm 解析冲突（overrides 无效），组件改为从 registry（`ui.shadcn.com/r/styles/base-nova/*.json`）拉源码手动创建，IconPlaceholder 替换为 lucide 图标
+- 组件基于 @base-ui/react（非 Radix）；Base UI Checkbox 原生支持 `indeterminate` prop
+- `@import 'shadcn/tailwind.css'` 提供组件基础样式；biome 忽略 index.css（Tailwind 语法）
+
+### 5.10 keep-alive 与多标签页
+- **Suspense 挂起 vs Activity**：`<Activity mode="hidden">` 官方语义是 *renders children but keeps them hidden*——hidden 缓存页仍渲染当前路由，路由一切走内容被覆盖、切回必重建（曾实测踩坑）。Suspense 挂起（throw 未 resolve promise）才真正"不渲染"，保留已提交 DOM/状态
+- **激活判断必须用 matches 叶子路径**：navigate 是 transition（location 立即变、matches 渐进更新）。用 `useLocation` 判断 active 会在中间态提前解冻缓存页，Outlet 读到旧 matches 渲染错误内容 → 页面重建
+- **scrollIntoView 对横向容器不可靠**：标签自动滚入视野用手动 `scrollLeft += rect 差值`（rAF 后执行），不要依赖 `scrollIntoView({ inline: 'nearest' })`
+- **测试输入必须用真实键盘**：原生 `setter + dispatchEvent('input')` 不更新 React state（React 19 value tracker 会在下次渲染重置）；headless 验证用 CDP `Input.insertText`（先 focus 可见 input）
+- **dev server 产物缓存**：外部改文件偶发不触发重编译（或浏览器缓存旧 chunk），验证"没生效"前先重启 dev + 清 `node_modules/.cache` + 换全新浏览器 profile（曾因此误判多次）
+- **第三方 keep-alive 库均不可用**：react-activation（React 19 不兼容）、tanstack-router-keepalive（依赖旧 `getRouterContext`）、tanstack-router-cache（依赖 router.stores 内部结构，1.171 重构后崩溃）→ 最终用官方公开 API 自研（见 §4.5）
+
+## 6. 开发命令
+
+```bash
+pnpm run dev        # 开发服务器（http://localhost:3000）
+pnpm run build      # 生产构建
+pnpm run preview    # 预览生产构建
+pnpm run typecheck  # tsc --noEmit 类型检查
+pnpm run check      # biome check --write（lint + format）
+pnpm run format     # biome format --write
+```
+
+## 7. 扩展指南
+
+- **加页面**：`src/routes/_app/xxx.tsx` 创建文件路由（routeTree 自动生成），页面根用 `flex min-h-0 flex-1 flex-col` 以充满剩余高度；需要标签页保留状态时加 `staticData: { keepAlive: true }`
+- **加侧边栏菜单**：`SidebarNav.tsx` 的 `navItems` 数组加 `{ to, label, icon }`（或 `{ label, icon, children }` 分组）
+- **新表格**：定义 features（只注册用到的）+ columns（`columnHelper.columns`），套 `<VirtualTable>`；需要弹性列时传 `growColumnId`
+- **新下拉/右键菜单**：复用 `dropdown-menu.tsx` / `context-menu.tsx`（base-ui）
+- **换品牌色**：只改 `index.css` 的 `--color-accent*` 等语义变量，深浅两处

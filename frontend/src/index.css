@@ -1,0 +1,229 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is([data-theme='dark'] *));
+
+@theme {
+  /* 中文字体栈：PingFang/雅黑兜底 */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+
+  /* Nord 色板（https://www.nordtheme.com/） */
+  --color-nord0: #2e3440;
+  --color-nord1: #3b4252;
+  --color-nord2: #434c5e;
+  --color-nord3: #4c566a;
+  --color-nord4: #d8dee9;
+  --color-nord5: #e5e9f0;
+  --color-nord6: #eceff4;
+  --color-nord7: #8fbcbb;
+  --color-nord8: #88c0d0;
+  --color-nord9: #81a1c1;
+  --color-nord10: #5e81ac;
+  --color-nord11: #bf616a;
+  --color-nord12: #d08770;
+  --color-nord13: #ebcb8b;
+  --color-nord14: #a3be8c;
+  --color-nord15: #b48ead;
+
+  /* 语义别名（浅色默认值） */
+  --color-canvas: #eceff4; /* 内容区背景 nord6 */
+  --color-surface: #ffffff; /* 卡片 / 表格面 */
+  --color-line: #d8dee9; /* 边框 nord4 */
+  --color-ink: #2e3440; /* 主文字 nord0 */
+  --color-ink-soft: #4c566a; /* 次级文字 nord3 */
+  --color-accent: #5e81ac; /* 主操作色 nord10 */
+  --color-accent-soft: #88c0d0; /* 强调（焦点/链接）nord8 */
+  --color-sidebar: #2e3440; /* 侧边栏 nord0 */
+  --color-sidebar-hover: #3b4252; /* 侧边栏 hover nord1 */
+  --color-stripe: #eceff4; /* 表头 / 斑马纹行 nord6 */
+  --color-stripe-hover: #e5e9f0; /* 行 hover nord5 */
+  --color-header-line: #d8dee9; /* 顶栏底边框（深色下用暗色与侧边栏一致）nord4 */
+  --color-sidebar-line: #434c5e; /* 侧边栏分隔线：固定暗色（侧边栏永远深色，不随主题变）nord2 */
+}
+
+/* shadcn 变量映射到 Nord 语义（深浅主题自动适配）。
+   注意：shadcn 的 accent（悬停背景）与我们的 --color-accent（主色）同名冲突，
+   保留我们的主色语义，shadcn 组件的 bg-accent 落为主色（视觉一致）。 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: #eceff4;
+  --foreground: #2e3440;
+  --card: #ffffff;
+  --card-foreground: #2e3440;
+  --popover: #ffffff;
+  --popover-foreground: #2e3440;
+  --primary: #5e81ac;
+  --primary-foreground: #eceff4;
+  --secondary: #e5e9f0;
+  --secondary-foreground: #2e3440;
+  --muted: #e5e9f0;
+  --muted-foreground: #4c566a;
+  --accent-foreground: #2e3440;
+  --destructive: #bf616a;
+  --destructive-foreground: #ffffff;
+  --border: #d8dee9;
+  --input: #d8dee9;
+  --ring: #88c0d0;
+  --chart-1: #5e81ac;
+  --chart-2: #a3be8c;
+  --chart-3: #ebcb8b;
+  --chart-4: #bf616a;
+  --chart-5: #b48ead;
+  --sidebar: #2e3440;
+  --sidebar-foreground: #e5e9f0;
+  --sidebar-primary: #5e81ac;
+  --sidebar-primary-foreground: #eceff4;
+  --sidebar-accent: #3b4252;
+  --sidebar-accent-foreground: #eceff4;
+  --sidebar-border: #434c5e;
+  --sidebar-ring: #88c0d0;
+}
+
+/* 深色模式：手动 data-theme 优先；未设置 data-theme 时跟随系统 */
+:root[data-theme='dark'] {
+  --color-canvas: #2e3440;
+  --color-surface: #3b4252;
+  --color-line: #4c566a;
+  --color-ink: #eceff4;
+  --color-ink-soft: #d8dee9;
+  --color-accent: #88c0d0;
+  --color-accent-soft: #81a1c1;
+  --color-stripe: #2e3440;
+  --color-stripe-hover: #434c5e;
+  --color-header-line: #434c5e;
+  --background: #2e3440;
+  --foreground: #eceff4;
+  --card: #3b4252;
+  --card-foreground: #eceff4;
+  --popover: #3b4252;
+  --popover-foreground: #eceff4;
+  --primary: #88c0d0;
+  --primary-foreground: #2e3440;
+  --secondary: #434c5e;
+  --secondary-foreground: #eceff4;
+  --muted: #2e3440;
+  --muted-foreground: #d8dee9;
+  --accent-foreground: #eceff4;
+  --destructive: #bf616a;
+  --destructive-foreground: #ffffff;
+  --border: #4c566a;
+  --input: #4c566a;
+  --ring: #81a1c1;
+  --sidebar-foreground: #e5e9f0;
+  --sidebar-primary: #88c0d0;
+  --sidebar-primary-foreground: #2e3440;
+  --sidebar-accent: #3b4252;
+  --sidebar-accent-foreground: #eceff4;
+  --sidebar-border: #434c5e;
+  --sidebar-ring: #81a1c1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-canvas: #2e3440;
+    --color-surface: #3b4252;
+    --color-line: #4c566a;
+    --color-ink: #eceff4;
+    --color-ink-soft: #d8dee9;
+    --color-accent: #88c0d0;
+    --color-accent-soft: #81a1c1;
+    --color-stripe: #2e3440;
+    --color-stripe-hover: #434c5e;
+    --color-header-line: #434c5e;
+    --background: #2e3440;
+    --foreground: #eceff4;
+    --card: #3b4252;
+    --card-foreground: #eceff4;
+    --popover: #3b4252;
+    --popover-foreground: #eceff4;
+    --primary: #88c0d0;
+    --primary-foreground: #2e3440;
+    --secondary: #434c5e;
+    --secondary-foreground: #eceff4;
+    --muted: #2e3440;
+    --muted-foreground: #d8dee9;
+    --accent-foreground: #eceff4;
+    --destructive: #bf616a;
+    --destructive-foreground: #ffffff;
+    --border: #4c566a;
+    --input: #4c566a;
+    --ring: #81a1c1;
+    --sidebar-foreground: #e5e9f0;
+    --sidebar-primary: #88c0d0;
+    --sidebar-primary-foreground: #2e3440;
+    --sidebar-accent: #3b4252;
+    --sidebar-accent-foreground: #eceff4;
+    --sidebar-border: #434c5e;
+    --sidebar-ring: #81a1c1;
+  }
+}
+
+/* 原生 UI（滚动条等）跟随主题 */
+:root {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink antialiased;
+  }
+
+  /* 按钮默认显示手型指针（Tailwind preflight 不自动设置） */
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* 复选框使用品牌色 */
+  input[type='checkbox'] {
+    accent-color: var(--color-accent);
+  }
+}
