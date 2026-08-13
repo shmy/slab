@@ -122,11 +122,11 @@ login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向
 
 - **Nord 色板**：16 色（nord0-15）注册进 `@theme`
 - **语义别名**：`canvas`（背景）/ `surface`（卡片面）/ `line`（边框）/ `ink`（文字）/ `accent`（强调色）/ `stripe`（表头+斑马纹）/ `header-line`（顶栏边框）/ `sidebar-line`（侧边栏分隔线，随主题）/ `sidebar`
-- **深浅模式**：组件只用语义类，深浅主题仅切换 CSS 变量值：
+- **深浅模式**：`theme.ts` 把模式（light/dark/system）统一解析为 `<html data-theme>` 具体值——system 用 `matchMedia` 解析成 dark/light 并监听系统变化实时切换；Tailwind `dark:` variant 只认 data-theme 属性，JS 解析保证它与 CSS 变量始终同步；index.css 的 `@media` 分支仅作无 JS 兑底
   - `:root[data-theme='dark'] { ... }` —— 手动深色
-  - `@media (prefers-color-scheme: dark) { :root:not([data-theme]) { ... } }` —— 跟随系统
   - `color-scheme` 同步，原生滚动条等自动适配
-- **关键原则（Filament Nord 风格）**：侧边栏随主题——亮色下与页面同色（`#f5f8fa`）+ 浅底胶囊激活态（`bg-sidebar-primary` = nord6 底 + primary-800 文字），暗色下 `white/5` 激活/hover；主色 = 冰蓝 `#88c0d0`（nord8），按钮/输入框全圆（rounded-full），表格容器 `rounded-2xl + shadow-md`（暗色渐变底，见 `.vt-card`）
+- **关键原则（Filament Nord 风格）**：侧边栏随主题——亮色下比白色内容区略灰（`#f5f8fa`）+ 浅底胶囊激活态（`bg-sidebar-primary` = nord6 底 + 黑字 `#2e3440`），暗色下 `white/5` 底 + 白字；选中/ hover 文字黑/白、普通文字灰蓝；主色 = 深蓝 `#5e81ac`（nord10，白字），按钮/输入框全圆（rounded-full），表格容器 `rounded-2xl + shadow-md`（暗色渐变底，见 `.vt-card`）
+- **多标签页（PageTabs）**：选中 tab 背景 = 内容区底色（亮 `#fff` / 暗 `#252a35`），标签栏无底边框，选中 tab 与内容区无缝相连——亮色靠白底浮起、暗色靠与标签栏（`#3b414e`）的深浅对比
 - **hover 统一**：所有中性 hover 背景 = 菜单选中背景色（`--muted`：亮 `#e5e9f0` / 暗 `white/5`）——菜单项、表格行、侧边栏、ghost/outline 按钮、badge、tabs 全走同一色；`--color-accent` 只做静态强调（头像/徽标），不再承担 hover
 
 ### 4.2 布局（_app.tsx）

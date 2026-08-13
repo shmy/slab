@@ -123,7 +123,7 @@ export function SidebarNav({
 
   // 分组按钮样式（非 Link，无激活态与 hover 冲突问题，颜色可合并）
   const groupClass = cn(
-    'flex w-full items-center rounded-md py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent',
+    'flex w-full items-center rounded-md py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
     focusRing,
     collapsed && !mobileOpen ? 'justify-center px-0' : 'gap-3 px-2.5',
   );
@@ -145,12 +145,13 @@ export function SidebarNav({
                   ? 'justify-center px-0'
                   : 'gap-3 px-2.5',
               )}
-              // 激活态：Filament 风格浅底胶囊（bg-sidebar-primary + 深蓝文字）
+              // 激活态：Filament 风格浅底胶囊（bg-sidebar-primary + 黑/白文字）
               activeProps={{
                 className: 'bg-sidebar-primary text-sidebar-primary-foreground',
               }}
               inactiveProps={{
-                className: 'text-sidebar-foreground hover:bg-sidebar-accent',
+                className:
+                  'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
               }}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -211,7 +212,7 @@ export function SidebarNav({
                       render={<Link to={child.to} onClick={onNavigate} />}
                       className={cn(
                         'gap-2 px-2 py-2',
-                        // 导航项用小手；hover 只变背景，文字/图标色不变（激活项保持品牌色）
+                        // 导航项用小手；focus 时背景+文字同步变黑/白（激活项保持激活样式）
                         'cursor-pointer focus:bg-sidebar-accent focus:text-sidebar-accent-foreground',
                         focusRing,
                         active &&
@@ -286,10 +287,10 @@ export function SidebarNav({
                         className:
                           'bg-sidebar-primary text-sidebar-primary-foreground',
                       }}
-                      // hover 只变背景：图标/文字保持前景色不变
+                      // hover 时文字同步变黑/白
                       inactiveProps={{
                         className:
-                          'text-sidebar-foreground hover:bg-sidebar-accent',
+                          'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                       }}
                     >
                       <child.icon className="h-4 w-4 shrink-0" />

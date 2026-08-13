@@ -114,7 +114,7 @@ export function PageTabs() {
   }
 
   return (
-    <div className="flex shrink-0 items-end border-b border-header-line bg-stripe">
+    <div className="flex shrink-0 items-end bg-stripe">
       {/* 标签滚动区：flex-1 占满剩余空间，按钮固定在右端 */}
       <div
         ref={scrollerRef}
@@ -130,9 +130,9 @@ export function PageTabs() {
               data-path={tab.to}
               className={cn(
                 'group flex h-8 shrink-0 items-center gap-1 rounded-t-md border border-b-0 px-2.5 text-sm transition-colors',
-                // 激活标签：白/亮卡片（surface）与标签栏底色形成对比，底部无边框与页面相连
+                // 激活标签：亮色 surface 白底浮起；暗色 bg-canvas 与内容区同色（深色下选中 tab 连成一体）
                 active
-                  ? 'border-line bg-surface text-ink'
+                  ? 'border-line bg-surface text-ink dark:bg-canvas'
                   : 'border-transparent bg-transparent text-ink-soft hover:bg-stripe-hover hover:text-ink',
               )}
             >

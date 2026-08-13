@@ -29,18 +29,29 @@
   --color-nord15: #b48ead;
 
   /* 语义别名（浅色默认值） */
-  --color-canvas: #f5f8fa; /* 内容区背景（Filament Nord：比 nord6 更冷更亮） */
-  --color-surface: #ffffff; /* 卡片 / 表格面 */
-  --color-line: #d8dee9; /* 边框 nord4 */
-  --color-ink: #2e3440; /* 主文字 nord0 */
-  --color-ink-soft: #4c566a; /* 次级文字 nord3 */
-  --color-accent: #5e81ac; /* 强调色（头像/徽标/品牌区静态强调，非 hover）nord10 */
-  --color-accent-soft: #88c0d0; /* 主色（焦点/链接）nord8 */
-  --color-sidebar: #f5f8fa; /* 侧边栏（Filament 风格：随主题，亮色下与页面同色） */
-  --color-stripe: #f5f8fa; /* 表头 / 斑马纹行（= 页面底色，与白色 surface 行交替） */
-  --color-stripe-hover: #e5e9f0; /* 行 hover = 菜单选中背景色（muted 同款） */
-  --color-header-line: #d8dee9; /* 顶栏底边框 nord4 */
-  --color-sidebar-line: #d8dee9; /* 侧边栏分隔线（随主题）nord4 */
+  --color-canvas: #ffffff;
+  /* 内容区背景（亮色 = 白，与选中 tab 一致） */
+  --color-surface: #ffffff;
+  /* 卡片 / 表格面 */
+  --color-line: #d8dee9;
+  /* 边框 nord4 */
+  --color-ink: #2e3440;
+  /* 主文字 nord0 */
+  --color-ink-soft: #4c566a;
+  /* 次级文字 nord3 */
+  --color-accent: #5e81ac;
+  /* 强调色（头像/徽标/品牌区静态强调，非 hover）nord10 */
+  --color-accent-soft: #81a1c1; /* 主色系强调（浅一档 nord9，渐变/选中行） */
+  --color-sidebar: #f5f8fa;
+  /* 侧边栏（Filament 风格：随主题，亮色下与页面同色） */
+  --color-stripe: #f5f8fa;
+  /* 表头 / 斑马纹行（= 页面底色，与白色 surface 行交替） */
+  --color-stripe-hover: #e5e9f0;
+  /* 行 hover = 菜单选中背景色（muted 同款） */
+  --color-header-line: #d8dee9;
+  /* 顶栏底边框 nord4 */
+  --color-sidebar-line: #d8dee9;
+  /* 侧边栏分隔线（随主题）nord4 */
 }
 
 /* shadcn 变量映射到 Nord 语义（深浅主题自动适配）。
@@ -86,14 +97,15 @@
 
 :root {
   --radius: 0.75rem;
-  --background: #f5f8fa; /* Filament Nord 页面底（比 nord6 更亮） */
+  --background: #ffffff;
+  /* 页面底（亮色 = 白） */
   --foreground: #2e3440;
   --card: #ffffff;
   --card-foreground: #2e3440;
   --popover: #ffffff;
   --popover-foreground: #2e3440;
-  --primary: #88c0d0; /* Filament Nord 主色 = 冰蓝 nord8 */
-  --primary-foreground: #293a3d; /* 冰蓝底上的深色文字（Filament primary-950） */
+  --primary: #5e81ac; /* 主色 = 深蓝 nord10（白字可读） */
+  --primary-foreground: #ffffff; /* 主色底上的白字 */
   --secondary: #e5e9f0;
   --secondary-foreground: #2e3440;
   --muted: #e5e9f0;
@@ -103,7 +115,7 @@
   --destructive-foreground: #ffffff;
   --border: #d8dee9;
   --input: #d8dee9;
-  --ring: #88c0d0;
+  --ring: #5e81ac;
   --chart-1: #5e81ac;
   --chart-2: #a3be8c;
   --chart-3: #ebcb8b;
@@ -112,25 +124,31 @@
   /* 侧边栏（Filament 风格浅色：背景同页面，active=浅底+深蓝字，hover=nord4） */
   --sidebar: #f5f8fa;
   --sidebar-foreground: #4c566a;
-  --sidebar-primary: #eceff4; /* active 底 nord6 */
-  --sidebar-primary-foreground: #52737d; /* active 文字 primary-800 */
-  --sidebar-accent: #e5e9f0; /* hover 底 = 菜单选中背景色 nord5 */
+  --sidebar-primary: #eceff4;
+  /* active 底 nord6 */
+  --sidebar-primary-foreground: #2e3440;
+  /* active 文字：黑 */
+  --sidebar-accent: #e5e9f0;
+  /* hover 底 = 菜单选中背景色 nord5 */
   --sidebar-accent-foreground: #2e3440;
   --sidebar-border: #d8dee9;
-  --sidebar-ring: #88c0d0;
+  --sidebar-ring: #5e81ac;
 }
 
 /* 深色模式：手动 data-theme 优先；未设置 data-theme 时跟随系统 */
 :root[data-theme='dark'] {
-  --color-canvas: #252a35; /* Filament Nord 暗色页面底（比 nord0 更暗） */
+  --color-canvas: #252a35;
+  /* Filament Nord 暗色页面底（比 nord0 更暗） */
   --color-surface: #3b4252;
   --color-line: #4c566a;
   --color-ink: #eceff4;
   --color-ink-soft: #d8dee9;
-  --color-accent: #88c0d0;
+  --color-accent: #5e81ac;
   --color-accent-soft: #81a1c1;
-  --color-stripe: #3b414e; /* 暗色表头（Filament 精确值） */
-  --color-stripe-hover: rgb(255 255 255 / 0.05); /* 行 hover = 菜单选中背景色（white/5，Filament 精确） */
+  --color-stripe: #3b414e;
+  /* 暗色表头（Filament 精确值） */
+  --color-stripe-hover: rgb(255 255 255 / 0.05);
+  /* 行 hover = 菜单选中背景色（white/5，Filament 精确） */
   --color-header-line: #434c5e;
   --color-sidebar-line: #434c5e;
   --background: #252a35;
@@ -139,37 +157,43 @@
   --card-foreground: #eceff4;
   --popover: #3b4252;
   --popover-foreground: #eceff4;
-  --primary: #88c0d0;
-  --primary-foreground: #2e3440;
+  --primary: #5e81ac;
+  --primary-foreground: #ffffff;
   --secondary: #434c5e;
   --secondary-foreground: #eceff4;
-  --muted: rgb(255 255 255 / 0.05); /* hover/选中背景 = white/5（Filament 暗色 hover 精确值） */
+  --muted: rgb(255 255 255 / 0.05);
+  /* hover/选中背景 = white/5（Filament 暗色 hover 精确值） */
   --muted-foreground: #d8dee9;
   --accent-foreground: #eceff4;
   --destructive: #bf616a;
   --destructive-foreground: #ffffff;
   --border: #4c566a;
   --input: #4c566a;
-  --ring: #81a1c1;
+  --ring: #5e81ac;
   /* 侧边栏（Filament 风格暗色：背景同页面，active/hover=white/5，文字 gray-400） */
   --sidebar: #252a35;
-  --sidebar-foreground: #8c9ab3; /* Filament dark label = gray-400 */
-  --sidebar-primary: rgb(255 255 255 / 0.05); /* active 底 white/5 */
-  --sidebar-primary-foreground: #acd4dd; /* active 文字 primary-400 */
-  --sidebar-accent: rgb(255 255 255 / 0.05); /* hover 底 white/5 */
+  --sidebar-foreground: #8c9ab3;
+  /* Filament dark label = gray-400 */
+  --sidebar-primary: rgb(255 255 255 / 0.05);
+  /* active 底 white/5 */
+  --sidebar-primary-foreground: #eceff4;
+  /* active 文字：白 */
+  --sidebar-accent: rgb(255 255 255 / 0.05);
+  /* hover 底 white/5 */
   --sidebar-accent-foreground: #e5e9f0;
   --sidebar-border: #434c5e;
-  --sidebar-ring: #81a1c1;
+  --sidebar-ring: #5e81ac;
 }
 
 @media (prefers-color-scheme: dark) {
+  /* 无 JS 场景兜底：JS 总会设置 data-theme，此分支正常情况下不命中 */
   :root:not([data-theme]) {
     --color-canvas: #252a35;
     --color-surface: #3b4252;
     --color-line: #4c566a;
     --color-ink: #eceff4;
     --color-ink-soft: #d8dee9;
-    --color-accent: #88c0d0;
+    --color-accent: #5e81ac;
     --color-accent-soft: #81a1c1;
     --color-stripe: #3b414e;
     --color-stripe-hover: rgb(255 255 255 / 0.05);
@@ -181,8 +205,8 @@
     --card-foreground: #eceff4;
     --popover: #3b4252;
     --popover-foreground: #eceff4;
-    --primary: #88c0d0;
-    --primary-foreground: #2e3440;
+    --primary: #5e81ac;
+    --primary-foreground: #ffffff;
     --secondary: #434c5e;
     --secondary-foreground: #eceff4;
     --muted: rgb(255 255 255 / 0.05);
@@ -192,15 +216,15 @@
     --destructive-foreground: #ffffff;
     --border: #4c566a;
     --input: #4c566a;
-    --ring: #81a1c1;
+    --ring: #5e81ac;
     --sidebar: #252a35;
     --sidebar-foreground: #8c9ab3;
     --sidebar-primary: rgb(255 255 255 / 0.05);
-    --sidebar-primary-foreground: #acd4dd;
+    --sidebar-primary-foreground: #eceff4;
     --sidebar-accent: rgb(255 255 255 / 0.05);
     --sidebar-accent-foreground: #e5e9f0;
     --sidebar-border: #434c5e;
-    --sidebar-ring: #81a1c1;
+    --sidebar-ring: #5e81ac;
   }
 }
 
@@ -208,16 +232,18 @@
 :root {
   color-scheme: light;
 }
+
 :root[data-theme='dark'] {
   color-scheme: dark;
 }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
   }
 }
 
-/* Filament Nord 风格：暗色表格容器渐变背景 + 冰蓝渐变边框（vt-card 挂在 VirtualTable 容器上）。
+/* Filament Nord 风格：暗色表格容器渐变背景 + 冷蓝调渐变边框（vt-card 挂在 VirtualTable 容器上）。
    亮色下容器用 bg-surface 白卡片；暗色下渐变覆盖之，缝隙透出 nord0→nord1 渐变。 */
 .dark .vt-card {
   background:

@@ -9,16 +9,15 @@ function readMode(): ThemeMode {
   return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
 }
 
-/** 将模式写到 <html data-theme>：dark 强制深色，其余情况交给 CSS 媒体查询 */
+const darkQuery = () => window.matchMedia('(prefers-color-scheme: dark)');
+
+/** 将模式写到 <html data-theme>：system 也解析为具体主题。
+ *  Tailwind 的 dark: variant 只认 data-theme 属性（不认媒体查询），
+ *  若不解析，跟随系统时 CSS 变量已变深色而 dark:* 类全部失效，两者出现出入。 */
 function apply(mode: ThemeMode) {
   const root = document.documentElement;
-  if (mode === 'dark') {
-    root.dataset.theme = 'dark';
-  } else if (mode === 'light') {
-    root.dataset.theme = 'light';
-  } else {
-    delete root.dataset.theme;
-  }
+  root.dataset.theme =
+    mode === 'system' ? (darkQuery().matches ? 'dark' : 'light') : mode;
 }
 
 // 模块加载即应用，避免主题闪烁
@@ -27,6 +26,24 @@ apply(initial);
 
 export const themeStore = createStore<{ mode: ThemeMode }>({ mode: initial });
 
+// system 模式监听系统主题变化，实时切换（JS 负责解析，index.css 的 media 分支仅作无 JS 兜底）
+let mq: MediaQueryList | null = null;
+
+function onSystemChange() {
+  apply('system');
+}
+
+function syncSystem(mode: ThemeMode) {
+  mq?.removeEventListener('change', onSystemChange);
+  mq = null;
+  if (mode === 'system') {
+    mq = darkQuery();
+    mq.addEventListener('change', onSystemChange);
+  }
+}
+
+syncSystem(initial);
+
 export function setTheme(mode: ThemeMode) {
   try {
     localStorage.setItem(STORAGE_KEY, mode);
@@ -34,5 +51,6 @@ export function setTheme(mode: ThemeMode) {
     // 隐身模式 / 隐私浏览下存储受限，忽略（会话内仍生效）
   }
   apply(mode);
+  syncSystem(mode);
   themeStore.setState((s) => ({ ...s, mode }));
 }
