@@ -68,7 +68,6 @@ async fn execute(
     let q = q.filter(|s| !s.is_empty());
     let input_next_cursor = paging.cursor_id();
     let page_limit = paging.limit();
-    let fetch_limit = page_limit + 1;
 
     let (sql, values) = {
         Query::select()
@@ -84,7 +83,7 @@ async fn execute(
             }))
             .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(*next_cursor)))
             .order_by("id", Order::Desc)
-            .limit(fetch_limit)
+            .limit(paging.fetch_limit())
             .build_sqlx(PostgresQueryBuilder)
     };
 
@@ -153,7 +152,7 @@ mod tests {
         let cursor = page1.next_cursor.unwrap();
         let query: SearchAccountQuery = serde_json::from_value(json!({
             "limit": 2,
-            "next_cursor": cursor.to_string()
+            "cursor": cursor.to_string()
         }))
         .unwrap();
         let page2 = execute(&state.pg_pool, query).await.unwrap();

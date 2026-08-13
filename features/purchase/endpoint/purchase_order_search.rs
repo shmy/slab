@@ -58,7 +58,6 @@ async fn execute(
     query: SearchPurchaseOrderQuery,
 ) -> rootcause::Result<CursorPagingResult<PurchaseOrderItem>> {
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
 
     let (sql, values) = Query::select()
         .from("purchase_orders")
@@ -72,7 +71,7 @@ async fn execute(
         .and_where_option(query.status.map(|s| Expr::col("status").eq(s)))
         .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         .order_by("id", Order::Desc)
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .build_sqlx(PostgresQueryBuilder);
 
     let mut conn = pg_pool.acquire().await?;

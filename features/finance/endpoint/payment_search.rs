@@ -70,7 +70,6 @@ async fn execute(
 ) -> rootcause::Result<CursorPagingResult<PaymentItem>> {
     let q = query.q.filter(|s| !s.is_empty());
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
 
     let (sql, values) = Query::select()
         .from("payments")
@@ -99,7 +98,7 @@ async fn execute(
         }))
         .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         .order_by("id", Order::Desc)
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .build_sqlx(PostgresQueryBuilder);
 
     let mut conn = pg_pool.acquire().await?;

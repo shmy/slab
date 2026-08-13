@@ -77,7 +77,6 @@ async fn execute(
     query: SearchAuditQuery,
 ) -> rootcause::Result<CursorPagingResult<AuditLogItem>> {
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
 
     let (sql, values) = Query::select()
         .column(("audit_logs", "id"))
@@ -101,7 +100,7 @@ async fn execute(
         )
         // 单键排序：id 是应用生成的 tsid，单调递增，天然等同时序
         .order_by(("audit_logs", "id"), Order::Desc)
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .build_sqlx(PostgresQueryBuilder);
 
     let mut conn = pg_pool.acquire().await?;

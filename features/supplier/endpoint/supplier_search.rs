@@ -58,7 +58,6 @@ async fn execute(
 ) -> rootcause::Result<CursorPagingResult<SearchSupplierItem>> {
     let q = query.q.filter(|s| !s.is_empty());
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
     let (sql, values) = Query::select()
         .from("suppliers")
         .column("id")
@@ -74,7 +73,7 @@ async fn execute(
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .order_by("id", Order::Desc)
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .build_sqlx(PostgresQueryBuilder);
     let mut conn = pg_pool.acquire().await?;
     let items: Vec<SearchSupplierItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)

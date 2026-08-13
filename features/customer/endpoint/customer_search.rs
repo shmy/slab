@@ -79,7 +79,6 @@ async fn execute(
 ) -> rootcause::Result<CursorPagingResult<SearchCustomerItem>> {
     let q = query.q.filter(|s| !s.is_empty());
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
 
     // 排序：用户 order（白名单校验）+ 默认 id desc；只支持单字段（keyset 游标以首字段为基准）
     let orders = match query.order.as_deref() {
@@ -128,7 +127,7 @@ async fn execute(
         .and_where_option(cursor_filter)
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .to_owned();
 
     // 筛选 + 排序

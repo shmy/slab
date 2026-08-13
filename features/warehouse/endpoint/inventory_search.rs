@@ -54,7 +54,6 @@ async fn execute(
     query: SearchInventoryQuery,
 ) -> rootcause::Result<CursorPagingResult<InventoryItem>> {
     let page_limit = query.paging.limit();
-    let fetch_limit = page_limit + 1;
 
     let (sql, values) = Query::select()
         .from("inventories")
@@ -66,7 +65,7 @@ async fn execute(
         .and_where_option(query.warehouse_id.map(|w| Expr::col("warehouse_id").eq(w)))
         .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         .order_by("id", Order::Desc)
-        .limit(fetch_limit)
+        .limit(query.paging.fetch_limit())
         .build_sqlx(PostgresQueryBuilder);
     let mut conn = pg_pool.acquire().await?;
     let items: Vec<InventoryItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
