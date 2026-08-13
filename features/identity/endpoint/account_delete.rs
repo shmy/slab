@@ -63,10 +63,10 @@ async fn execute(
         Err(err) => return Err(err),
     };
     // 特权账号受保护：不可删除（前端同时禁用 UI，后端强校验双保险）
-    if let Some(target) = &before {
-        if target.privileged {
-            return Err(IdentityError::AccountProtected.into());
-        }
+    if let Some(target) = &before
+        && target.privileged
+    {
+        return Err(IdentityError::AccountProtected.into());
     }
     AccountRepository::delete(&mut txn, &path.id).await?;
     if let Some(before) = before {
@@ -86,7 +86,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use identity_contract::error::IdentityError;
-use identity_contract::port::AccountPort;
+    use identity_contract::port::AccountPort;
     use migration::run_migrations;
 
     #[sqlx::test]

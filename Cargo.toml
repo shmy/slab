@@ -52,6 +52,7 @@ members = [
     "infrastructure/web",
     "libs/authn_kit",
     "libs/authz_kit",
+    "libs/filter_kit",
     "libs/image_kit",
     "libs/sched_kit",
     "libs/trace_kit",
@@ -103,6 +104,7 @@ dotenvy = { version = "0.15", default-features = false }
 event_bus = { path = "infrastructure/event_bus" }
 file = { path = "features/file" }
 file_contract = { path = "features/file_contract" }
+filter_kit = { path = "libs/filter_kit" }
 finance = { path = "features/finance" }
 finance_contract = { path = "features/finance_contract" }
 flow = { path = "infrastructure/flow" }

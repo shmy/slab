@@ -42,6 +42,7 @@ src/
 │   ├── ThemeToggle.tsx        # 主题切换
 │   ├── FontSizeToggle.tsx     # 整站字体大小
 │   ├── FullscreenToggle.tsx   # 顶栏全屏切换（fullscreenchange 同步图标，不支持时隐藏）
+│   ├── FilterBar.tsx          # 条件构建器（搜索框 debounce + ＋筛选字段/操作符/值 + chips 增删改；PostgREST 风格序列化在 lib/filters.ts）
 │   ├── UserMenu.tsx           # 侧边栏用户区菜单（个人信息/退出登录+确认）
 │   ├── FieldError.tsx         # 表单字段错误展示（TanStack Form field，触碰门控 + 去重）
 │   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）

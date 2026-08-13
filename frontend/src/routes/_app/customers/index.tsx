@@ -1,4 +1,5 @@
 // 客户管理：TanStack Query 无限滚动 + DataTable + 表单 Dialog（范式见 docs/architecture.md §4.6/4.7）
+// 筛选状态在 URL（validateSearch）：q（多字段模糊）+ filters（RSQL 子集串），刷新/分享/回退保留
 import { useForm } from '@tanstack/react-form';
 import {
   useInfiniteQuery,
@@ -6,13 +7,14 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { History, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { type FormEvent, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { AuditHistorySheet } from '@/components/AuditHistory';
 import { CopyableText } from '@/components/CopyableText';
 import { type DataColumn, DataTable } from '@/components/DataTable';
+import { FilterBar, type FilterFieldConfig } from '@/components/FilterBar';
 import { InfoRow } from '@/components/InfoRow';
 import { RowActions } from '@/components/RowActions';
 import { TextField } from '@/components/TextField';
@@ -26,7 +28,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Sheet,
   SheetContent,
@@ -45,12 +46,60 @@ import {
   type CustomerDetail,
   type CustomerItem,
 } from '@/lib/customers';
+import { parseFilters, serializeFilters } from '@/lib/filters';
 import { cn, maskPhone } from '@/lib/utils';
+
+// 路由 search 校验：筛选状态唯一事实源（URL）。PostgREST 风格——每个字段独立参数
+// （name=ilike.*张*&created_at=gt.2024-03-15），q 为多字段搜索词，页面内转 FilterBar 条件数组
+const customerSearchSchema = z.record(z.string(), z.string());
 
 export const Route = createFileRoute('/_app/customers/')({
   staticData: { keepAlive: true },
+  validateSearch: customerSearchSchema,
   component: CustomersPage,
 });
+
+type CustomerSearch = z.infer<typeof customerSearchSchema>;
+
+// 可筛字段注册表（后端白名单：code/name/phone/contact_person + created_at；加字段 = 加一行）
+const FILTER_FIELDS: FilterFieldConfig[] = [
+  {
+    id: 'name',
+    label: '名称',
+    type: 'text',
+    operators: [
+      { id: 'contains', label: '包含' },
+      { id: 'eq', label: '等于' },
+    ],
+    placeholder: '客户名称',
+  },
+  {
+    id: 'code',
+    label: '编码',
+    type: 'text',
+    operators: [
+      { id: 'contains', label: '包含' },
+      { id: 'eq', label: '等于' },
+    ],
+    placeholder: '客户编码',
+  },
+  {
+    id: 'phone',
+    label: '电话',
+    type: 'text',
+    operators: [{ id: 'contains', label: '包含' }],
+    placeholder: '手机号片段',
+  },
+  {
+    id: 'created_at',
+    label: '创建时间',
+    type: 'date',
+    operators: [
+      { id: 'after', label: '晚于' },
+      { id: 'before', label: '早于' },
+    ],
+  },
+];
 
 type EditorState =
   | { mode: 'create'; customer: null }
@@ -62,20 +111,47 @@ const CUSTOMERS_KEY = ['customers'] as const;
 
 function CustomersPage() {
   const queryClient = useQueryClient();
-  const [q, setQ] = useState(''); // 输入框值
-  const [query, setQuery] = useState(''); // 已提交的搜索词（queryKey 依赖）
+  // 筛选状态来自 URL（validateSearch）：q + filters；变更即导航，queryKey 自动联动
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [deleting, setDeleting] = useState<CustomerItem | null>(null);
   const [opening, setOpening] = useState<string | null>(null); // 正在拉取详情的编辑目标 id
   const [detailTarget, setDetailTarget] = useState<CustomerDetail | null>(null); // 详情抽屉内容
   const [historyTarget, setHistoryTarget] = useState<CustomerItem | null>(null);
 
-  // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加
+  // 更新 URL 筛选状态（前进/后退/分享链接均可还原）
+  // 更新 URL 筛选：patch 为字段参数（q / 筛选字段）；旧筛选字段不在 patch 中的删除（保持 URL 干净）
+  const updateSearch = useCallback(
+    (patch: Record<string, string>) => {
+      navigate({
+        search: (prev: CustomerSearch) => {
+          const next: CustomerSearch = { ...prev };
+          for (const key of Object.keys(prev)) {
+            if (key !== 'q' && !(key in patch)) delete next[key];
+          }
+          return { ...next, ...patch };
+        },
+      });
+    },
+    [navigate],
+  );
+
+  // URL 动态字段 → FilterBar 条件数组（排除 q）；筛选参数 = 除 q 外的全部字段
+  const filterConditions = useMemo(() => parseFilters(search), [search]);
+  const filterParams = useMemo(() => {
+    const { q: _q, ...rest } = search;
+    return rest;
+  }, [search]);
+
+  // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加；
+  // queryKey 含 q + 筛选字段：任一变化即换一批数据
   const customersQuery = useInfiniteQuery({
-    queryKey: [...CUSTOMERS_KEY, query],
+    queryKey: [...CUSTOMERS_KEY, search],
     queryFn: ({ pageParam }) =>
       apiSearchCustomers({
-        q: query || undefined,
+        q: search.q || undefined,
+        filters: filterParams,
         limit: PAGE_SIZE,
         nextCursor: pageParam,
       }),
@@ -211,11 +287,6 @@ function CustomersPage() {
     [opening, openDetail, openEditor],
   );
 
-  function submitSearch(event: FormEvent) {
-    event.preventDefault();
-    setQuery(q.trim());
-  }
-
   return (
     // 固定高度链：页面根撑满 main，DataTable 根 flex-1 内部滚动
     <div className="flex min-h-0 flex-1 flex-col">
@@ -227,22 +298,17 @@ function CustomersPage() {
         </Button>
       </div>
 
-      {/* 搜索（提交后 queryKey 变化自动重新查询） */}
-      <form className="mt-4 flex items-center gap-2" onSubmit={submitSearch}>
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-soft" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="pl-9"
-            placeholder="按名称搜索客户"
-            aria-label="搜索客户"
-          />
-        </div>
-        <Button type="submit" variant="outline">
-          搜索
-        </Button>
-      </form>
+      {/* 条件构建器：搜索框（多字段模糊，debounce 即时查询）+ ＋筛选 chips；状态在 URL（PostgREST 风格字段参数） */}
+      <FilterBar
+        q={search.q ?? ''}
+        filters={filterConditions}
+        fields={FILTER_FIELDS}
+        placeholder="搜索名称/编码/电话/联系人…"
+        onQChange={(q) => updateSearch({ q })}
+        onFiltersChange={(conditions) =>
+          updateSearch(serializeFilters(conditions))
+        }
+      />
 
       {customersQuery.isLoading ? (
         <p className="mt-4 p-6 text-sm text-ink-soft">加载中…</p>
@@ -267,9 +333,9 @@ function CustomersPage() {
           暂无客户，点击右上角新增。
         </p>
       ) : (
-        // key=query：新搜索时重挂载表格（回顶 + 重置虚拟化），无需外部滚动容器
+        // key=筛选态序列化：条件变化时重挂载表格（回顶 + 重置虚拟化），无需外部滚动容器
         <DataTable
-          key={query}
+          key={JSON.stringify(search)}
           data={items}
           columns={columns}
           getRowId={(row) => row.id}

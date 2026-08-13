@@ -1208,6 +1208,7 @@ dependencies = [
  "customer_contract",
  "db",
  "doc_numbering",
+ "filter_kit",
  "http_auth",
  "migration",
  "module",
@@ -1772,6 +1773,13 @@ dependencies = [
  "imageformat",
  "rootcause",
  "tempoid",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "filter_kit"
+version = "0.1.0"
+dependencies = [
  "thiserror 2.0.20",
 ]
 

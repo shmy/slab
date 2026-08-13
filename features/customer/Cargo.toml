@@ -13,6 +13,7 @@ axum = { workspace = true }
 customer_contract = { workspace = true }
 db = { workspace = true }
 doc_numbering = { workspace = true }
+filter_kit = { workspace = true }
 http_auth = { workspace = true }
 module = { workspace = true }
 rootcause = { workspace = true }

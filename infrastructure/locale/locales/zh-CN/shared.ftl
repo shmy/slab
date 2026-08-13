@@ -32,3 +32,5 @@ path_params_wrong_count = 路径参数数量不匹配
 invalid_path_params = 路径参数无效
 insufficient_inventory = 库存不足
 invalid_status_transition = 非法的状态迁移
+invalid_filter_syntax = 筛选条件格式不正确
+filter_field_not_allowed = 不允许按该字段筛选

@@ -10,6 +10,7 @@ import {
   saveUser,
   toAuthUser,
 } from './token';
+import { querySerialize } from './url';
 
 // 契约类型来自 openapi.json（后端 utoipa 生成），重新生成见 scripts/fetch-openapi.mjs
 type LoginResponse = components['schemas']['LoginResponse'];
@@ -49,6 +50,8 @@ const client = xior.create({
     // 后端 Fluent locale 中间件：错误 detail 按语言渲染
     'Accept-Language': 'zh-CN',
   },
+  // 严格 query 编码（URLSearchParams 默认）
+  paramsSerializer: (params) => querySerialize(params),
 });
 
 // 响应统一解包为 data（后端扁平 JSON）

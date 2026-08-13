@@ -32,3 +32,5 @@ path_params_wrong_count = Path parameter count mismatch
 invalid_path_params = Invalid path parameters
 insufficient_inventory = Insufficient inventory
 invalid_status_transition = Invalid status transition
+invalid_filter_syntax = Invalid filter syntax
+filter_field_not_allowed = Filtering by this field is not allowed

@@ -13,9 +13,10 @@ export interface CustomerPage {
   nextCursor: string | null;
 }
 
-/** 列表：q 模糊搜索 + cursor 分页（limit 1–100）。⚠️ wire 格式：serde flatten 在 serde_urlencoded 下展开为顶层键 `limit`/`next_cursor`（openapi 的 `paging` object 仅是 utoipa 呈现，实测嵌套 `paging[...]` 会被静默忽略） */
+/** 列表：q 多字段模糊 + filters（PostgREST 风格：字段 → `op.value`，多参数天然 AND）+ cursor 分页（limit 1–100）。⚠️ wire 格式：serde flatten 在 serde_urlencoded 下展开为顶层键 `limit`/`next_cursor`（openapi 的 `paging` object 仅是 utoipa 呈现，实测嵌套 `paging[...]` 会被静默忽略） */
 export function apiSearchCustomers(options: {
   q?: string;
+  filters?: Record<string, string>;
   limit?: number;
   nextCursor?: string | null;
 }): Promise<CustomerPage> {
@@ -28,6 +29,7 @@ export function apiSearchCustomers(options: {
       limit: options.limit ?? 20,
       next_cursor: options.nextCursor ?? undefined,
       q: options.q,
+      ...options.filters,
     },
   }).then((res) => ({ items: res.items, nextCursor: res.next_cursor ?? null }));
 }

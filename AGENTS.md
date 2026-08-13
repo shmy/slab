@@ -130,6 +130,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `libs/authn_kit` | JWT 访问令牌提取与缓存 key 构建（auth 缓存 key 方案） |
 | `libs/authz_kit` | Cedar 授权策略评估（待接入，暂无调用方） |
 | `libs/trace_kit` | OpenTelemetry |
+| `libs/filter_kit` | PostgREST 风格筛选解析（URL 字段参数：`name=ilike.*张*&created_at=gt.2024-03-15`，多参数天然 AND，字段白名单防注入） |
 | `libs/sched_kit` | tokio-cron-scheduler |
 | `shared_contract` | ID、分页、PhoneNumber 等共享值对象 + `event::Event`（跨域事件 trait） |
 
