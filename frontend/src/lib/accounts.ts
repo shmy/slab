@@ -26,7 +26,7 @@ export function apiSearchAccounts(options: {
     url: '/accounts',
     params: {
       limit: options.limit ?? 20,
-      next_cursor: options.nextCursor ?? undefined,
+      cursor: options.nextCursor ?? undefined,
       q: options.q,
     },
   }).then((res) => ({ items: res.items, nextCursor: res.next_cursor ?? null }));

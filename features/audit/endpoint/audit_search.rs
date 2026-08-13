@@ -96,7 +96,7 @@ async fn execute(
         .and_where_option(
             query
                 .paging
-                .next_cursor_id()
+                .cursor_id()
                 .map(|cursor| Expr::col(("audit_logs", "id")).lt(cursor)),
         )
         // 单键排序：id 是应用生成的 tsid，单调递增，天然等同时序
@@ -309,7 +309,7 @@ mod tests {
             "entity": "account",
             "entity_id": "9002",
             "limit": 2,
-            "next_cursor": cursor.to_string()
+            "cursor": cursor.to_string()
         }))
         .unwrap();
         let page2 = execute(&state.pg_pool, query).await.unwrap();

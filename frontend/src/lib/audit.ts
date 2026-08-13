@@ -27,7 +27,7 @@ export function apiSearchAuditLogs(options: {
       entity: options.entity,
       entity_id: options.entityId,
       limit: options.limit ?? 10,
-      next_cursor: options.nextCursor ?? undefined,
+      cursor: options.nextCursor ?? undefined,
     },
   }).then((res) => ({ items: res.items, nextCursor: res.next_cursor ?? null }));
 }

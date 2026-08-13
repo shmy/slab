@@ -106,7 +106,7 @@ async fn execute(
     };
 
     // 游标：无排序 = id 游标；有排序 = 复合 (sort_value, id)；排序变化则旧游标作废（从头查）
-    let cursor = match query.paging.next_cursor_str() {
+    let cursor = match query.paging.cursor_str() {
         Some(raw) => filter_kit::decode_cursor(raw, &orders)?,
         None => None,
     };
@@ -269,7 +269,7 @@ mod tests {
     fn paging_with(limit: u64, cursor: Option<&str>) -> CursorPagingQuery {
         let mut obj = serde_json::json!({ "limit": limit });
         if let Some(c) = cursor {
-            obj["next_cursor"] = serde_json::json!(c);
+            obj["cursor"] = serde_json::json!(c);
         }
         serde_json::from_value(obj).unwrap()
     }

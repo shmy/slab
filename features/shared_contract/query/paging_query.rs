@@ -68,7 +68,7 @@ pub struct CursorPagingQuery {
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, example = "1983507123456789012"))]
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(default)]
-    next_cursor: Option<String>,
+    cursor: Option<String>,
     /// 每页条数（1-100）
     #[cfg_attr(feature = "openapi", param(value_type = i64, example = 10))]
     #[cfg_attr(feature = "openapi", schema(default = 10, example = 10))]
@@ -80,14 +80,14 @@ pub struct CursorPagingQuery {
 impl CursorPagingQuery {
     const DEFAULT_LIMIT: i64 = 10;
 
-    /// 数字游标（旧端点：id 分页）；非数字（复合游标）返回 None
-    pub fn next_cursor_id(&self) -> Option<i64> {
-        self.next_cursor.as_deref().and_then(|s| s.parse().ok())
+    /// 数字游标（id 分页）；非数字（复合游标）返回 None
+    pub fn cursor_id(&self) -> Option<i64> {
+        self.cursor.as_deref().and_then(|s| s.parse().ok())
     }
 
     /// 原始游标字符串（排序复合游标等场景直接用）
-    pub fn next_cursor_str(&self) -> Option<&str> {
-        self.next_cursor.as_deref()
+    pub fn cursor_str(&self) -> Option<&str> {
+        self.cursor.as_deref()
     }
 
     pub fn limit(&self) -> u64 {
@@ -101,18 +101,16 @@ mod tests {
 
     #[test]
     fn cursor_paging_empty_limit_string() {
-        let q: CursorPagingQuery =
-            serde_json::from_str(r#"{"next_cursor":"","limit":""}"#).unwrap();
+        let q: CursorPagingQuery = serde_json::from_str(r#"{"cursor":"","limit":""}"#).unwrap();
         assert_eq!(q.limit(), 10);
-        assert!(q.next_cursor_str().is_none());
+        assert!(q.cursor_str().is_none());
     }
 
     #[test]
     fn cursor_paging_limit_string() {
-        let q: CursorPagingQuery =
-            serde_json::from_str(r#"{"next_cursor":"","limit":"12"}"#).unwrap();
+        let q: CursorPagingQuery = serde_json::from_str(r#"{"cursor":"","limit":"12"}"#).unwrap();
         assert_eq!(q.limit(), 12);
-        assert!(q.next_cursor_str().is_none());
+        assert!(q.cursor_str().is_none());
     }
 
     #[test]

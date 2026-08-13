@@ -62,7 +62,7 @@ async fn execute(
     query: SearchItemQuery,
 ) -> rootcause::Result<CursorPagingResult<SearchItemItem>> {
     let q = query.q.filter(|s| !s.is_empty());
-    let input_next_cursor = query.paging.next_cursor_id();
+    let input_next_cursor = query.paging.cursor_id();
     let page_limit = query.paging.limit();
     let fetch_limit = page_limit + 1;
 

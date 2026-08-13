@@ -70,7 +70,7 @@ async fn execute(
                 .ilike(format!("%{q}%"))
                 .or(Expr::col("name").ilike(format!("%{q}%")))
         }))
-        .and_where_option(query.paging.next_cursor_id().map(|c| Expr::col("id").lt(c)))
+        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(c)))
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .order_by("id", Order::Desc)
