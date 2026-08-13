@@ -84,7 +84,7 @@ async fn execute(
                 .transaction_type
                 .map(|v| Expr::col("transaction_type").eq(v)),
         )
-        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(c)))
+        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         .order_by("id", Order::Desc)
         .limit(fetch_limit)
         .build_sqlx(PostgresQueryBuilder);

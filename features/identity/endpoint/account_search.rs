@@ -82,7 +82,7 @@ async fn execute(
                     .ilike(format!("%{q}%"))
                     .or(Expr::col("name").ilike(format!("%{q}%")))
             }))
-            .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(next_cursor)))
+            .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(*next_cursor)))
             .order_by("id", Order::Desc)
             .limit(fetch_limit)
             .build_sqlx(PostgresQueryBuilder)

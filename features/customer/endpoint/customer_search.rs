@@ -5,6 +5,7 @@ use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder as _;
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
+use shared_contract::query::cursor_page::finalize_cursor_page;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -70,18 +71,6 @@ pub(crate) async fn handler(
     JsonResponse::ok(response)
 }
 
-/// 排序值提取：取最后一条的排序键值（游标用）
-fn sort_value(item: &SearchCustomerItem, field: &str) -> String {
-    match field {
-        "code" => item.code.clone(),
-        "name" => item.name.clone(),
-        "phone" => item.phone.clone().unwrap_or_default(),
-        "contact_person" => item.contact_person.clone().unwrap_or_default(),
-        "created_at" => item.created_at.to_rfc3339(),
-        _ => String::new(),
-    }
-}
-
 #[tracing::instrument(skip_all)]
 #[inline]
 async fn execute(
@@ -105,12 +94,6 @@ async fn execute(
         filter_kit::order_clauses(&orders)
     };
 
-    // 游标：无排序 = id 游标；有排序 = 复合 (sort_value, id)；排序变化则旧游标作废（从头查）
-    let cursor = match query.paging.cursor_str() {
-        Some(raw) => filter_kit::decode_cursor(raw, &orders)?,
-        None => None,
-    };
-
     let mut select = Query::select()
         .from("customers")
         .column("id")
@@ -127,12 +110,7 @@ async fn execute(
                 .or(Expr::col("phone").ilike(format!("%{q}%")))
                 .or(Expr::col("contact_person").ilike(format!("%{q}%")))
         }))
-        // 筛选条件（字段白名单 + 类型映射由 filter_kit 保证）
-        .and_where_option(
-            cursor
-                .as_ref()
-                .and_then(|c| filter_kit::cursor_where(c, &FILTER_SCHEMA)),
-        )
+        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .limit(fetch_limit)
@@ -155,32 +133,11 @@ async fn execute(
 
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
     let mut conn = pg_pool.acquire().await?;
-    let mut items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
+    let items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
         .fetch_all(&mut *conn)
         .await?;
 
-    // 游标编码：多取一条 → 返回列表末条的排序键 + id（pop 掉的是超取的那条，不是基准）。
-    // has_more 保证末条存在；用 map 表达 Option 语义（None 分支实际不会走到）
-    let has_more = items.len() > page_limit as usize;
-    let next_cursor = if has_more {
-        items.pop();
-        items.last().map(|last| {
-            let id = last.id.to_string();
-            match orders.first() {
-                Some(order) => filter_kit::encode_cursor(&filter_kit::Cursor::Composite {
-                    field: order.field.clone(),
-                    dir: order.dir,
-                    value: sort_value(last, &order.field),
-                    id,
-                }),
-                None => id,
-            }
-        })
-    } else {
-        None
-    };
-
-    Ok(CursorPagingResult { items, next_cursor })
+    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
 }
 
 #[cfg(test)]
@@ -293,44 +250,6 @@ mod tests {
         assert_eq!(result.items.len(), 2);
         assert_eq!(result.items[0].name, "张伟");
         assert_eq!(result.items[1].name, "李娜");
-    }
-
-    #[sqlx::test]
-    async fn test_sort_cursor_pagination(pool: sqlx::PgPool) {
-        seed(&pool).await;
-        let state = testing::build(pool).await;
-        // 页 1：limit=1，name asc（字节序）→ 张伟
-        let page1 = execute(
-            &state.pg_pool,
-            SearchCustomerQuery {
-                paging: paging_with(1, None),
-                q: None,
-                order: Some("name.asc".into()),
-                filters: HashMap::new(),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(page1.items.len(), 1);
-        assert_eq!(page1.items[0].name, "张伟");
-        let cursor = page1.next_cursor.expect("has more");
-        assert!(cursor.starts_with('{')); // 复合游标（JSON）
-
-        // 页 2：复合游标 → 李娜
-        let page2 = execute(
-            &state.pg_pool,
-            SearchCustomerQuery {
-                paging: paging_with(1, Some(&cursor)),
-                q: None,
-                order: Some("name.asc".into()),
-                filters: HashMap::new(),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(page2.items.len(), 1);
-        assert_eq!(page2.items[0].name, "李娜");
-        assert!(page2.next_cursor.is_none());
     }
 
     #[sqlx::test]

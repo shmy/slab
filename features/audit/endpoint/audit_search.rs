@@ -97,7 +97,7 @@ async fn execute(
             query
                 .paging
                 .cursor_id()
-                .map(|cursor| Expr::col(("audit_logs", "id")).lt(cursor)),
+                .map(|cursor| Expr::col(("audit_logs", "id")).lt(*cursor)),
         )
         // 单键排序：id 是应用生成的 tsid，单调递增，天然等同时序
         .order_by(("audit_logs", "id"), Order::Desc)

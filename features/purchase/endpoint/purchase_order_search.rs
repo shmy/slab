@@ -70,7 +70,7 @@ async fn execute(
         .column("total_amount")
         .and_where_option(query.supplier_id.map(|s| Expr::col("supplier_id").eq(s)))
         .and_where_option(query.status.map(|s| Expr::col("status").eq(s)))
-        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(c)))
+        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         .order_by("id", Order::Desc)
         .limit(fetch_limit)
         .build_sqlx(PostgresQueryBuilder);

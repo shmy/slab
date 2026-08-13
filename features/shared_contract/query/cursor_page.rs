@@ -17,7 +17,7 @@ where
     let has_more = items.len() > limit;
     let next_cursor = if has_more {
         items.pop();
-        items.last().map(|item| cursor_id(item).to_string())
+        items.last().map(|item| cursor_id(item))
     } else {
         None
     };

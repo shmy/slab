@@ -1,6 +1,8 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::value_object::id::ID;
+
 #[derive(Clone, Serialize, ToSchema)]
 #[schema(bound = "T: ToSchema")]
 pub struct PagingResult<T>
@@ -17,5 +19,5 @@ where
     T: Serialize + ToSchema,
 {
     pub items: Vec<T>,
-    pub next_cursor: Option<String>,
+    pub next_cursor: Option<ID>,
 }

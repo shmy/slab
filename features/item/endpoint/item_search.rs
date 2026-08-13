@@ -79,7 +79,7 @@ async fn execute(
                 .or(Expr::col("name").ilike(format!("%{q}%")))
         }))
         .and_where_option(query.item_type.map(|t| Expr::col("item_type").eq(t)))
-        .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(next_cursor)))
+        .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(*next_cursor)))
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .order_by("id", Order::Desc)
