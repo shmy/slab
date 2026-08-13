@@ -38,9 +38,10 @@ src/
 │   └── api-schema.d.ts         # openapi.json 生成的契约类型（勿手改；重新生成见 §8）
 ├── openapi.json                # 后端 OpenAPI 契约快照（pnpm gen:api 刷新，scripts/fetch-openapi.mjs）
 ├── components/
-│   ├── ui/                     # shadcn 组件（button/input/checkbox/badge/avatar/dropdown-menu/context-menu/dialog/sheet/sonner）
+│   ├── ui/                     # shadcn 组件（button/input/checkbox/badge/avatar/dropdown-menu/context-menu/dialog/sheet/sonner/tooltip）
 │   ├── ThemeToggle.tsx        # 主题切换
 │   ├── FontSizeToggle.tsx     # 整站字体大小
+│   ├── FullscreenToggle.tsx   # 顶栏全屏切换（fullscreenchange 同步图标，不支持时隐藏）
 │   ├── UserMenu.tsx           # 侧边栏用户区菜单（个人信息/退出登录+确认）
 │   ├── FieldError.tsx         # 表单字段错误展示（TanStack Form field，触碰门控 + 去重）
 │   ├── SidebarNav.tsx         # 侧边栏导航（分组 submenu、折叠态 popup；导出 navItems/flatNav）

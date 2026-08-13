@@ -5,11 +5,18 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { FontSizeToggle } from '../components/FontSizeToggle';
+import { FullscreenToggle } from '../components/FullscreenToggle';
 import { KeepAliveOutlet } from '../components/keep-alive';
 import { PageTabs } from '../components/PageTabs';
 import { flatNav, navItems, SidebarNav } from '../components/SidebarNav';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { UserMenu } from '../components/UserMenu';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../components/ui/tooltip';
 import { authStore } from '../store/auth';
 import { setCollapsed, sidebarStore } from '../store/sidebar';
 import { addTab } from '../store/tabs';
@@ -70,132 +77,143 @@ function AppLayout() {
   }, [location.pathname]);
 
   return (
-    <div className="flex h-screen">
-      {/* 移动端抽屉遮罩：用 button 保证可聚焦/键盘可操作 */}
-      {mobileOpen && (
-        <button
-          type="button"
-          aria-label="关闭菜单"
-          tabIndex={-1}
-          className="fixed inset-0 z-30 bg-black/30 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-
-      <aside
-        className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-sidebar-line bg-sidebar transition-all duration-200',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          'md:static md:translate-x-0',
-          collapsed ? 'md:w-14' : 'md:w-56',
-        )}
-      >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-sidebar-line px-3">
-          {(!collapsed || mobileOpen) && (
-            <span className="px-1 font-semibold text-sidebar-foreground">
-              Admin
-            </span>
-          )}
-          {mobileOpen && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setMobileOpen(false)}
-              aria-label="关闭菜单"
-              className="text-sidebar-foreground hover:bg-sidebar-accent md:hidden"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-
-        <SidebarNav
-          collapsed={collapsed}
-          mobileOpen={mobileOpen}
-          onNavigate={() => setMobileOpen(false)}
-        />
-
-        {/* 底部：用户区（点击弹出菜单） */}
-        <div className="shrink-0 border-t border-sidebar-line p-3">
-          <UserMenu
-            compact={collapsed && !mobileOpen}
-            onOpenProfile={() => setMobileOpen(false)}
+    <TooltipProvider>
+      <div className="flex h-screen">
+        {/* 移动端抽屉遮罩：用 button 保证可聚焦/键盘可操作 */}
+        {mobileOpen && (
+          <button
+            type="button"
+            aria-label="关闭菜单"
+            tabIndex={-1}
+            className="fixed inset-0 z-30 bg-black/30 md:hidden"
+            onClick={() => setMobileOpen(false)}
           />
-        </div>
-      </aside>
+        )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-header-line px-4 md:px-6">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setMobileOpen(true)}
-              aria-label="打开菜单"
-              className="text-ink-soft md:hidden"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setCollapsed(!collapsed)}
-              aria-label={collapsed ? '展开菜单' : '收起菜单'}
-              title={collapsed ? '展开菜单' : '收起菜单'}
-              className="hidden text-ink-soft md:inline-flex"
-            >
-              <PanelLeftClose
-                className={cn(
-                  'h-5 w-5 transition-transform',
-                  collapsed && 'rotate-180',
-                )}
-              />
-            </Button>
-            {/* 面包屑：分组 → 子项，最后一级强调 */}
-            <nav
-              aria-label="面包屑"
-              className="flex min-w-0 items-center gap-1.5 text-sm"
-            >
-              {getBreadcrumbs(location.pathname).map((crumb, index) => {
-                const last = index === breadcrumbs.length - 1;
-                return (
-                  <Fragment key={crumb}>
-                    {index > 0 && (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-soft" />
-                    )}
-                    <span
-                      className={cn(
-                        'truncate',
-                        last
-                          ? 'font-medium text-ink'
-                          : 'shrink-0 text-ink-soft',
-                      )}
-                    >
-                      {crumb}
-                    </span>
-                  </Fragment>
-                );
-              })}
-            </nav>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden text-sm text-ink-soft md:block">
-              {today}
-            </span>
-            <FontSizeToggle />
-            <ThemeToggle />
-          </div>
-        </header>
-        {/* 多标签页栏（Chrome 风格） */}
-        <PageTabs />
-        {/* 内容区：flex 列布局，让页面内容可撑满剩余高度 */}
-        <main
-          ref={mainRef}
-          className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6"
+        <aside
+          className={cn(
+            'fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-sidebar-line bg-sidebar transition-all duration-200',
+            mobileOpen ? 'translate-x-0' : '-translate-x-full',
+            'md:static md:translate-x-0',
+            collapsed ? 'md:w-14' : 'md:w-56',
+          )}
         >
-          <KeepAliveOutlet />
-        </main>
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-sidebar-line px-3">
+            {(!collapsed || mobileOpen) && (
+              <span className="px-1 font-semibold text-sidebar-foreground">
+                Admin
+              </span>
+            )}
+            {mobileOpen && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileOpen(false)}
+                aria-label="关闭菜单"
+                className="text-sidebar-foreground hover:bg-sidebar-accent md:hidden"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
+          <SidebarNav
+            collapsed={collapsed}
+            mobileOpen={mobileOpen}
+            onNavigate={() => setMobileOpen(false)}
+          />
+
+          {/* 底部：用户区（点击弹出菜单） */}
+          <div className="shrink-0 border-t border-sidebar-line p-3">
+            <UserMenu
+              compact={collapsed && !mobileOpen}
+              onOpenProfile={() => setMobileOpen(false)}
+            />
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 shrink-0 items-center justify-between border-b border-header-line px-4 md:px-6">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileOpen(true)}
+                aria-label="打开菜单"
+                className="text-ink-soft md:hidden"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setCollapsed(!collapsed)}
+                      aria-label={collapsed ? '展开菜单' : '收起菜单'}
+                      className="hidden text-ink-soft md:inline-flex"
+                    >
+                      <PanelLeftClose
+                        className={cn(
+                          'h-5 w-5 transition-transform',
+                          collapsed && 'rotate-180',
+                        )}
+                      />
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {collapsed ? '展开菜单' : '收起菜单'}
+                </TooltipContent>
+              </Tooltip>
+              {/* 面包屑：分组 → 子项，最后一级强调 */}
+              <nav
+                aria-label="面包屑"
+                className="flex min-w-0 items-center gap-1.5 text-sm"
+              >
+                {getBreadcrumbs(location.pathname).map((crumb, index) => {
+                  const last = index === breadcrumbs.length - 1;
+                  return (
+                    <Fragment key={crumb}>
+                      {index > 0 && (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink-soft" />
+                      )}
+                      <span
+                        className={cn(
+                          'truncate',
+                          last
+                            ? 'font-medium text-ink'
+                            : 'shrink-0 text-ink-soft',
+                        )}
+                      >
+                        {crumb}
+                      </span>
+                    </Fragment>
+                  );
+                })}
+              </nav>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="hidden text-sm text-ink-soft md:block">
+                {today}
+              </span>
+              <FullscreenToggle />
+              <FontSizeToggle />
+              <ThemeToggle />
+            </div>
+          </header>
+          {/* 多标签页栏（Chrome 风格） */}
+          <PageTabs />
+          {/* 内容区：flex 列布局，让页面内容可撑满剩余高度 */}
+          <main
+            ref={mainRef}
+            className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6"
+          >
+            <KeepAliveOutlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
