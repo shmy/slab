@@ -7,7 +7,6 @@ import {
   type ColumnDef,
   type ReactTable,
   type RowData,
-  type SortingState,
   type TableFeatures,
   type TableOptions,
   useTable,
@@ -28,12 +27,6 @@ export interface VirtualTableProps<TData extends RowData> {
   data: TData[];
   /** 传给 useTable 的初始状态（如 columnPinning） */
   initialState?: TableOptions<any, TData>['initialState'];
-  /** 排序点击循环是否可移除（默认 false：asc ↔ desc 循环） */
-  enableSortingRemoval?: boolean;
-  /** 受控排序状态（服务端排序：由 URL order 驱动；传则表头点击走 onSortingChange 而非内部状态） */
-  sorting?: SortingState;
-  /** 排序状态变化回调（服务端排序时接到 URL） */
-  onSortingChange?: TableOptions<any, TData>['onSortingChange'];
   /** 吸收剩余空间撑满容器的列 id（flexGrow），如 'email' */
   growColumnId?: string;
   /** 稳定行 ID（行选择等依赖），如 (row) => String(row.id) */
@@ -58,9 +51,6 @@ interface TableRowApi {
 interface TableColumnApi {
   id: string;
   columnDef: { meta?: { align?: 'left' | 'center' | 'right' } };
-  getCanSort(): boolean;
-  getIsSorted(): 'asc' | 'desc' | false;
-  getToggleSortingHandler(): ((event: unknown) => void) | undefined;
   getIsPinned(): 'start' | 'end' | false;
   getStart(position: 'start' | 'center' | 'end'): number;
   getAfter(position: 'start' | 'center' | 'end'): number;
@@ -118,17 +108,14 @@ function cellStyle(
 }
 
 /**
- * 虚拟滚动表格：固定列（start/end + 滚动阴影）、排序表头、
- * 斑马纹 + 行 hover、无限滚动。宽度撑满容器（推荐配合 growColumnId）。
+ * 虚拟滚动表格：固定列（start/end + 滚动阴影）、斑马纹 + 行 hover、无限滚动。
+ * 宽度撑满容器（推荐配合 growColumnId）。排序固定在服务端（id DESC），表头禁排序。
  */
 export function VirtualTable<TData extends RowData>({
   features,
   columns,
   data,
   initialState,
-  enableSortingRemoval = false,
-  sorting,
-  onSortingChange,
   growColumnId,
   getRowId,
   onLoadMore,
@@ -143,11 +130,8 @@ export function VirtualTable<TData extends RowData>({
     features,
     columns,
     data,
-    enableSortingRemoval,
     initialState,
     getRowId,
-    // 服务端排序：受控 sorting（URL 驱动）；不传则表格内部状态（客户端排序）
-    ...(sorting !== undefined ? { state: { sorting }, onSortingChange } : {}),
   });
 
   const rows = table.getRowModel().rows;
@@ -242,33 +226,8 @@ export function VirtualTable<TData extends RowData>({
                   }}
                   className="border-r border-line bg-stripe px-3 py-2.5 text-left text-sm font-semibold text-ink-soft"
                 >
-                  {col.getCanSort() ? (
-                    <button
-                      type="button"
-                      onClick={col.getToggleSortingHandler()}
-                      // 始终 flex：justifyContent 才能生效（不可排序列点击无动作，由 handler 为空保证）
-                      className="flex w-full items-center gap-1 cursor-pointer select-none"
-                      style={{
-                        // 表头按钮 flex 对齐：居中列按钮内容居中，默认两端分布（标题 + 排序箭头）
-                        justifyContent:
-                          align === 'center'
-                            ? 'center'
-                            : align === 'right'
-                              ? 'flex-end'
-                              : 'space-between',
-                      }}
-                    >
-                      <table.FlexRender header={header} />
-                      {col.getIsSorted() === 'asc'
-                        ? ' ↑'
-                        : col.getIsSorted() === 'desc'
-                          ? ' ↓'
-                          : ''}
-                    </button>
-                  ) : (
-                    // 不可排序列（选择列/操作列）：直接渲染，避免 button 包裹 checkbox 等交互元素
-                    <table.FlexRender header={header} />
-                  )}
+                  {/* 表头纯展示（排序固定在服务端 id DESC，不可点击） */}
+                  <table.FlexRender header={header} />
                 </div>
               );
             })}

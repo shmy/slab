@@ -1,18 +1,9 @@
-//! PostgREST 风格筛选/排序解析（PostgreSQL 生态惯例，Supabase 同款）。
+//! PostgREST 风格筛选解析（PostgreSQL 生态惯例，Supabase 同款）。
 //!
-//! 筛选：每个字段一个 query 参数，值 = `{op}.{value}`，多参数天然 AND：
+//! 每个字段一个 query 参数，值 = `{op}.{value}`，多参数天然 AND：
 //! ```text
 //! name=ilike.*张*&amount=gte.1000&created_at=gt.2024-03-15
 //! ```
-//!
-//! 排序：`order` 参数 = `{field}.{asc|desc}`，逗号分隔多级：
-//! ```text
-//! order=name.asc,created_at.desc
-//! ```
-//!
-//! 分页游标：统一数字 id 游标（`id < cursor`，配合默认 `ORDER BY id DESC`）；
-//! 有排序时用 [`cursor_where`] 生成单字段 keyset 谓词（排序键值以标量子查询现取，
-//! 游标仍是不带排序信息的数字 id）。
 //!
 //! # 操作符矩阵（按 [`FilterSchema`] 列类型）
 //!
@@ -34,7 +25,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Alias, Expr, ExprTrait as _, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait as _, SimpleExpr};
 
 /// 筛选操作符（PostgREST 风格，值前缀）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,24 +70,10 @@ pub struct Condition {
     pub value: String,
 }
 
-/// 排序方向
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderDir {
-    Asc,
-    Desc,
-}
-
-/// 一条排序项
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderItem {
-    pub field: String,
-    pub dir: OrderDir,
-}
-
 /// 解析错误（Display 即 locale key；细节进 Debug/日志）
 #[derive(Debug, thiserror::Error)]
 pub enum FilterError {
-    /// 值不是 `{op}.{value}` 格式 / int 值非整数 / 排序格式错误 / 操作符未知
+    /// 值不是 `{op}.{value}` 格式 / int 值非整数 / 操作符未知
     #[error("invalid_filter_syntax")]
     Syntax,
     /// 字段不在白名单
@@ -104,7 +81,7 @@ pub enum FilterError {
     FieldNotAllowed,
 }
 
-/// 可筛/可排字段声明：`text_fields`（eq/neq/ilike）、`date_fields`（eq/neq/gt/gte/lt/lte，
+/// 可筛字段声明：`text_fields`（eq/neq/ilike）、`date_fields`（eq/neq/gt/gte/lt/lte，
 /// 自动 cast timestamptz）、`int_fields`（eq/neq/gt/gte/lt/lte，BIGINT/INTEGER 列）。
 /// 白名单 = 三数组并集，与 SQL 生成同源，不会不一致。
 #[derive(Debug, Clone, Copy)]
@@ -245,147 +222,6 @@ pub fn filter_where(
     schema: &FilterSchema,
 ) -> Result<Vec<SimpleExpr>, FilterError> {
     Ok(to_sql(&parse(filters, schema)?, schema))
-}
-
-/// 排序子句应用到 select（OrderDir → sea_query [`Order`] 映射样板收敛在此）。
-pub fn apply_order(select: &mut SelectStatement, clauses: &[(String, OrderDir)]) {
-    for (field, dir) in clauses {
-        select.order_by(
-            field.to_string(),
-            match dir {
-                OrderDir::Asc => Order::Asc,
-                OrderDir::Desc => Order::Desc,
-            },
-        );
-    }
-}
-
-/// 搜索一站式：游标 keyset 谓词 + 筛选 WHERE + ORDER BY 一次应用到 select。
-/// 无排序默认 `ORDER BY id DESC`；有排序单字段 keyset（[`cursor_where`]，
-/// 标量子查询现取排序键值）。与 [`filter_where`] / [`apply_order`] / [`order_and_cursor`]
-/// 同属 mutating 风格，调用方不再自行装配表达式。
-pub fn apply_search(
-    select: &mut SelectStatement,
-    filters: &HashMap<String, String>,
-    order: Option<&str>,
-    schema: &FilterSchema,
-    table: &str,
-    cursor_id: Option<i64>,
-) -> Result<(), FilterError> {
-    let (clauses, cursor) = order_and_cursor(order, schema, table, cursor_id)?;
-    select.and_where_option(cursor);
-    for expr in filter_where(filters, schema)? {
-        select.and_where(expr);
-    }
-    apply_order(select, &clauses);
-    Ok(())
-}
-
-/// 排序解析：`"name.asc,created_at.desc"`（逗号分隔；省略方向默认 asc）。
-pub fn parse_order(orders: &str, schema: &FilterSchema) -> Result<Vec<OrderItem>, FilterError> {
-    let allowed = schema.allowed_fields();
-    let mut out = Vec::new();
-    for part in orders.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let (field, dir) = match part.rsplit_once('.') {
-            Some((f, "asc")) => (f, OrderDir::Asc),
-            Some((f, "desc")) => (f, OrderDir::Desc),
-            Some((f, _)) => {
-                // 未知方向后缀：字段合法则方向语法错误，否则字段错误
-                return if allowed.contains(&f) {
-                    Err(FilterError::Syntax)
-                } else {
-                    Err(FilterError::FieldNotAllowed)
-                };
-            }
-            None => (part, OrderDir::Asc),
-        };
-        if !allowed.contains(&field) {
-            return Err(FilterError::FieldNotAllowed);
-        }
-        out.push(OrderItem {
-            field: field.to_string(),
-            dir,
-        });
-    }
-    Ok(out)
-}
-
-/// 排序子句：`(列名, 方向)` 列表（供 ORDER BY 与 keyset 游标使用）
-pub type OrderClauses = Vec<(String, OrderDir)>;
-
-/// 排序子句：用户排序 + id 稳定二级排序（游标分页必须稳定）。
-/// 返回 `(列名, 方向)` 列表，由调用方转 SeaQuery `order_by`。
-pub fn order_clauses(orders: &[OrderItem]) -> OrderClauses {
-    let mut clauses: Vec<(String, OrderDir)> =
-        orders.iter().map(|o| (o.field.clone(), o.dir)).collect();
-    // 用户未显式排 id 时，附加 id DESC 二级排序：同值字段内最新在前
-    if !orders.iter().any(|o| o.field == "id") {
-        clauses.push(("id".to_string(), OrderDir::Desc));
-    }
-    clauses
-}
-
-/// 单字段 keyset 游标谓词（配合 [`order_clauses`] 使用；游标仍是统一数字 id）。
-///
-/// 排序键值用标量子查询现取，调用方无需回查游标行：
-/// ```text
-/// asc:  f >  (SELECT f FROM {table} WHERE id = c)
-///       OR (f = (SELECT f FROM {table} WHERE id = c) AND id < c)
-/// desc: 同上，首比较换 `<`
-/// ```
-///
-/// 语义 = 「游标行之后」继续分页，与 `ORDER BY f, id DESC` 完全一致。
-/// 列对列比较自动匹配类型（无需 cast）；排序键为 NULL（可空列）时该行不参与分页比较。
-pub fn cursor_where(table: &str, field: &str, dir: OrderDir, cursor_id: i64) -> SimpleExpr {
-    // 游标行的排序键值：`SELECT f FROM {table} WHERE id = cursor`
-    let key = || -> SimpleExpr {
-        Query::select()
-            .column(field.to_string())
-            .from(table.to_string())
-            .and_where(Expr::col("id").eq(cursor_id))
-            .to_owned()
-            .into()
-    };
-    let col = Expr::col(field.to_string());
-    let after = match dir {
-        OrderDir::Asc => col.clone().gt(key()),
-        OrderDir::Desc => col.clone().lt(key()),
-    };
-    after.or(col.eq(key()).and(Expr::col("id").lt(cursor_id)))
-}
-
-/// 排序 + 游标谓词一站式：`order` 串（白名单校验，只取首字段）→ 排序子句与 keyset 游标 WHERE。
-///
-/// 返回 `(排序子句, 游标谓词)`：前者供 `order_by`，后者供 `and_where_option`。
-/// 无排序 → 默认 `ORDER BY id DESC` + `id < cursor`；有排序 → 单字段 keyset
-/// （[`cursor_where`]，标量子查询现取排序键值）。
-pub fn order_and_cursor(
-    order: Option<&str>,
-    schema: &FilterSchema,
-    table: &str,
-    cursor_id: Option<i64>,
-) -> Result<(OrderClauses, Option<SimpleExpr>), FilterError> {
-    let orders = match order {
-        Some(o) if !o.trim().is_empty() => parse_order(o, schema)?,
-        _ => Vec::new(),
-    };
-    // 多级 order 只取首字段（keyset 游标以首字段为基准；表头排序即单字段）
-    let orders = orders.into_iter().take(1).collect::<Vec<_>>();
-    let clauses = if orders.is_empty() {
-        vec![("id".to_string(), OrderDir::Desc)]
-    } else {
-        order_clauses(&orders)
-    };
-    let cursor = match (cursor_id, orders.first()) {
-        (Some(c), None) => Some(Expr::col("id").lt(c)),
-        (Some(c), Some(order)) => Some(cursor_where(table, &order.field, order.dir, c)),
-        (None, _) => None,
-    };
-    Ok((clauses, cursor))
 }
 
 #[cfg(test)]
@@ -598,110 +434,6 @@ mod tests {
         assert!(to_sql(&conds, &SCHEMA).is_empty());
     }
 
-    // ---- 排序 ----
-
-    #[test]
-    fn parses_order_with_direction() {
-        let orders = parse_order("name.asc,created_at.desc", &SCHEMA).unwrap();
-        assert_eq!(orders.len(), 2);
-        assert_eq!(orders[0].field, "name");
-        assert_eq!(orders[0].dir, OrderDir::Asc);
-        assert_eq!(orders[1].dir, OrderDir::Desc);
-    }
-
-    #[test]
-    fn order_defaults_to_asc() {
-        let orders = parse_order("name", &SCHEMA).unwrap();
-        assert_eq!(orders[0].dir, OrderDir::Asc);
-    }
-
-    #[test]
-    fn order_int_field_allowed() {
-        let orders = parse_order("amount.desc", &SCHEMA).unwrap();
-        assert_eq!(orders[0].field, "amount");
-        assert_eq!(orders[0].dir, OrderDir::Desc);
-    }
-
-    #[test]
-    fn order_unknown_field_rejected() {
-        assert_eq!(
-            parse_order("hack.asc", &SCHEMA).unwrap_err().to_string(),
-            "filter_field_not_allowed"
-        );
-    }
-
-    #[test]
-    fn order_unknown_direction_rejected() {
-        assert_eq!(
-            parse_order("name.foo", &SCHEMA).unwrap_err().to_string(),
-            "invalid_filter_syntax"
-        );
-    }
-
-    #[test]
-    fn order_clauses_appends_id_stability() {
-        let orders = parse_order("name.asc", &SCHEMA).unwrap();
-        let clauses = order_clauses(&orders);
-        assert_eq!(clauses.len(), 2);
-        assert_eq!(clauses[0], ("name".to_string(), OrderDir::Asc));
-        assert_eq!(clauses[1], ("id".to_string(), OrderDir::Desc));
-    }
-
-    #[test]
-    fn order_and_cursor_no_order_defaults_id_desc() {
-        // 无排序无游标：默认 id DESC 排序子句，无游标谓词
-        let (clauses, cursor) = order_and_cursor(None, &SCHEMA, "customers", None).unwrap();
-        assert_eq!(clauses, vec![("id".to_string(), OrderDir::Desc)]);
-        assert!(cursor.is_none());
-
-        // 无排序 + 游标：id < cursor
-        let (clauses, cursor) = order_and_cursor(None, &SCHEMA, "customers", Some(42)).unwrap();
-        assert_eq!(clauses, vec![("id".to_string(), OrderDir::Desc)]);
-        let select = Query::select()
-            .column("id")
-            .from("customers")
-            .and_where_option(cursor)
-            .to_owned();
-        let (sql, _) = select.build(PostgresQueryBuilder);
-        assert!(sql.to_lowercase().find("\"id\" < $1").is_some());
-    }
-
-    #[test]
-    fn order_and_cursor_single_field_keyset() {
-        // 有排序 + 游标：首字段 keyset；多级 order 只取首字段
-        let (clauses, cursor) = order_and_cursor(
-            Some("name.asc,created_at.desc"),
-            &SCHEMA,
-            "customers",
-            Some(7),
-        )
-        .unwrap();
-        assert_eq!(clauses.len(), 2);
-        assert_eq!(clauses[0], ("name".to_string(), OrderDir::Asc));
-        assert_eq!(clauses[1], ("id".to_string(), OrderDir::Desc));
-        let select = Query::select()
-            .column("id")
-            .from("customers")
-            .and_where(cursor.unwrap())
-            .to_owned();
-        let (sql, _) = select.build(PostgresQueryBuilder);
-        assert!(
-            sql.to_lowercase()
-                .find("\"name\" > (select \"name\"")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn order_and_cursor_rejects_unknown_field() {
-        assert_eq!(
-            order_and_cursor(Some("hack.asc"), &SCHEMA, "customers", None)
-                .unwrap_err()
-                .to_string(),
-            "filter_field_not_allowed"
-        );
-    }
-
     #[test]
     fn filter_where_parses_and_generates_in_one_step() {
         // 空筛选 → 空 Vec
@@ -720,113 +452,5 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exprs.len(), 2);
-    }
-
-    #[test]
-    fn apply_order_maps_dirs_and_skips_empty() {
-        // 空子句：无 ORDER BY
-        let mut select = Query::select().column("id").from("customers").to_owned();
-        apply_order(&mut select, &[]);
-        let (sql, _) = select.build(PostgresQueryBuilder);
-        assert!(sql.to_lowercase().find("order by").is_none());
-
-        // 排序子句 → ORDER BY f1 ASC, f2 DESC
-        let mut select = Query::select().column("id").from("customers").to_owned();
-        apply_order(
-            &mut select,
-            &[
-                ("name".to_string(), OrderDir::Asc),
-                ("id".to_string(), OrderDir::Desc),
-            ],
-        );
-        let (sql, _) = select.build(PostgresQueryBuilder);
-        let lower = sql.to_lowercase();
-        assert!(lower.find("order by \"name\" asc, \"id\" desc").is_some());
-    }
-
-    #[test]
-    fn apply_search_builds_cursor_filters_and_order() {
-        // 一站式：游标 keyset + 筛选 + 排序一次装配（mutating 风格，调用方不再自行拼接）
-        let mut select = Query::select()
-            .column("id")
-            .from("customers")
-            .limit(10)
-            .to_owned();
-        apply_search(
-            &mut select,
-            &map(&[("amount", "gte.100")]),
-            Some("name.asc"),
-            &SCHEMA,
-            "customers",
-            Some(42),
-        )
-        .unwrap();
-        let (sql, values) = select.build(PostgresQueryBuilder);
-        let lower = sql.to_lowercase();
-        // 筛选
-        assert!(lower.find("\"amount\" >= ").is_some());
-        // 排序（name asc + id desc 尾缀）
-        assert!(lower.find("order by \"name\" asc, \"id\" desc").is_some());
-        // 游标 keyset（标量子查询）
-        assert!(
-            lower
-                .find("\"name\" > (select \"name\" from \"customers\" where \"id\" = ")
-                .is_some()
-        );
-        // 绑定参数：子查询键值×2 + 外层 id + 筛选值 + limit（sea-query limit 也走绑定）
-        assert_eq!(values.0.len(), 5);
-    }
-
-    #[test]
-    fn cursor_where_generates_keyset_predicate() {
-        // asc：f > (SELECT f ...) OR (f = (SELECT f ...) AND id < c)
-        let expr = cursor_where("customers", "name", OrderDir::Asc, 42);
-        let select = Query::select()
-            .column("id")
-            .from("customers")
-            .and_where(expr)
-            .to_owned();
-        let (sql, values) = select.build(PostgresQueryBuilder);
-        let lower = sql.to_lowercase();
-        assert!(
-            lower
-                .find("\"name\" > (select \"name\" from \"customers\" where \"id\" = $1)")
-                .is_some()
-        );
-        assert!(lower
-            .find("\"name\" = (select \"name\" from \"customers\" where \"id\" = $2) and \"id\" < $3")
-            .is_some());
-        // 三个参数：两个子查询键值 + 外层 id（列对列比较无需 cast）
-        assert_eq!(values.0.len(), 3);
-
-        // desc：首比较换 <
-        let expr = cursor_where("customers", "name", OrderDir::Desc, 7);
-        let select = Query::select()
-            .column("id")
-            .from("customers")
-            .and_where(expr)
-            .to_owned();
-        let (sql, _) = select.build(PostgresQueryBuilder);
-        assert!(
-            sql.to_lowercase()
-                .find("\"name\" < (select \"name\"")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn to_sql_builds_select_with_conditions() {
-        // 集成冒烟：完整 select 构建（sea_query 链）
-        let conds = parse(&map(&[("name", "ilike.*张*")]), &SCHEMA).unwrap();
-        let exprs = to_sql(&conds, &SCHEMA);
-        let select = Query::select()
-            .column("id")
-            .from("customers")
-            .and_where_option(exprs.first().cloned())
-            .to_owned();
-        let (sql, values) = select.build(PostgresQueryBuilder);
-        assert!(sql.find("ILIKE").is_some());
-        // 值参数绑定（不在 SQL 里）
-        assert!(format!("{values:?}").find("%张%").is_some());
     }
 }

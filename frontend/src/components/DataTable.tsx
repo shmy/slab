@@ -1,16 +1,15 @@
-// 业务表格：VirtualTable 的薄封装——固定 features（排序 + 固定列），
+// 业务表格：VirtualTable 的薄封装——固定 features（固定列 + 行选择），
 // 业务方只提供数据 + 列配置数组，无需接触 @tanstack/react-table 的 features/columnHelper。
-// 能力：虚拟滚动、sticky 表头、滚动阴影、斑马纹、排序、无限滚动（onLoadMore）、可选选择列（selectable）。
+// 能力：虚拟滚动、sticky 表头、滚动阴影、斑马纹、无限滚动（onLoadMore）、可选选择列（selectable）。
+// 排序固定在服务端（id DESC 游标分页），表头禁排序。
 // React Compiler 豁免：useTable 的 render-phase store 与自动 memo 化不兼容（详见 docs/architecture.md §5.8）
 'use no memo';
 import {
   columnPinningFeature,
   columnSizingFeature,
   createColumnHelper,
-  createSortedRowModel,
   type RowData,
   rowSelectionFeature,
-  rowSortingFeature,
   type Table,
   tableFeatures,
 } from '@tanstack/react-table';
@@ -43,18 +42,13 @@ interface DataTableProps<T extends RowData> {
   loadingMore?: boolean;
   /** 选择列（全选表头 + 行复选框）；选中状态在表格内部，批量操作按需扩展 */
   selectable?: boolean;
-  /** 受控排序（服务端排序：URL 驱动） */
-  sorting?: { id: string; desc: boolean }[];
-  onSortingChange?: (updater: unknown) => void;
 }
 
-// 只注册用到的 feature：排序 + 固定列 + 行选择（pinning 前置依赖 sizing）
+// 只注册用到的 feature：固定列 + 行选择（pinning 前置依赖 sizing）
 const features = tableFeatures({
   columnSizingFeature,
   columnPinningFeature,
   rowSelectionFeature,
-  rowSortingFeature,
-  sortedRowModel: createSortedRowModel(),
   columnMeta: {} as { align?: 'left' | 'center' | 'right' },
 });
 
@@ -88,8 +82,6 @@ export function DataTable<T extends RowData>({
   onLoadMore,
   loadingMore,
   selectable = false,
-  sorting,
-  onSortingChange,
 }: DataTableProps<T>) {
   const columnHelper = useMemo(
     () => createColumnHelper<typeof features, T>(),
@@ -160,8 +152,6 @@ export function DataTable<T extends RowData>({
       getRowId={getRowId}
       onLoadMore={onLoadMore}
       loadingMore={loadingMore}
-      sorting={sorting}
-      onSortingChange={onSortingChange}
     />
   );
 }
