@@ -11,21 +11,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+  type FilterCondition,
+  type FilterFieldConfig,
+  TYPE_OPERATORS,
+} from '@/lib/filters';
 import { cn } from '@/lib/utils';
-
-export interface FilterFieldConfig {
-  id: string;
-  label: string;
-  type: 'text' | 'date';
-  operators: { id: string; label: string }[];
-  placeholder?: string;
-}
-
-export interface FilterCondition {
-  field: string;
-  op: string;
-  value: string;
-}
 
 interface FilterBarProps {
   /** 已生效搜索词（URL 状态）；输入框本地值 debounce 300ms 后回调 */
@@ -102,8 +93,9 @@ export function FilterBar({
   }
 
   function opLabel(fieldId: string, opId: string) {
+    const field = fields.find((f) => f.id === fieldId);
     return (
-      fields.find((f) => f.id === fieldId)?.operators.find((o) => o.id === opId)
+      (field ? TYPE_OPERATORS[field.type] : []).find((o) => o.id === opId)
         ?.label ?? opId
     );
   }
@@ -174,7 +166,7 @@ export function FilterBar({
                   {draft.field.label}
                 </p>
                 <div className="flex flex-wrap gap-1 px-1.5 pb-1">
-                  {draft.field.operators.map((op) => (
+                  {TYPE_OPERATORS[draft.field.type].map((op) => (
                     <button
                       key={op.id}
                       type="button"
@@ -193,7 +185,13 @@ export function FilterBar({
                 <div className="px-1.5 pb-1.5">
                   <Input
                     autoFocus
-                    type={draft.field.type === 'date' ? 'date' : 'text'}
+                    type={
+                      draft.field.type === 'date'
+                        ? 'date'
+                        : draft.field.type === 'int'
+                          ? 'number'
+                          : 'text'
+                    }
                     value={draft.value}
                     onChange={(e) =>
                       setDraft({ ...draft, value: e.target.value })
@@ -234,7 +232,7 @@ export function FilterBar({
                     onClick={() =>
                       setDraft({
                         field,
-                        op: field.operators[0]?.id ?? '',
+                        op: TYPE_OPERATORS[field.type][0]?.id ?? '',
                         value: '',
                         editingIndex: null,
                       })

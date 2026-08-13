@@ -1,7 +1,7 @@
 use axum::extract::State;
 use db::PgPool;
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
+use sea_query::{Expr, ExprTrait as _, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder as _;
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
@@ -22,6 +22,7 @@ use web::response::json_response::{JsonResponse, JsonResponseType};
 const FILTER_SCHEMA: filter_kit::FilterSchema = filter_kit::FilterSchema {
     text_fields: &["code", "name", "phone", "contact_person"],
     date_fields: &["created_at"],
+    int_fields: &[],
 };
 
 #[serde_as]
@@ -80,34 +81,6 @@ async fn execute(
     let q = query.q.filter(|s| !s.is_empty());
     let page_limit = query.paging.limit();
 
-    // 排序：用户 order（白名单校验）+ 默认 id desc；只支持单字段（keyset 游标以首字段为基准）
-    let orders = match query.order.as_deref() {
-        Some(o) if !o.trim().is_empty() => {
-            filter_kit::parse_order(o, &FILTER_SCHEMA.allowed_fields())?
-        }
-        _ => Vec::new(),
-    };
-    // 多级 order 只取首字段（表头排序即单字段）
-    let orders = orders.into_iter().take(1).collect::<Vec<_>>();
-    let order_clauses = if orders.is_empty() {
-        vec![("id".to_string(), filter_kit::OrderDir::Desc)]
-    } else {
-        filter_kit::order_clauses(&orders)
-    };
-
-    // 游标分页谓词（keyset）：无排序 → `id < cursor`；有排序 → 单字段 keyset
-    // （filter_kit::cursor_where：排序键值标量子查询现取，游标仍是数字 id）
-    let cursor_filter = match (query.paging.cursor_id(), orders.is_empty()) {
-        (Some(cursor), true) => Some(Expr::col("id").lt(i64::from(*cursor))),
-        (Some(cursor), false) => Some(filter_kit::cursor_where(
-            "customers",
-            &order_clauses[0].0,
-            order_clauses[0].1,
-            i64::from(*cursor),
-        )),
-        (None, _) => None,
-    };
-
     let mut select = Query::select()
         .from("customers")
         .column("id")
@@ -124,28 +97,23 @@ async fn execute(
                 .or(Expr::col("phone").ilike(format!("%{q}%")))
                 .or(Expr::col("contact_person").ilike(format!("%{q}%")))
         }))
-        .and_where_option(cursor_filter)
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .limit(query.paging.fetch_limit())
         .to_owned();
 
-    // 筛选 + 排序
-    let conditions = filter_kit::parse(&query.filters, &FILTER_SCHEMA.allowed_fields())?;
-    for expr in filter_kit::to_sql(&conditions, &FILTER_SCHEMA) {
-        select.and_where(expr);
-    }
-    for (field, dir) in &order_clauses {
-        select.order_by(
-            field.to_string(),
-            match dir {
-                filter_kit::OrderDir::Asc => Order::Asc,
-                filter_kit::OrderDir::Desc => Order::Desc,
-            },
-        );
-    }
+    // 筛选 + 排序 + 游标（keyset）一站式，全部由 filter_kit 装配
+    filter_kit::apply_search(
+        &mut select,
+        &query.filters,
+        query.order.as_deref(),
+        &FILTER_SCHEMA,
+        "customers",
+        query.paging.cursor_id().map(|c| *c),
+    )?;
 
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+    println!("{}", sql);
     let mut conn = pg_pool.acquire().await?;
     let items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
         .fetch_all(&mut *conn)

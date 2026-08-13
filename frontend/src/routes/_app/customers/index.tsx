@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { AuditHistorySheet } from '@/components/AuditHistory';
 import { CopyableText } from '@/components/CopyableText';
 import { type DataColumn, DataTable } from '@/components/DataTable';
-import { FilterBar, type FilterFieldConfig } from '@/components/FilterBar';
+import { FilterBar } from '@/components/FilterBar';
 import { InfoRow } from '@/components/InfoRow';
 import { RowActions } from '@/components/RowActions';
 import { TextField } from '@/components/TextField';
@@ -47,6 +47,7 @@ import {
   type CustomerItem,
 } from '@/lib/customers';
 import {
+  type FilterFieldConfig,
   parseFilters,
   parseSorting,
   serializeFilters,
@@ -66,44 +67,13 @@ export const Route = createFileRoute('/_app/customers/')({
 
 type CustomerSearch = z.infer<typeof customerSearchSchema>;
 
-// 可筛字段注册表（后端白名单：code/name/phone/contact_person + created_at；加字段 = 加一行）
+// 可筛字段注册表（后端白名单：code/name/phone/contact_person + created_at；加字段 = 加一行，
+// 操作符集由字段类型自动映射，见 lib/filters.ts TYPE_OPERATORS）
 const FILTER_FIELDS: FilterFieldConfig[] = [
-  {
-    id: 'name',
-    label: '名称',
-    type: 'text',
-    operators: [
-      { id: 'contains', label: '包含' },
-      { id: 'eq', label: '等于' },
-    ],
-    placeholder: '客户名称',
-  },
-  {
-    id: 'code',
-    label: '编码',
-    type: 'text',
-    operators: [
-      { id: 'contains', label: '包含' },
-      { id: 'eq', label: '等于' },
-    ],
-    placeholder: '客户编码',
-  },
-  {
-    id: 'phone',
-    label: '电话',
-    type: 'text',
-    operators: [{ id: 'contains', label: '包含' }],
-    placeholder: '手机号片段',
-  },
-  {
-    id: 'created_at',
-    label: '创建时间',
-    type: 'date',
-    operators: [
-      { id: 'after', label: '晚于' },
-      { id: 'before', label: '早于' },
-    ],
-  },
+  { id: 'name', label: '名称', type: 'text', placeholder: '客户名称' },
+  { id: 'code', label: '编码', type: 'text', placeholder: '客户编码' },
+  { id: 'phone', label: '电话', type: 'text', placeholder: '手机号片段' },
+  { id: 'created_at', label: '创建时间', type: 'date' },
 ];
 
 type EditorState =

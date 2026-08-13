@@ -12,12 +12,12 @@ use crate::value_object::id::ID;
 #[cfg_attr(feature = "openapi", derive(IntoParams, ToSchema))]
 #[cfg_attr(feature = "openapi", into_params(parameter_in = Query))]
 pub struct CursorPagingQuery {
-    /// 游标（上一页最后一条的数字 id）
+    /// 游标：无排序 = 上一页最后一条的数字 id；有排序 = 复合游标（排序字段值 + id 的 JSON 串）
     #[cfg_attr(feature = "openapi", param(value_type = Option<String>, example = "1983507123456789012"))]
     #[cfg_attr(feature = "openapi", schema(value_type = Option<String>, example = "1983507123456789012"))]
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(default)]
-    cursor: Option<ID>,
+    cursor: Option<String>,
     /// 每页条数（1-100）
     #[cfg_attr(feature = "openapi", param(value_type = i64, example = 10))]
     #[cfg_attr(feature = "openapi", schema(default = 10, example = 10))]
@@ -29,9 +29,14 @@ pub struct CursorPagingQuery {
 impl CursorPagingQuery {
     const DEFAULT_LIMIT: i64 = 10;
 
-    /// 数字游标（id 分页）；非数字（复合游标）返回 None
-    pub fn cursor_id(&self) -> &Option<ID> {
-        &self.cursor
+    /// 游标原始串（空串/缺省 → None）
+    pub fn cursor_str(&self) -> Option<&str> {
+        self.cursor.as_deref().filter(|s| !s.is_empty())
+    }
+
+    /// 数字游标（id 分页）；复合游标（非数字）返回 None
+    pub fn cursor_id(&self) -> Option<ID> {
+        self.cursor_str().and_then(|s| s.parse().ok())
     }
 
     pub fn limit(&self) -> u64 {
@@ -59,6 +64,7 @@ mod tests {
     fn cursor_paging_empty_limit_string() {
         let q: CursorPagingQuery = serde_json::from_str(r#"{"cursor":"","limit":""}"#).unwrap();
         assert_eq!(q.limit(), 10);
+        assert!(q.cursor_str().is_none());
         assert!(q.cursor_id().is_none());
     }
 
@@ -76,5 +82,18 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(q.limit(), 25);
+    }
+
+    #[test]
+    fn cursor_id_parses_number_only() {
+        let q: CursorPagingQuery =
+            serde_json::from_str(r#"{"cursor":"1983507123456789012"}"#).unwrap();
+        assert_eq!(q.cursor_id().map(|c| i64::from(c)), Some(1983507123456789012));
+        // 复合游标（JSON 串）不是数字 id
+        let q: CursorPagingQuery =
+            serde_json::from_str(r#"{"cursor":"{\"f\":\"name\",\"v\":\"李娜\",\"id\":\"2\"}"}"#)
+                .unwrap();
+        assert!(q.cursor_id().is_none());
+        assert!(q.cursor_str().is_some());
     }
 }

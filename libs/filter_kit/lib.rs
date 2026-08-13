@@ -2,7 +2,7 @@
 //!
 //! 筛选：每个字段一个 query 参数，值 = `{op}.{value}`，多参数天然 AND：
 //! ```text
-//! name=ilike.*张*&created_at=gt.2024-03-15&code=eq.C-001
+//! name=ilike.*张*&amount=gte.1000&created_at=gt.2024-03-15
 //! ```
 //!
 //! 排序：`order` 参数 = `{field}.{asc|desc}`，逗号分隔多级：
@@ -14,8 +14,16 @@
 //! 有排序时用 [`cursor_where`] 生成单字段 keyset 谓词（排序键值以标量子查询现取，
 //! 游标仍是不带排序信息的数字 id）。
 //!
-//! 字段/操作符白名单在解析期校验（防 SQL 注入）；SQL 生成由
-//! [`FilterSchema`] 声明驱动（text/date 列类型区分）。
+//! # 操作符矩阵（按 [`FilterSchema`] 列类型）
+//!
+//! | 列类型 | 支持操作符 |
+//! |--------|-----------|
+//! | text   | `eq` / `neq` / `ilike`（`*` 通配任意字符） |
+//! | date   | `eq` / `neq` / `gt` / `gte` / `lt` / `lte`（自动 cast timestamptz） |
+//! | int    | `eq` / `neq` / `gt` / `gte` / `lt` / `lte`（解析期校验 i64 格式） |
+//!
+//! 字段白名单与 SQL 生成同源（[`FilterSchema`] 三数组并集），解析期校验防注入；
+//! 未覆盖的类型×操作符组合（如 `created_at=ilike.*`）在 SQL 生成期静默忽略。
 //!
 //! ⚠️ 陷阱：sea_query 1.0 的 `impl<T> ExprTrait for T where T: Into<Expr>` blanket
 //! 会让作用域内的 `String` 获得 `ExprTrait::contains`（返回 Expr），方法解析优先于
@@ -26,13 +34,15 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Alias, Expr, ExprTrait as _, Query, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait as _, Order, Query, SelectStatement, SimpleExpr};
 
 /// 筛选操作符（PostgREST 风格，值前缀）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     /// `eq.` 等于
     Eq,
+    /// `neq.` 不等于
+    Neq,
     /// `gt.` 大于
     Gt,
     /// `gte.` 大于等于
@@ -41,7 +51,7 @@ pub enum Op {
     Lt,
     /// `lte.` 小于等于
     Lte,
-    /// `ilike.` 大小写不敏感模糊匹配（值含通配符 `*` / `_`）
+    /// `ilike.` 大小写不敏感模糊匹配（值含通配符 `*` / `_`；仅 text 列）
     Ilike,
 }
 
@@ -49,6 +59,7 @@ impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Op::Eq => "eq.",
+            Op::Neq => "neq.",
             Op::Gt => "gt.",
             Op::Gte => "gte.",
             Op::Lt => "lt.",
@@ -64,7 +75,7 @@ impl fmt::Display for Op {
 pub struct Condition {
     pub field: String,
     pub op: Op,
-    /// 原始值（ilike 含通配符 `*` / `_`）
+    /// 原始值（ilike 含通配符 `*` / `_`；int 字段已校验为合法整数串）
     pub value: String,
 }
 
@@ -85,7 +96,7 @@ pub struct OrderItem {
 /// 解析错误（Display 即 locale key；细节进 Debug/日志）
 #[derive(Debug, thiserror::Error)]
 pub enum FilterError {
-    /// 值不是 `{op}.{value}` 格式 / 排序格式错误 / 操作符未知
+    /// 值不是 `{op}.{value}` 格式 / int 值非整数 / 排序格式错误 / 操作符未知
     #[error("invalid_filter_syntax")]
     Syntax,
     /// 字段不在白名单
@@ -93,26 +104,30 @@ pub enum FilterError {
     FieldNotAllowed,
 }
 
-/// 可筛/可排字段声明：text 支持 eq/ilike，date 支持 gt/gte/lt/lte（自动 cast）。
-/// 白名单 = `text_fields ∪ date_fields`，与 SQL 生成同源，不会不一致。
+/// 可筛/可排字段声明：`text_fields`（eq/neq/ilike）、`date_fields`（eq/neq/gt/gte/lt/lte，
+/// 自动 cast timestamptz）、`int_fields`（eq/neq/gt/gte/lt/lte，BIGINT/INTEGER 列）。
+/// 白名单 = 三数组并集，与 SQL 生成同源，不会不一致。
 #[derive(Debug, Clone, Copy)]
 pub struct FilterSchema {
     pub text_fields: &'static [&'static str],
     pub date_fields: &'static [&'static str],
+    pub int_fields: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColKind {
     Text,
     Date,
+    Int,
 }
 
 impl FilterSchema {
-    /// 白名单字段（text + date 并集）
+    /// 白名单字段（text + date + int 并集）
     pub fn allowed_fields(&self) -> Vec<&'static str> {
         self.text_fields
             .iter()
             .chain(self.date_fields.iter())
+            .chain(self.int_fields.iter())
             .copied()
             .collect()
     }
@@ -122,6 +137,8 @@ impl FilterSchema {
             Some(ColKind::Text)
         } else if self.date_fields.contains(&field) {
             Some(ColKind::Date)
+        } else if self.int_fields.contains(&field) {
+            Some(ColKind::Int)
         } else {
             None
         }
@@ -134,8 +151,9 @@ impl FilterSchema {
 }
 
 /// 筛选操作符表：从长到短匹配前缀（`ilike.` 先于 `eq.` 等，避免子串误配）
-const FILTER_OPERATORS: [(&str, Op); 6] = [
+const FILTER_OPERATORS: [(&str, Op); 7] = [
     ("ilike.", Op::Ilike),
+    ("neq.", Op::Neq),
     ("gte.", Op::Gte),
     ("lte.", Op::Lte),
     ("gt.", Op::Gt),
@@ -144,18 +162,25 @@ const FILTER_OPERATORS: [(&str, Op); 6] = [
 ];
 
 /// 解析 PostgREST 风格筛选参数（query string 中除分页/搜索词之外的字段参数）。
+///
+/// int 字段的值在解析期校验为合法 i64（失败 → [`FilterError::Syntax`]），
+/// SQL 生成期不再有类型失败路径。
 pub fn parse(
     filters: &HashMap<String, String>,
-    allowed_fields: &[&str],
+    schema: &FilterSchema,
 ) -> Result<Vec<Condition>, FilterError> {
+    let allowed = schema.allowed_fields();
     let mut conditions = Vec::new();
     for (field, raw) in filters {
-        if !allowed_fields.contains(&field.as_str()) {
+        if !allowed.contains(&field.as_str()) {
             return Err(FilterError::FieldNotAllowed);
         }
         let mut parsed = None;
         for (op_str, op) in FILTER_OPERATORS {
             if let Some(value) = raw.strip_prefix(op_str) {
+                if schema.col_kind(field) == Some(ColKind::Int) && value.parse::<i64>().is_err() {
+                    return Err(FilterError::Syntax);
+                }
                 parsed = Some(Condition {
                     field: field.clone(),
                     op,
@@ -171,38 +196,94 @@ pub fn parse(
     Ok(conditions)
 }
 
-/// 条件 → SeaQuery 表达式（字段白名单由 parse 校验；此处按 schema 类型安全映射，
-/// 未覆盖的组合如 `created_at=ilike.*` 直接忽略）。
+/// 条件 → SeaQuery 表达式（字段白名单与 int 值格式由 [`parse`] 校验；此处按 schema
+/// 类型安全映射，未覆盖的组合如 `created_at=ilike.*` 直接忽略）。
 pub fn to_sql(conds: &[Condition], schema: &FilterSchema) -> Vec<SimpleExpr> {
     conds
         .iter()
-        .filter_map(|c| match (schema.col_kind(&c.field), c.op) {
-            (Some(ColKind::Text), Op::Eq) => {
-                Some(Expr::col(c.field.to_string()).eq(c.value.as_str()))
+        .filter_map(|c| {
+            let col = Expr::col(c.field.to_string());
+            match (schema.col_kind(&c.field), c.op) {
+                (Some(ColKind::Text), Op::Eq) => Some(col.eq(c.value.as_str())),
+                (Some(ColKind::Text), Op::Neq) => Some(col.ne(c.value.as_str())),
+                // PostgREST 通配符语义：* = 任意字符（→ SQL %），_ 单字符保留
+                (Some(ColKind::Text), Op::Ilike) => Some(col.ilike(c.value.replace('*', "%"))),
+                (Some(ColKind::Date), op) => {
+                    let v = schema.date_value(&c.value);
+                    Some(match op {
+                        Op::Eq => col.eq(v),
+                        Op::Neq => col.ne(v),
+                        Op::Gt => col.gt(v),
+                        Op::Gte => col.gte(v),
+                        Op::Lt => col.lt(v),
+                        Op::Lte => col.lte(v),
+                        Op::Ilike => return None,
+                    })
+                }
+                (Some(ColKind::Int), op) => {
+                    // parse 已保证 i64 格式；此处防御性忽略（永不失败路径）
+                    let v = c.value.parse::<i64>().ok()?;
+                    Some(match op {
+                        Op::Eq => col.eq(v),
+                        Op::Neq => col.ne(v),
+                        Op::Gt => col.gt(v),
+                        Op::Gte => col.gte(v),
+                        Op::Lt => col.lt(v),
+                        Op::Lte => col.lte(v),
+                        Op::Ilike => return None,
+                    })
+                }
+                _ => None,
             }
-            // PostgREST 通配符语义：* = 任意字符（→ SQL %），_ 单字符保留
-            (Some(ColKind::Text), Op::Ilike) => {
-                Some(Expr::col(c.field.to_string()).ilike(c.value.replace('*', "%")))
-            }
-            (Some(ColKind::Date), Op::Gt) => {
-                Some(Expr::col(c.field.to_string()).gt(schema.date_value(&c.value)))
-            }
-            (Some(ColKind::Date), Op::Gte) => {
-                Some(Expr::col(c.field.to_string()).gte(schema.date_value(&c.value)))
-            }
-            (Some(ColKind::Date), Op::Lt) => {
-                Some(Expr::col(c.field.to_string()).lt(schema.date_value(&c.value)))
-            }
-            (Some(ColKind::Date), Op::Lte) => {
-                Some(Expr::col(c.field.to_string()).lte(schema.date_value(&c.value)))
-            }
-            _ => None,
         })
         .collect()
 }
 
+/// 筛选参数 → WHERE 表达式（[`parse`] + [`to_sql`] 一步；空筛选返回空 Vec）。
+pub fn filter_where(
+    filters: &HashMap<String, String>,
+    schema: &FilterSchema,
+) -> Result<Vec<SimpleExpr>, FilterError> {
+    Ok(to_sql(&parse(filters, schema)?, schema))
+}
+
+/// 排序子句应用到 select（OrderDir → sea_query [`Order`] 映射样板收敛在此）。
+pub fn apply_order(select: &mut SelectStatement, clauses: &[(String, OrderDir)]) {
+    for (field, dir) in clauses {
+        select.order_by(
+            field.to_string(),
+            match dir {
+                OrderDir::Asc => Order::Asc,
+                OrderDir::Desc => Order::Desc,
+            },
+        );
+    }
+}
+
+/// 搜索一站式：游标 keyset 谓词 + 筛选 WHERE + ORDER BY 一次应用到 select。
+/// 无排序默认 `ORDER BY id DESC`；有排序单字段 keyset（[`cursor_where`]，
+/// 标量子查询现取排序键值）。与 [`filter_where`] / [`apply_order`] / [`order_and_cursor`]
+/// 同属 mutating 风格，调用方不再自行装配表达式。
+pub fn apply_search(
+    select: &mut SelectStatement,
+    filters: &HashMap<String, String>,
+    order: Option<&str>,
+    schema: &FilterSchema,
+    table: &str,
+    cursor_id: Option<i64>,
+) -> Result<(), FilterError> {
+    let (clauses, cursor) = order_and_cursor(order, schema, table, cursor_id)?;
+    select.and_where_option(cursor);
+    for expr in filter_where(filters, schema)? {
+        select.and_where(expr);
+    }
+    apply_order(select, &clauses);
+    Ok(())
+}
+
 /// 排序解析：`"name.asc,created_at.desc"`（逗号分隔；省略方向默认 asc）。
-pub fn parse_order(orders: &str, allowed: &[&str]) -> Result<Vec<OrderItem>, FilterError> {
+pub fn parse_order(orders: &str, schema: &FilterSchema) -> Result<Vec<OrderItem>, FilterError> {
+    let allowed = schema.allowed_fields();
     let mut out = Vec::new();
     for part in orders.split(',') {
         let part = part.trim();
@@ -233,9 +314,12 @@ pub fn parse_order(orders: &str, allowed: &[&str]) -> Result<Vec<OrderItem>, Fil
     Ok(out)
 }
 
+/// 排序子句：`(列名, 方向)` 列表（供 ORDER BY 与 keyset 游标使用）
+pub type OrderClauses = Vec<(String, OrderDir)>;
+
 /// 排序子句：用户排序 + id 稳定二级排序（游标分页必须稳定）。
 /// 返回 `(列名, 方向)` 列表，由调用方转 SeaQuery `order_by`。
-pub fn order_clauses(orders: &[OrderItem]) -> Vec<(String, OrderDir)> {
+pub fn order_clauses(orders: &[OrderItem]) -> OrderClauses {
     let mut clauses: Vec<(String, OrderDir)> =
         orders.iter().map(|o| (o.field.clone(), o.dir)).collect();
     // 用户未显式排 id 时，附加 id DESC 二级排序：同值字段内最新在前
@@ -274,6 +358,36 @@ pub fn cursor_where(table: &str, field: &str, dir: OrderDir, cursor_id: i64) -> 
     after.or(col.eq(key()).and(Expr::col("id").lt(cursor_id)))
 }
 
+/// 排序 + 游标谓词一站式：`order` 串（白名单校验，只取首字段）→ 排序子句与 keyset 游标 WHERE。
+///
+/// 返回 `(排序子句, 游标谓词)`：前者供 `order_by`，后者供 `and_where_option`。
+/// 无排序 → 默认 `ORDER BY id DESC` + `id < cursor`；有排序 → 单字段 keyset
+/// （[`cursor_where`]，标量子查询现取排序键值）。
+pub fn order_and_cursor(
+    order: Option<&str>,
+    schema: &FilterSchema,
+    table: &str,
+    cursor_id: Option<i64>,
+) -> Result<(OrderClauses, Option<SimpleExpr>), FilterError> {
+    let orders = match order {
+        Some(o) if !o.trim().is_empty() => parse_order(o, schema)?,
+        _ => Vec::new(),
+    };
+    // 多级 order 只取首字段（keyset 游标以首字段为基准；表头排序即单字段）
+    let orders = orders.into_iter().take(1).collect::<Vec<_>>();
+    let clauses = if orders.is_empty() {
+        vec![("id".to_string(), OrderDir::Desc)]
+    } else {
+        order_clauses(&orders)
+    };
+    let cursor = match (cursor_id, orders.first()) {
+        (Some(c), None) => Some(Expr::col("id").lt(c)),
+        (Some(c), Some(order)) => Some(cursor_where(table, &order.field, order.dir, c)),
+        (None, _) => None,
+    };
+    Ok((clauses, cursor))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -283,6 +397,7 @@ mod tests {
     const SCHEMA: FilterSchema = FilterSchema {
         text_fields: &["code", "name", "phone", "contact_person"],
         date_fields: &["created_at"],
+        int_fields: &["amount", "quantity"],
     };
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -292,13 +407,13 @@ mod tests {
             .collect()
     }
 
-    // ---- 筛选 ----
+    // ---- 筛选解析 ----
 
     #[test]
     fn parses_multiple_conditions() {
         let conds = parse(
             &map(&[("name", "ilike.*张*"), ("created_at", "gt.2024-03-15")]),
-            &SCHEMA.allowed_fields(),
+            &SCHEMA,
         )
         .unwrap();
         assert_eq!(conds.len(), 2);
@@ -312,8 +427,15 @@ mod tests {
 
     #[test]
     fn eq_operator() {
-        let conds = parse(&map(&[("code", "eq.C-001")]), &SCHEMA.allowed_fields()).unwrap();
+        let conds = parse(&map(&[("code", "eq.C-001")]), &SCHEMA).unwrap();
         assert_eq!(conds[0].op, Op::Eq);
+        assert_eq!(conds[0].value, "C-001");
+    }
+
+    #[test]
+    fn neq_operator() {
+        let conds = parse(&map(&[("code", "neq.C-001")]), &SCHEMA).unwrap();
+        assert_eq!(conds[0].op, Op::Neq);
         assert_eq!(conds[0].value, "C-001");
     }
 
@@ -321,7 +443,7 @@ mod tests {
     fn gte_lte_operators() {
         let conds = parse(
             &map(&[("created_at", "gte.2024-01-01"), ("code", "lte.Z")]),
-            &SCHEMA.allowed_fields(),
+            &SCHEMA,
         )
         .unwrap();
         assert_eq!(conds[0].op, Op::Lte);
@@ -329,9 +451,32 @@ mod tests {
     }
 
     #[test]
+    fn int_field_parses_negative_and_range_ops() {
+        let conds = parse(
+            &map(&[("amount", "gte.-500"), ("quantity", "lt.10")]),
+            &SCHEMA,
+        )
+        .unwrap();
+        assert_eq!(conds[0].op, Op::Gte);
+        assert_eq!(conds[0].value, "-500");
+        assert_eq!(conds[1].op, Op::Lt);
+        assert_eq!(conds[1].value, "10");
+    }
+
+    #[test]
+    fn int_field_rejects_non_integer() {
+        assert_eq!(
+            parse(&map(&[("amount", "gte.abc")]), &SCHEMA)
+                .unwrap_err()
+                .to_string(),
+            "invalid_filter_syntax"
+        );
+    }
+
+    #[test]
     fn unknown_field_rejected() {
         assert_eq!(
-            parse(&map(&[("secret", "eq.x")]), &SCHEMA.allowed_fields())
+            parse(&map(&[("secret", "eq.x")]), &SCHEMA)
                 .unwrap_err()
                 .to_string(),
             "filter_field_not_allowed"
@@ -341,7 +486,7 @@ mod tests {
     #[test]
     fn unknown_operator_rejected() {
         assert_eq!(
-            parse(&map(&[("name", "foo.张")]), &SCHEMA.allowed_fields())
+            parse(&map(&[("name", "foo.张")]), &SCHEMA)
                 .unwrap_err()
                 .to_string(),
             "invalid_filter_syntax"
@@ -350,22 +495,16 @@ mod tests {
 
     #[test]
     fn empty_filters_returns_empty() {
-        assert!(
-            parse(&HashMap::new(), &SCHEMA.allowed_fields())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(parse(&HashMap::new(), &SCHEMA).unwrap().is_empty());
     }
 
     #[test]
     fn value_may_contain_dots_and_special_chars() {
-        let conds = parse(
-            &map(&[("name", "ilike.*1。\"\\'4*")]),
-            &SCHEMA.allowed_fields(),
-        )
-        .unwrap();
+        let conds = parse(&map(&[("name", "ilike.*1。\"\\'4*")]), &SCHEMA).unwrap();
         assert_eq!(conds[0].value, "*1。\"\\'4*");
     }
+
+    // ---- SQL 生成 ----
 
     #[test]
     fn to_sql_generates_typed_expressions() {
@@ -375,7 +514,7 @@ mod tests {
                 ("created_at", "gt.2024-03-15"),
                 ("code", "eq.C-001"),
             ]),
-            &SCHEMA.allowed_fields(),
+            &SCHEMA,
         )
         .unwrap();
         let exprs = to_sql(&conds, &SCHEMA);
@@ -392,11 +531,68 @@ mod tests {
     }
 
     #[test]
+    fn to_sql_text_neq_and_date_eq() {
+        // 同字段多条件需分开 parse（HashMap 键唯一）后拼接；排序后 code < created_at×2
+        let mut conds = Vec::new();
+        conds.extend(parse(&map(&[("code", "neq.C-001")]), &SCHEMA).unwrap());
+        conds.extend(parse(&map(&[("created_at", "eq.2024-03-15")]), &SCHEMA).unwrap());
+        conds.extend(parse(&map(&[("created_at", "neq.2024-01-01")]), &SCHEMA).unwrap());
+        let exprs = to_sql(&conds, &SCHEMA);
+        assert_eq!(exprs.len(), 3);
+        let select = Query::select()
+            .column("id")
+            .from("customers")
+            .and_where(exprs[0].clone())
+            .and_where(exprs[1].clone())
+            .and_where(exprs[2].clone())
+            .to_owned();
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        let lower = sql.to_lowercase();
+        // text neq → <>/!=，date eq/neq → 带 cast 的 = / <>
+        assert!(lower.find("\"code\" <> $1").is_some());
+        assert!(
+            lower
+                .find("\"created_at\" = cast($2 as timestamptz)")
+                .is_some()
+        );
+        assert!(
+            lower
+                .find("\"created_at\" <> cast($3 as timestamptz)")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn to_sql_int_operators() {
+        // 同字段多条件需分开 parse（HashMap 键唯一）后拼接
+        let mut conds = Vec::new();
+        conds.extend(parse(&map(&[("amount", "eq.100")]), &SCHEMA).unwrap());
+        conds.extend(parse(&map(&[("amount", "gte.50")]), &SCHEMA).unwrap());
+        conds.extend(parse(&map(&[("quantity", "lt.10")]), &SCHEMA).unwrap());
+        let exprs = to_sql(&conds, &SCHEMA);
+        assert_eq!(exprs.len(), 3);
+        let select = Query::select()
+            .column("id")
+            .from("payments")
+            .and_where(exprs[0].clone())
+            .and_where(exprs[1].clone())
+            .and_where(exprs[2].clone())
+            .to_owned();
+        let (sql, values) = select.build(PostgresQueryBuilder);
+        let lower = sql.to_lowercase();
+        assert!(lower.find("\"amount\" = $1").is_some());
+        assert!(lower.find("\"amount\" >= $2").is_some());
+        assert!(lower.find("\"quantity\" < $3").is_some());
+        // 数值参数（非文本串）
+        assert!(format!("{values:?}").find("100").is_some());
+    }
+
+    #[test]
     fn to_sql_ignores_unsupported_combinations() {
-        // created_at=ilike.* 非法组合（date 不支持模糊）→ 忽略
+        // created_at=ilike.* 与 amount=ilike.* 非法组合（date/int 不支持模糊）→ 忽略
         let conds = parse(
-            &map(&[("created_at", "ilike.*张*")]),
-            &SCHEMA.allowed_fields(),
+            &map(&[("created_at", "ilike.*张*"), ("amount", "ilike.1")]),
+            &SCHEMA,
         )
         .unwrap();
         assert!(to_sql(&conds, &SCHEMA).is_empty());
@@ -406,7 +602,7 @@ mod tests {
 
     #[test]
     fn parses_order_with_direction() {
-        let orders = parse_order("name.asc,created_at.desc", &SCHEMA.allowed_fields()).unwrap();
+        let orders = parse_order("name.asc,created_at.desc", &SCHEMA).unwrap();
         assert_eq!(orders.len(), 2);
         assert_eq!(orders[0].field, "name");
         assert_eq!(orders[0].dir, OrderDir::Asc);
@@ -415,16 +611,21 @@ mod tests {
 
     #[test]
     fn order_defaults_to_asc() {
-        let orders = parse_order("name", &SCHEMA.allowed_fields()).unwrap();
+        let orders = parse_order("name", &SCHEMA).unwrap();
         assert_eq!(orders[0].dir, OrderDir::Asc);
+    }
+
+    #[test]
+    fn order_int_field_allowed() {
+        let orders = parse_order("amount.desc", &SCHEMA).unwrap();
+        assert_eq!(orders[0].field, "amount");
+        assert_eq!(orders[0].dir, OrderDir::Desc);
     }
 
     #[test]
     fn order_unknown_field_rejected() {
         assert_eq!(
-            parse_order("hack.asc", &SCHEMA.allowed_fields())
-                .unwrap_err()
-                .to_string(),
+            parse_order("hack.asc", &SCHEMA).unwrap_err().to_string(),
             "filter_field_not_allowed"
         );
     }
@@ -432,20 +633,148 @@ mod tests {
     #[test]
     fn order_unknown_direction_rejected() {
         assert_eq!(
-            parse_order("name.foo", &SCHEMA.allowed_fields())
-                .unwrap_err()
-                .to_string(),
+            parse_order("name.foo", &SCHEMA).unwrap_err().to_string(),
             "invalid_filter_syntax"
         );
     }
 
     #[test]
     fn order_clauses_appends_id_stability() {
-        let orders = parse_order("name.asc", &SCHEMA.allowed_fields()).unwrap();
+        let orders = parse_order("name.asc", &SCHEMA).unwrap();
         let clauses = order_clauses(&orders);
         assert_eq!(clauses.len(), 2);
         assert_eq!(clauses[0], ("name".to_string(), OrderDir::Asc));
         assert_eq!(clauses[1], ("id".to_string(), OrderDir::Desc));
+    }
+
+    #[test]
+    fn order_and_cursor_no_order_defaults_id_desc() {
+        // 无排序无游标：默认 id DESC 排序子句，无游标谓词
+        let (clauses, cursor) = order_and_cursor(None, &SCHEMA, "customers", None).unwrap();
+        assert_eq!(clauses, vec![("id".to_string(), OrderDir::Desc)]);
+        assert!(cursor.is_none());
+
+        // 无排序 + 游标：id < cursor
+        let (clauses, cursor) = order_and_cursor(None, &SCHEMA, "customers", Some(42)).unwrap();
+        assert_eq!(clauses, vec![("id".to_string(), OrderDir::Desc)]);
+        let select = Query::select()
+            .column("id")
+            .from("customers")
+            .and_where_option(cursor)
+            .to_owned();
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        assert!(sql.to_lowercase().find("\"id\" < $1").is_some());
+    }
+
+    #[test]
+    fn order_and_cursor_single_field_keyset() {
+        // 有排序 + 游标：首字段 keyset；多级 order 只取首字段
+        let (clauses, cursor) = order_and_cursor(
+            Some("name.asc,created_at.desc"),
+            &SCHEMA,
+            "customers",
+            Some(7),
+        )
+        .unwrap();
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[0], ("name".to_string(), OrderDir::Asc));
+        assert_eq!(clauses[1], ("id".to_string(), OrderDir::Desc));
+        let select = Query::select()
+            .column("id")
+            .from("customers")
+            .and_where(cursor.unwrap())
+            .to_owned();
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        assert!(
+            sql.to_lowercase()
+                .find("\"name\" > (select \"name\"")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn order_and_cursor_rejects_unknown_field() {
+        assert_eq!(
+            order_and_cursor(Some("hack.asc"), &SCHEMA, "customers", None)
+                .unwrap_err()
+                .to_string(),
+            "filter_field_not_allowed"
+        );
+    }
+
+    #[test]
+    fn filter_where_parses_and_generates_in_one_step() {
+        // 空筛选 → 空 Vec
+        assert!(filter_where(&HashMap::new(), &SCHEMA).unwrap().is_empty());
+        // 非法字段 → Err
+        assert_eq!(
+            filter_where(&map(&[("hack", "eq.x")]), &SCHEMA)
+                .unwrap_err()
+                .to_string(),
+            "filter_field_not_allowed"
+        );
+        // 正常筛选 → 表达式数量与条件一致
+        let exprs = filter_where(
+            &map(&[("name", "ilike.*张*"), ("amount", "gte.100")]),
+            &SCHEMA,
+        )
+        .unwrap();
+        assert_eq!(exprs.len(), 2);
+    }
+
+    #[test]
+    fn apply_order_maps_dirs_and_skips_empty() {
+        // 空子句：无 ORDER BY
+        let mut select = Query::select().column("id").from("customers").to_owned();
+        apply_order(&mut select, &[]);
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        assert!(sql.to_lowercase().find("order by").is_none());
+
+        // 排序子句 → ORDER BY f1 ASC, f2 DESC
+        let mut select = Query::select().column("id").from("customers").to_owned();
+        apply_order(
+            &mut select,
+            &[
+                ("name".to_string(), OrderDir::Asc),
+                ("id".to_string(), OrderDir::Desc),
+            ],
+        );
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        let lower = sql.to_lowercase();
+        assert!(lower.find("order by \"name\" asc, \"id\" desc").is_some());
+    }
+
+    #[test]
+    fn apply_search_builds_cursor_filters_and_order() {
+        // 一站式：游标 keyset + 筛选 + 排序一次装配（mutating 风格，调用方不再自行拼接）
+        let mut select = Query::select()
+            .column("id")
+            .from("customers")
+            .limit(10)
+            .to_owned();
+        apply_search(
+            &mut select,
+            &map(&[("amount", "gte.100")]),
+            Some("name.asc"),
+            &SCHEMA,
+            "customers",
+            Some(42),
+        )
+        .unwrap();
+        let (sql, values) = select.build(PostgresQueryBuilder);
+        let lower = sql.to_lowercase();
+        // 筛选
+        assert!(lower.find("\"amount\" >= ").is_some());
+        // 排序（name asc + id desc 尾缀）
+        assert!(lower.find("order by \"name\" asc, \"id\" desc").is_some());
+        // 游标 keyset（标量子查询）
+        assert!(
+            lower
+                .find("\"name\" > (select \"name\" from \"customers\" where \"id\" = ")
+                .is_some()
+        );
+        // 绑定参数：子查询键值×2 + 外层 id + 筛选值 + limit（sea-query limit 也走绑定）
+        assert_eq!(values.0.len(), 5);
     }
 
     #[test]
@@ -488,7 +817,7 @@ mod tests {
     #[test]
     fn to_sql_builds_select_with_conditions() {
         // 集成冒烟：完整 select 构建（sea_query 链）
-        let conds = parse(&map(&[("name", "ilike.*张*")]), &SCHEMA.allowed_fields()).unwrap();
+        let conds = parse(&map(&[("name", "ilike.*张*")]), &SCHEMA).unwrap();
         let exprs = to_sql(&conds, &SCHEMA);
         let select = Query::select()
             .column("id")
