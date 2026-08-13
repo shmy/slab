@@ -10,8 +10,9 @@
 //! order=name.asc,created_at.desc
 //! ```
 //!
-//! 分页游标：无排序时 id 游标（兼容现状）；有排序时复合游标
-//! `(sort_value, id)`，与排序方向一致（PostgREST 同款语义）。
+//! 分页游标：统一数字 id 游标（`id < cursor`，配合默认 `ORDER BY id DESC`）；
+//! 有排序时用 [`cursor_where`] 生成单字段 keyset 谓词（排序键值以标量子查询现取，
+//! 游标仍是不带排序信息的数字 id）。
 //!
 //! 字段/操作符白名单在解析期校验（防 SQL 注入）；SQL 生成由
 //! [`FilterSchema`] 声明驱动（text/date 列类型区分）。
@@ -25,7 +26,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Alias, Expr, ExprTrait as _, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait as _, Query, SimpleExpr};
 
 /// 筛选操作符（PostgREST 风格，值前缀）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,8 +245,38 @@ pub fn order_clauses(orders: &[OrderItem]) -> Vec<(String, OrderDir)> {
     clauses
 }
 
+/// 单字段 keyset 游标谓词（配合 [`order_clauses`] 使用；游标仍是统一数字 id）。
+///
+/// 排序键值用标量子查询现取，调用方无需回查游标行：
+/// ```text
+/// asc:  f >  (SELECT f FROM {table} WHERE id = c)
+///       OR (f = (SELECT f FROM {table} WHERE id = c) AND id < c)
+/// desc: 同上，首比较换 `<`
+/// ```
+///
+/// 语义 = 「游标行之后」继续分页，与 `ORDER BY f, id DESC` 完全一致。
+/// 列对列比较自动匹配类型（无需 cast）；排序键为 NULL（可空列）时该行不参与分页比较。
+pub fn cursor_where(table: &str, field: &str, dir: OrderDir, cursor_id: i64) -> SimpleExpr {
+    // 游标行的排序键值：`SELECT f FROM {table} WHERE id = cursor`
+    let key = || -> SimpleExpr {
+        Query::select()
+            .column(field.to_string())
+            .from(table.to_string())
+            .and_where(Expr::col("id").eq(cursor_id))
+            .to_owned()
+            .into()
+    };
+    let col = Expr::col(field.to_string());
+    let after = match dir {
+        OrderDir::Asc => col.clone().gt(key()),
+        OrderDir::Desc => col.clone().lt(key()),
+    };
+    after.or(col.eq(key()).and(Expr::col("id").lt(cursor_id)))
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use sea_query::{PostgresQueryBuilder, Query};
 
@@ -415,6 +446,43 @@ mod tests {
         assert_eq!(clauses.len(), 2);
         assert_eq!(clauses[0], ("name".to_string(), OrderDir::Asc));
         assert_eq!(clauses[1], ("id".to_string(), OrderDir::Desc));
+    }
+
+    #[test]
+    fn cursor_where_generates_keyset_predicate() {
+        // asc：f > (SELECT f ...) OR (f = (SELECT f ...) AND id < c)
+        let expr = cursor_where("customers", "name", OrderDir::Asc, 42);
+        let select = Query::select()
+            .column("id")
+            .from("customers")
+            .and_where(expr)
+            .to_owned();
+        let (sql, values) = select.build(PostgresQueryBuilder);
+        let lower = sql.to_lowercase();
+        assert!(
+            lower
+                .find("\"name\" > (select \"name\" from \"customers\" where \"id\" = $1)")
+                .is_some()
+        );
+        assert!(lower
+            .find("\"name\" = (select \"name\" from \"customers\" where \"id\" = $2) and \"id\" < $3")
+            .is_some());
+        // 三个参数：两个子查询键值 + 外层 id（列对列比较无需 cast）
+        assert_eq!(values.0.len(), 3);
+
+        // desc：首比较换 <
+        let expr = cursor_where("customers", "name", OrderDir::Desc, 7);
+        let select = Query::select()
+            .column("id")
+            .from("customers")
+            .and_where(expr)
+            .to_owned();
+        let (sql, _) = select.build(PostgresQueryBuilder);
+        assert!(
+            sql.to_lowercase()
+                .find("\"name\" < (select \"name\"")
+                .is_some()
+        );
     }
 
     #[test]

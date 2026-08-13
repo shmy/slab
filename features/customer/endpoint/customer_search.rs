@@ -81,17 +81,32 @@ async fn execute(
     let page_limit = query.paging.limit();
     let fetch_limit = page_limit + 1;
 
-    // 排序：用户 order（白名单校验）+ 默认 id desc；复合游标语义
+    // 排序：用户 order（白名单校验）+ 默认 id desc；只支持单字段（keyset 游标以首字段为基准）
     let orders = match query.order.as_deref() {
         Some(o) if !o.trim().is_empty() => {
             filter_kit::parse_order(o, &FILTER_SCHEMA.allowed_fields())?
         }
         _ => Vec::new(),
     };
+    // 多级 order 只取首字段（表头排序即单字段）
+    let orders = orders.into_iter().take(1).collect::<Vec<_>>();
     let order_clauses = if orders.is_empty() {
         vec![("id".to_string(), filter_kit::OrderDir::Desc)]
     } else {
         filter_kit::order_clauses(&orders)
+    };
+
+    // 游标分页谓词（keyset）：无排序 → `id < cursor`；有排序 → 单字段 keyset
+    // （filter_kit::cursor_where：排序键值标量子查询现取，游标仍是数字 id）
+    let cursor_filter = match (query.paging.cursor_id(), orders.is_empty()) {
+        (Some(cursor), true) => Some(Expr::col("id").lt(i64::from(*cursor))),
+        (Some(cursor), false) => Some(filter_kit::cursor_where(
+            "customers",
+            &order_clauses[0].0,
+            order_clauses[0].1,
+            i64::from(*cursor),
+        )),
+        (None, _) => None,
     };
 
     let mut select = Query::select()
@@ -110,7 +125,7 @@ async fn execute(
                 .or(Expr::col("phone").ilike(format!("%{q}%")))
                 .or(Expr::col("contact_person").ilike(format!("%{q}%")))
         }))
-        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
+        .and_where_option(cursor_filter)
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
         .limit(fetch_limit)
@@ -253,24 +268,64 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_sort_cursor_reset_on_order_change(pool: sqlx::PgPool) {
+    async fn test_order_cursor_keyset_pagination(pool: sqlx::PgPool) {
         seed(&pool).await;
+        // 追加 id=4：tsid 时间序与名称序错位（id 越大 name 越靠后的真实场景）
+        sqlx::query(
+            "INSERT INTO customers (id, code, name, contact_person, phone, is_active) VALUES
+             (4, 'C-004', '王五', '王五', '13700137001', true)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed extra customer");
         let state = testing::build(pool).await;
-        // 旧排序（name.asc）的复合游标 + 新排序（code.asc）→ 游标作废，从头查
-        let stale = r#"{"f":"name","d":"asc","v":"李娜","id":"2"}"#;
-        let result = execute(
+        // name asc（PG 字节序）：张伟(1) < 李娜(2) < 王五(4)
+        let page1 = execute(
             &state.pg_pool,
             SearchCustomerQuery {
-                paging: paging_with(20, Some(stale)),
+                paging: paging_with(1, None),
                 q: None,
-                order: Some("code.asc".into()),
+                order: Some("name.asc".into()),
                 filters: HashMap::new(),
             },
         )
         .await
         .unwrap();
-        // 从头返回全部 2 条（游标未生效）
-        assert_eq!(result.items.len(), 2);
+        assert_eq!(page1.items.len(), 1);
+        assert_eq!(page1.items[0].name, "张伟");
+        let cursor = page1.next_cursor.expect("has more");
+
+        // 页 2（cursor=1）：keyset = name > '张伟' OR (name = '张伟' AND id < 1) → 李娜
+        let page2 = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(1, Some(&cursor.to_string())),
+                q: None,
+                order: Some("name.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items[0].name, "李娜");
+        let cursor2 = page2.next_cursor.expect("has more");
+
+        // 页 3：王五（id=4 > 页 1 游标 id=1，旧的 `id < cursor` 过滤会把它永久丢掉）
+        let page3 = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(1, Some(&cursor2.to_string())),
+                q: None,
+                order: Some("name.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page3.items.len(), 1);
+        assert_eq!(page3.items[0].name, "王五");
+        assert!(page3.next_cursor.is_none());
     }
 
     #[sqlx::test]

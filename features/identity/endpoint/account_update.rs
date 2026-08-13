@@ -91,7 +91,6 @@ mod tests {
     use crate::repository::account_repository::AccountRepository;
     use crate::tests;
     use appctx::testing;
-    use identity_contract::error::IdentityError;
     use identity_contract::port::AccountPort;
     use migration::run_migrations;
 
