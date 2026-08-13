@@ -117,7 +117,6 @@ humantime = { version = "2.3", default-features = false }
 identity = { path = "features/identity" }
 identity_contract = { path = "features/identity_contract" }
 image_kit = { path = "libs/image_kit" }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
 imageformat = { version = "0.3", default-features = false }
 inventory_ledger = { path = "cross_domain/inventory_ledger" }
 ipnetwork = { version = "0.21", default-features = false }
@@ -188,6 +187,7 @@ serde_with = { version = "3.21", default-features = false, features = [
     "macros",
     "chrono_0_4",
 ] }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
 shared_contract = { path = "features/shared_contract" }
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",

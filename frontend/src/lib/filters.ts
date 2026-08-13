@@ -72,20 +72,25 @@ const PG_TO_OP: Record<string, string> = Object.fromEntries(
 /** PostgREST 操作符表：从长到短匹配前缀（ilike. 先于 eq. 等，避免子串误配） */
 const PG_OPS = ['ilike.', 'neq.', 'gte.', 'lte.', 'gt.', 'lt.', 'eq.'];
 
-/** 条件数组 → search 参数对象（字段 → `op.value`）；contains 值自动包 `*` 通配符 */
+/** 条件数组 → search 参数对象（字段 → `op.value`）。
+ * contains（ilike）：值不含通配符时自动包两侧（`*值*` = 包含）；
+ * 值已含 `*`（手工通配符，如 `11*`）则原样传递，不重复包装。 */
 export function serializeFilters(
   conditions: FilterCondition[],
 ): Record<string, string> {
   const params: Record<string, string> = {};
   for (const c of conditions) {
     const op = OP_TO_PG[c.op] ?? c.op;
-    const value = op === 'ilike' ? `*${c.value}*` : c.value;
+    const value =
+      op === 'ilike' && !c.value.includes('*') ? `*${c.value}*` : c.value;
     params[c.field] = `${op}.${value}`;
   }
   return params;
 }
 
-/** 路由 search 对象（URL 动态字段）→ FilterBar 条件数组；排除 `q`；ilike 值去两侧 `*` 还原 */
+/** 路由 search 对象（URL 动态字段）→ FilterBar 条件数组；排除 `q`。
+ * ilike 值：仅当首尾都是 `*`（自动包装形态 `*值*`）时去两侧还原；
+ * 单侧星号（如 `11*` 前缀匹配 / `*11` 后缀匹配）视为手工通配符，原样保留。 */
 export function parseFilters(
   search: Record<string, unknown>,
 ): FilterCondition[] {
@@ -99,7 +104,10 @@ export function parseFilters(
         out.push({
           field,
           op: PG_TO_OP[pg] ?? pg,
-          value: pg === 'ilike' ? value.replace(/^\*|\*$/g, '') : value,
+          value:
+            pg === 'ilike' && value.startsWith('*') && value.endsWith('*')
+              ? value.slice(1, -1)
+              : value,
         });
         break;
       }
