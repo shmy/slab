@@ -17,6 +17,7 @@ export interface CustomerPage {
 export function apiSearchCustomers(options: {
   q?: string;
   filters?: Record<string, string>;
+  order?: string;
   limit?: number;
   nextCursor?: string | null;
 }): Promise<CustomerPage> {
@@ -29,6 +30,7 @@ export function apiSearchCustomers(options: {
       limit: options.limit ?? 20,
       next_cursor: options.nextCursor ?? undefined,
       q: options.q,
+      order: options.order || undefined,
       ...options.filters,
     },
   }).then((res) => ({ items: res.items, nextCursor: res.next_cursor ?? null }));

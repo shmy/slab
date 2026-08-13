@@ -60,3 +60,21 @@ export function parseFilters(
   }
   return out;
 }
+
+/** TanStack SortingState ↔ URL order 串（`name.asc,created_at.desc`，与后端 parse_order 对齐） */
+export type Sorting = { id: string; desc: boolean }[];
+
+export function serializeSorting(sorting: Sorting): string {
+  return sorting.map((s) => `${s.id}.${s.desc ? 'desc' : 'asc'}`).join(',');
+}
+
+export function parseSorting(order: string): Sorting {
+  if (!order) return [];
+  const out: Sorting = [];
+  for (const part of order.split(',')) {
+    const [id, dir] = part.split('.');
+    if (!id) continue;
+    out.push({ id, desc: dir === 'desc' });
+  }
+  return out;
+}

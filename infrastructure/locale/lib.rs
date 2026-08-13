@@ -216,6 +216,14 @@ mod tests {
         // extract 层分类映射引用这些常量；只扫 web crate 路径，避免误捕其他 crate 的 &str 常量。
         let l10n_const_re = Regex::new(r#"pub const \w+: &str = "([a-z0-9_]+)";"#)
             .expect("compile l10n const regex");
+        // 内部库/内部基础设施错误（永远 500，不进 locale）：错误消息豁免检查
+        let is_internal = |p: &str| {
+            p.contains("libs/image_kit")
+                || p.contains("libs/authz_kit")
+                || p.contains("infrastructure/blob")
+                || p.contains("infrastructure/job_queue")
+        };
+
         let mut keys = HashSet::new();
         let mut violations = Vec::new();
 
@@ -227,7 +235,10 @@ mod tests {
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
                 {
-                    keys.insert(msg.to_string());
+                    let p = path.display().to_string();
+                    if !is_internal(&p) {
+                        keys.insert(msg.to_string());
+                    }
                 } else if msg.contains('{') {
                     let p = path.display().to_string();
                     if !p.contains("libs/image_kit") && !p.contains("libs/authz_kit") {
@@ -238,10 +249,7 @@ mod tests {
                 } else {
                     let p = path.display().to_string();
                     // 内部基础设施错误（永远 500，不进 locale）与内部库同款豁免。
-                    if p.contains("libs/image_kit")
-                        || p.contains("libs/authz_kit")
-                        || p.contains("infrastructure/blob")
-                    {
+                    if is_internal(&p) {
                         continue;
                     }
                     violations.push(format!(

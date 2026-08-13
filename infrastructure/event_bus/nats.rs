@@ -136,7 +136,8 @@ pub async fn connect(config: &NatsConfig) -> Result<JetStream> {
         subjects,
         storage: StorageType::File,
         retention: RetentionPolicy::Limits,
-        max_bytes: 10 * 1024 * 1024 * 1024, // 10GB
+        max_bytes: 512 * 1024 * 1024,
+        max_age: Duration::from_hours(7 * 24),
         allow_message_schedules: true,
         allow_message_ttl: true,
         ..Default::default()

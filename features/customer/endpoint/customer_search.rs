@@ -1,11 +1,10 @@
 use axum::extract::State;
 use db::PgPool;
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Alias, Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder as _;
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
-use shared_contract::query::cursor_page::finalize_cursor_page;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -17,8 +16,12 @@ use validify::Validify;
 use web::extract::valid_query::ValidQuery;
 use web::response::json_response::{JsonResponse, JsonResponseType};
 
-/// 可筛字段白名单（filter_kit 解析期校验；condition_to_sql 的 match 与它保持一致）
-const ALLOWED_FILTER_FIELDS: [&str; 5] = ["code", "name", "phone", "contact_person", "created_at"];
+/// 可筛/可排字段声明（text 支持 eq/ilike；date 支持 gt/gte/lt/lte，自动 cast）。
+/// 白名单与 SQL 生成同源（filter_kit::FilterSchema），不会不一致。
+const FILTER_SCHEMA: filter_kit::FilterSchema = filter_kit::FilterSchema {
+    text_fields: &["code", "name", "phone", "contact_person"],
+    date_fields: &["created_at"],
+};
 
 #[serde_as]
 #[derive(Debug, Deserialize, Validify, IntoParams)]
@@ -30,6 +33,9 @@ pub(crate) struct SearchCustomerQuery {
     #[serde_as(as = "NoneAsEmptyString")]
     #[serde(default)]
     pub q: Option<String>,
+    /// PostgREST 风格排序：`name.asc,created_at.desc`（逗号分隔多级；含 id 稳定二级排序）
+    #[serde(default)]
+    pub order: Option<String>,
     /// PostgREST 风格筛选（flatten 收集除分页/搜索词外的所有参数）：
     /// `name=ilike.*张*&created_at=gt.2024-03-15`（多参数天然 AND）
     #[serde(flatten)]
@@ -43,6 +49,10 @@ pub(crate) struct SearchCustomerItem {
     pub code: String,
     pub name: String,
     pub is_active: bool,
+    /// 以下字段供排序游标取「最后一条的排序键值」（列表页详情抽屉也需要）
+    pub phone: Option<String>,
+    pub contact_person: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[utoipa::path(
@@ -60,37 +70,16 @@ pub(crate) async fn handler(
     JsonResponse::ok(response)
 }
 
-/// 条件 → SQL 表达式：字段名走 match 字面量（'static）进 `Expr::col`，杜绝 SQL 注入。
-/// 字段白名单已由 filter_kit 解析期校验；此处仅做类型安全映射，未覆盖的组合（如
-/// `created_at=ilike.*`）直接忽略。
-fn condition_to_sql(cond: &filter_kit::Condition) -> Option<SimpleExpr> {
-    use filter_kit::Op;
-
-    let text_col: Option<&'static str> = match cond.field.as_str() {
-        "code" => Some("code"),
-        "name" => Some("name"),
-        "phone" => Some("phone"),
-        "contact_person" => Some("contact_person"),
-        _ => None,
-    };
-    let expr = match (text_col, cond.op) {
-        // PostgREST 通配符语义：* = 任意字符（→ SQL %），_ 单字符保留；contains 序列化为 *值* 自动成 %值%
-        (Some(col), Op::Ilike) => Expr::col(col).ilike(cond.value.replace('*', "%")),
-        (Some(col), Op::Eq) => Expr::col(col).eq(cond.value.as_str()),
-        (None, _) if cond.field == "created_at" => {
-            // 值类型为日期串，显式 cast 避免 `timestamptz > text` 报错
-            let val = Expr::val(cond.value.as_str()).cast_as(Alias::new("timestamptz"));
-            match cond.op {
-                Op::Gt => Expr::col("created_at").gt(val),
-                Op::Gte => Expr::col("created_at").gte(val),
-                Op::Lt => Expr::col("created_at").lt(val),
-                Op::Lte => Expr::col("created_at").lte(val),
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-    Some(expr)
+/// 排序值提取：取最后一条的排序键值（游标用）
+fn sort_value(item: &SearchCustomerItem, field: &str) -> String {
+    match field {
+        "code" => item.code.clone(),
+        "name" => item.name.clone(),
+        "phone" => item.phone.clone().unwrap_or_default(),
+        "contact_person" => item.contact_person.clone().unwrap_or_default(),
+        "created_at" => item.created_at.to_rfc3339(),
+        _ => String::new(),
+    }
 }
 
 #[tracing::instrument(skip_all)]
@@ -102,12 +91,35 @@ async fn execute(
     let q = query.q.filter(|s| !s.is_empty());
     let page_limit = query.paging.limit();
     let fetch_limit = page_limit + 1;
+
+    // 排序：用户 order（白名单校验）+ 默认 id desc；复合游标语义
+    let orders = match query.order.as_deref() {
+        Some(o) if !o.trim().is_empty() => {
+            filter_kit::parse_order(o, &FILTER_SCHEMA.allowed_fields())?
+        }
+        _ => Vec::new(),
+    };
+    let order_clauses = if orders.is_empty() {
+        vec![("id".to_string(), filter_kit::OrderDir::Desc)]
+    } else {
+        filter_kit::order_clauses(&orders)
+    };
+
+    // 游标：无排序 = id 游标；有排序 = 复合 (sort_value, id)；排序变化则旧游标作废（从头查）
+    let cursor = match query.paging.next_cursor_str() {
+        Some(raw) => filter_kit::decode_cursor(raw, &orders)?,
+        None => None,
+    };
+
     let mut select = Query::select()
         .from("customers")
         .column("id")
         .column("code")
         .column("name")
         .column("is_active")
+        .column("phone")
+        .column("contact_person")
+        .column("created_at")
         .and_where_option(q.map(|q| {
             Expr::col("code")
                 .ilike(format!("%{q}%"))
@@ -115,28 +127,60 @@ async fn execute(
                 .or(Expr::col("phone").ilike(format!("%{q}%")))
                 .or(Expr::col("contact_person").ilike(format!("%{q}%")))
         }))
-        .and_where_option(query.paging.next_cursor().map(|c| Expr::col("id").lt(c)))
+        // 筛选条件（字段白名单 + 类型映射由 filter_kit 保证）
+        .and_where_option(
+            cursor
+                .as_ref()
+                .and_then(|c| filter_kit::cursor_where(c, &FILTER_SCHEMA)),
+        )
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
-        .order_by("id", Order::Desc)
         .limit(fetch_limit)
         .to_owned();
 
-    // PostgREST 风格解析 + 白名单校验（未知字段/语法错误 → 400，key 见 shared.ftl）
-    let conditions = filter_kit::parse(&query.filters, &ALLOWED_FILTER_FIELDS)?;
-
-    for cond in &conditions {
-        if let Some(expr) = condition_to_sql(cond) {
-            select.and_where(expr);
-        }
+    // 筛选 + 排序
+    let conditions = filter_kit::parse(&query.filters, &FILTER_SCHEMA.allowed_fields())?;
+    for expr in filter_kit::to_sql(&conditions, &FILTER_SCHEMA) {
+        select.and_where(expr);
+    }
+    for (field, dir) in &order_clauses {
+        select.order_by(
+            field.to_string(),
+            match dir {
+                filter_kit::OrderDir::Asc => Order::Asc,
+                filter_kit::OrderDir::Desc => Order::Desc,
+            },
+        );
     }
 
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
     let mut conn = pg_pool.acquire().await?;
-    let items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
+    let mut items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
         .fetch_all(&mut *conn)
         .await?;
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+
+    // 游标编码：多取一条 → 返回列表末条的排序键 + id（pop 掉的是超取的那条，不是基准）。
+    // has_more 保证末条存在；用 map 表达 Option 语义（None 分支实际不会走到）
+    let has_more = items.len() > page_limit as usize;
+    let next_cursor = if has_more {
+        items.pop();
+        items.last().map(|last| {
+            let id = last.id.to_string();
+            match orders.first() {
+                Some(order) => filter_kit::encode_cursor(&filter_kit::Cursor::Composite {
+                    field: order.field.clone(),
+                    dir: order.dir,
+                    value: sort_value(last, &order.field),
+                    id,
+                }),
+                None => id,
+            }
+        })
+    } else {
+        None
+    };
+
+    Ok(CursorPagingResult { items, next_cursor })
 }
 
 #[cfg(test)]
@@ -163,6 +207,7 @@ mod tests {
         SearchCustomerQuery {
             paging: CursorPagingQuery::default(),
             q: None,
+            order: None,
             filters: filters
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -221,6 +266,115 @@ mod tests {
         assert!(msg.find("invalid_filter_syntax").is_some());
     }
 
+    fn paging_with(limit: u64, cursor: Option<&str>) -> CursorPagingQuery {
+        let mut obj = serde_json::json!({ "limit": limit });
+        if let Some(c) = cursor {
+            obj["next_cursor"] = serde_json::json!(c);
+        }
+        serde_json::from_value(obj).unwrap()
+    }
+
+    #[sqlx::test]
+    async fn test_order_by_name_asc(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        let state = testing::build(pool).await;
+        let result = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(20, None),
+                q: None,
+                order: Some("name.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        // 2 条 active：PG text 按字节序，张(e5) < 李(e6)，name asc → 张伟在前
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].name, "张伟");
+        assert_eq!(result.items[1].name, "李娜");
+    }
+
+    #[sqlx::test]
+    async fn test_sort_cursor_pagination(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        let state = testing::build(pool).await;
+        // 页 1：limit=1，name asc（字节序）→ 张伟
+        let page1 = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(1, None),
+                q: None,
+                order: Some("name.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page1.items.len(), 1);
+        assert_eq!(page1.items[0].name, "张伟");
+        let cursor = page1.next_cursor.expect("has more");
+        assert!(cursor.starts_with('{')); // 复合游标（JSON）
+
+        // 页 2：复合游标 → 李娜
+        let page2 = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(1, Some(&cursor)),
+                q: None,
+                order: Some("name.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items[0].name, "李娜");
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[sqlx::test]
+    async fn test_sort_cursor_reset_on_order_change(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        let state = testing::build(pool).await;
+        // 旧排序（name.asc）的复合游标 + 新排序（code.asc）→ 游标作废，从头查
+        let stale = r#"{"f":"name","d":"asc","v":"李娜","id":"2"}"#;
+        let result = execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(20, Some(stale)),
+                q: None,
+                order: Some("code.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        .unwrap();
+        // 从头返回全部 2 条（游标未生效）
+        assert_eq!(result.items.len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn test_unknown_order_field_rejected(pool: sqlx::PgPool) {
+        seed(&pool).await;
+        let state = testing::build(pool).await;
+        let err = match execute(
+            &state.pg_pool,
+            SearchCustomerQuery {
+                paging: paging_with(20, None),
+                q: None,
+                order: Some("hack.asc".into()),
+                filters: HashMap::new(),
+            },
+        )
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.to_string().find("filter_field_not_allowed").is_some());
+    }
+
     #[sqlx::test]
     async fn test_q_matches_phone(pool: sqlx::PgPool) {
         seed(&pool).await;
@@ -230,6 +384,7 @@ mod tests {
             SearchCustomerQuery {
                 paging: CursorPagingQuery::default(),
                 q: Some("13900139000".into()),
+                order: None,
                 filters: HashMap::new(),
             },
         )

@@ -43,6 +43,9 @@ interface DataTableProps<T extends RowData> {
   loadingMore?: boolean;
   /** 选择列（全选表头 + 行复选框）；选中状态在表格内部，批量操作按需扩展 */
   selectable?: boolean;
+  /** 受控排序（服务端排序：URL 驱动） */
+  sorting?: { id: string; desc: boolean }[];
+  onSortingChange?: (updater: unknown) => void;
 }
 
 // 只注册用到的 feature：排序 + 固定列 + 行选择（pinning 前置依赖 sizing）
@@ -85,6 +88,8 @@ export function DataTable<T extends RowData>({
   onLoadMore,
   loadingMore,
   selectable = false,
+  sorting,
+  onSortingChange,
 }: DataTableProps<T>) {
   const columnHelper = useMemo(
     () => createColumnHelper<typeof features, T>(),
@@ -155,6 +160,8 @@ export function DataTable<T extends RowData>({
       getRowId={getRowId}
       onLoadMore={onLoadMore}
       loadingMore={loadingMore}
+      sorting={sorting}
+      onSortingChange={onSortingChange}
     />
   );
 }

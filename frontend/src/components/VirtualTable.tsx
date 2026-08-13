@@ -7,6 +7,7 @@ import {
   type ColumnDef,
   type ReactTable,
   type RowData,
+  type SortingState,
   type TableFeatures,
   type TableOptions,
   useTable,
@@ -29,6 +30,10 @@ export interface VirtualTableProps<TData extends RowData> {
   initialState?: TableOptions<any, TData>['initialState'];
   /** 排序点击循环是否可移除（默认 false：asc ↔ desc 循环） */
   enableSortingRemoval?: boolean;
+  /** 受控排序状态（服务端排序：由 URL order 驱动；传则表头点击走 onSortingChange 而非内部状态） */
+  sorting?: SortingState;
+  /** 排序状态变化回调（服务端排序时接到 URL） */
+  onSortingChange?: TableOptions<any, TData>['onSortingChange'];
   /** 吸收剩余空间撑满容器的列 id（flexGrow），如 'email' */
   growColumnId?: string;
   /** 稳定行 ID（行选择等依赖），如 (row) => String(row.id) */
@@ -122,6 +127,8 @@ export function VirtualTable<TData extends RowData>({
   data,
   initialState,
   enableSortingRemoval = false,
+  sorting,
+  onSortingChange,
   growColumnId,
   getRowId,
   onLoadMore,
@@ -139,6 +146,8 @@ export function VirtualTable<TData extends RowData>({
     enableSortingRemoval,
     initialState,
     getRowId,
+    // 服务端排序：受控 sorting（URL 驱动）；不传则表格内部状态（客户端排序）
+    ...(sorting !== undefined ? { state: { sorting }, onSortingChange } : {}),
   });
 
   const rows = table.getRowModel().rows;

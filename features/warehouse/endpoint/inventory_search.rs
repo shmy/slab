@@ -64,7 +64,7 @@ async fn execute(
         .expr(Expr::cust("CAST(quantity AS DOUBLE PRECISION)"))
         .expr(Expr::cust("CAST(locked_qty AS DOUBLE PRECISION)"))
         .and_where_option(query.warehouse_id.map(|w| Expr::col("warehouse_id").eq(w)))
-        .and_where_option(query.paging.next_cursor().map(|c| Expr::col("id").lt(c)))
+        .and_where_option(query.paging.next_cursor_id().map(|c| Expr::col("id").lt(c)))
         .order_by("id", Order::Desc)
         .limit(fetch_limit)
         .build_sqlx(PostgresQueryBuilder);

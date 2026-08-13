@@ -96,7 +96,7 @@ async fn execute(
         .and_where_option(
             query
                 .paging
-                .next_cursor()
+                .next_cursor_id()
                 .map(|cursor| Expr::col(("audit_logs", "id")).lt(cursor)),
         )
         // 单键排序：id 是应用生成的 tsid，单调递增，天然等同时序

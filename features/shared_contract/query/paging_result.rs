@@ -1,4 +1,3 @@
-use crate::value_object::id::ID;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -18,5 +17,5 @@ where
     T: Serialize + ToSchema,
 {
     pub items: Vec<T>,
-    pub next_cursor: Option<ID>,
+    pub next_cursor: Option<String>,
 }

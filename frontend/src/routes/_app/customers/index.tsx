@@ -46,7 +46,12 @@ import {
   type CustomerDetail,
   type CustomerItem,
 } from '@/lib/customers';
-import { parseFilters, serializeFilters } from '@/lib/filters';
+import {
+  parseFilters,
+  parseSorting,
+  serializeFilters,
+  serializeSorting,
+} from '@/lib/filters';
 import { cn, maskPhone } from '@/lib/utils';
 
 // 路由 search 校验：筛选状态唯一事实源（URL）。PostgREST 风格——每个字段独立参数
@@ -144,6 +149,22 @@ function CustomersPage() {
     return rest;
   }, [search]);
 
+  // 服务端排序：URL order 串 ↔ TanStack SortingState；表头点击 → URL → 重查（游标自动重置）
+  const sorting = useMemo(
+    () => parseSorting(search.order ?? ''),
+    [search.order],
+  );
+  const handleSortingChange = useCallback(
+    (updater: unknown) => {
+      const next =
+        typeof updater === 'function'
+          ? (updater as (s: typeof sorting) => typeof sorting)(sorting)
+          : (updater as typeof sorting);
+      updateSearch({ order: serializeSorting(next) });
+    },
+    [sorting, updateSearch],
+  );
+
   // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加；
   // queryKey 含 q + 筛选字段：任一变化即换一批数据
   const customersQuery = useInfiniteQuery({
@@ -152,6 +173,7 @@ function CustomersPage() {
       apiSearchCustomers({
         q: search.q || undefined,
         filters: filterParams,
+        order: search.order,
         limit: PAGE_SIZE,
         nextCursor: pageParam,
       }),
@@ -347,6 +369,8 @@ function CustomersPage() {
               : undefined
           }
           loadingMore={isFetchingNextPage}
+          sorting={sorting}
+          onSortingChange={handleSortingChange}
         />
       )}
 
