@@ -107,14 +107,14 @@ login.tsx（validateSearch 解析 redirect + sanitizeRedirect 防开放重定向
 
 ### 令牌生命周期（`src/lib/api.ts` + `src/lib/token.ts`）
 
-- `token.ts`：纯本地存储（`auth.tokens` / `auth.user` 两个 key）+ JWT payload 解码；auth store 与 api 层共用，无 UI 依赖
-- `api.ts`（xior）：请求自动附 `Authorization: Bearer`；**401 → 单飞刷新**（并发 401 只发一次 `/refresh`，其余等待同一结果）→ 重试原请求一次；刷新失败或重试仍 401 → 清会话 + 整页跳 `/login?redirect=...`
+- `token.ts`：纯本地存储（`auth.tokens` / `auth.user` 两个 key）；不在前端解码 JWT，auth store 与 api 层共用，无 UI 依赖
+- `api.ts`（xior）：请求自动附 `Authorization: Bearer`；**401 → 同标签页/跨标签页单飞刷新**（并发 401 只发一次 `/refresh`，其余等待同一结果），支持 Web Locks；不支持 Web Locks 时用 BroadcastChannel 广播意图并确定性选举唯一刷新者，localStorage 仅传递状态、不作为非原子互斥锁；并在 401 到达时比较已发送的 access token，避免延迟 401 重复消费轮换 refresh token；刷新后只重试原请求一次；刷新失败或重试仍 401 → 清会话 + 整页跳 `/login?redirect=...`
 - 登录/刷新接口自身的 401 不触发刷新循环（白名单 `AUTH_PATHS`）
 - 登录成功流程：`/login` 拿令牌 → **先存令牌** → `/profile/current` 自省（Bearer 取账号）→ 存用户 → store 更新；profile 失败 → 清令牌、登录失败（不留半状态）
 - 页面加载（hydrate）：有令牌 → 主动 fetch `/profile/current` 更新用户（改名/权限即时生效；401 由 api 层自动刷新，刷新失败强制登出回登录页）
-- 刷新（401 单飞）成功后：后台同步用户缓存（`saveUser`），不阻塞请求返回；UI store 由登录/加载时设定
+- 刷新（401 单飞）成功后：只更新令牌并重试原请求；不额外请求 profile，避免刷新风暴和重复请求。用户资料由登录/页面 hydrate 获取；跨标签页登录通过 `USER_KEY` 事件同步
 - **forceLogout 短路**：已在 `/login` 页（主动登出后 in-flight 请求 401）只清状态、不整页刷新，避免丢表单
-- 跨标签页：监听 `storage` 事件——他页登出（令牌清空）→ 本页登出；他页更新 user 缓存 → 同步 store；他页换令牌 → 重新 hydrate
+- 跨标签页：监听 `storage` 事件——他页登出（令牌清空）→ 本页登出；他页更新 user 缓存 → 同步 store；他页刷新令牌仅更新本地令牌，不触发额外 profile 请求
 - 登出：**sendBeacon POST**（sendBeacon 无法设置请求头且实测无论有无 body 都发 POST，故令牌走 query `?access_token=`）→ **`localStorage.clear()` 全量清空**（含主题/字号/侧边栏偏好）→ store 置空。401 强制登出（`forceLogout`）只清 auth 两个 key，不动偏好
 - 守卫用 store 直接读取（模块级单例），未用 router context 注入（纯 CSR 场景功能等价且 router 从不重建）
 

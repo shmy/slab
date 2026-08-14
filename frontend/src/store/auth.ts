@@ -50,9 +50,6 @@ window.addEventListener('storage', (event) => {
   } else if (event.key === USER_KEY) {
     // 用户缓存被更新（他页登录/刷新）→ 同步 store
     authStore.setState(() => ({ user: loadUser() }));
-  } else {
-    // 令牌被更新 → 拉最新用户
-    hydrateUser();
   }
 });
 

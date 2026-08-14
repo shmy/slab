@@ -34,7 +34,7 @@ Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (
 - **Layout** (`src/routes/_app.tsx`): login guard (`beforeLoad`) + sidebar + header (breadcrumbs) + `PageTabs` + `KeepAliveOutlet`.
 - **Multi-tabs**: `src/store/tabs.ts` (session store) + `src/components/PageTabs.tsx`. Home tab `/` is pinned: not closable, no context menu.
 - **Keep-alive**: `src/components/keep-alive.tsx` — `KeepAliveProvider` (root) + `KeepAliveOutlet` (replaces `<Outlet />` in layout). A page opts in with `staticData: { keepAlive: true }` in its route options. PageTabs calls `useKeepAlive()`'s `destroy`/`refresh` when closing/refreshing tabs.
-- **Auth**: `src/lib/api.ts`（xior，自动附 Bearer，401 单飞刷新，Problem Details 归一化）+ `src/lib/token.ts`（localStorage 令牌/用户）+ `src/store/auth.ts`（react-store）。登录/页面加载时先 fetch `GET /profile/current` 再存用户（不解码 JWT）。dev 代理 `/api` → `http://127.0.0.1:8081`（rsbuild.config.ts `server.proxy`）。
+- **Auth**: `src/lib/api.ts`（xior，自动附 Bearer，401 同/跨标签页单飞刷新、旧 access token 防重复刷新，Problem Details 归一化）+ `src/lib/token.ts`（localStorage 令牌/用户）+ `src/store/auth.ts`（react-store）。登录/页面加载时先 fetch `GET /profile/current` 再存用户（不解码 JWT）；刷新成功只重试原请求，不额外请求 profile。dev 代理 `/api` → `http://127.0.0.1:8081`（rsbuild.config.ts `server.proxy`）。
 - **Backend contract**（对接后端时按此顺序，避免逐个读 Rust 源码；细节见 `docs/architecture.md` §8）：
   1. `openapi.json`（契约快照，`pnpm gen:api` 直拉后端原生 `/openapi.json`）
   2. `src/lib/api-schema.d.ts`（由 spec 生成的类型，api.ts 已引用 `components['schemas'][...]`；重新生成命令见 §8）
