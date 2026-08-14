@@ -187,7 +187,6 @@ serde_with = { version = "3.21", default-features = false, features = [
     "macros",
     "chrono_0_4",
 ] }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
 shared_contract = { path = "features/shared_contract" }
 sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
