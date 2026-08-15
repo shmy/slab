@@ -4,11 +4,10 @@ use web::extract::valid_query::ValidQuery;
 use web::response::json_response::{JsonResponse, JsonResponseType};
 
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder as _;
+use sea_query::{Expr, ExprTrait as _, Query};
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
-use shared_contract::query::cursor_page::finalize_cursor_page;
+use shared_contract::query::cursor_page::paginate;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -66,32 +65,22 @@ async fn execute(
 ) -> rootcause::Result<CursorPagingResult<SearchAccountItem>> {
     let SearchAccountQuery { paging, q, .. } = query;
     let q = q.filter(|s| !s.is_empty());
-    let input_next_cursor = paging.cursor_id();
-    let page_limit = paging.limit();
 
-    let (sql, values) = {
-        Query::select()
-            .from("accounts")
-            .column("id")
-            .column("name")
-            .column("phone")
-            .column("privileged")
-            .and_where_option(q.map(|q| {
-                Expr::col("phone")
-                    .ilike(format!("%{q}%"))
-                    .or(Expr::col("name").ilike(format!("%{q}%")))
-            }))
-            .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(*next_cursor)))
-            .order_by("id", Order::Desc)
-            .limit(paging.fetch_limit())
-            .build_sqlx(PostgresQueryBuilder)
-    };
+    let select = Query::select()
+        .from("accounts")
+        .column("id")
+        .column("name")
+        .column("phone")
+        .column("privileged")
+        .and_where_option(q.map(|q| {
+            Expr::col("phone")
+                .ilike(format!("%{q}%"))
+                .or(Expr::col("name").ilike(format!("%{q}%")))
+        }))
+        .to_owned();
 
     let mut conn = pg_pool.acquire().await?;
-    let items: Vec<SearchAccountItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-        .fetch_all(&mut *conn)
-        .await?;
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+    paginate(&mut conn, select, &paging, "id").await
 }
 
 #[cfg(test)]

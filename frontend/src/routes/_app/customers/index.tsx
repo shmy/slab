@@ -46,8 +46,9 @@ import {
   type CustomerDetail,
   type CustomerItem,
 } from '@/lib/customers';
+import { type CustomerFilterField, filterSchemas } from '@/lib/filter-schema';
 import {
-  type FilterFieldConfig,
+  type FilterLabel,
   parseFilters,
   serializeFilters,
 } from '@/lib/filters';
@@ -65,14 +66,15 @@ export const Route = createFileRoute('/_app/customers/')({
 
 type CustomerSearch = z.infer<typeof customerSearchSchema>;
 
-// 可筛字段注册表（后端白名单：code/name/phone/contact_person + created_at；加字段 = 加一行，
-// 操作符集由字段类型自动映射，见 lib/filters.ts TYPE_OPERATORS）
-const FILTER_FIELDS: FilterFieldConfig[] = [
-  { id: 'name', label: '名称', type: 'text', placeholder: '客户名称' },
-  { id: 'code', label: '编码', type: 'text', placeholder: '客户编码' },
-  { id: 'phone', label: '电话', type: 'text', placeholder: '手机号片段' },
-  { id: 'created_at', label: '创建时间', type: 'date' },
-];
+// 可筛字段文案（字段集合/类型/操作符来自契约 filterSchemas.customer；
+// `satisfies Record<CustomerFilterField, ...>` 编译期强制：后端加字段未补文案 → tsc 报错）
+const CUSTOMER_FILTER_LABELS = {
+  code: { label: '编码', placeholder: '客户编码' },
+  name: { label: '名称', placeholder: '客户名称' },
+  phone: { label: '电话', placeholder: '手机号片段' },
+  contact_person: { label: '联系人', placeholder: '联系人姓名' },
+  created_at: { label: '创建时间' },
+} satisfies Record<CustomerFilterField, FilterLabel>;
 
 type EditorState =
   | { mode: 'create'; customer: null }
@@ -275,7 +277,8 @@ function CustomersPage() {
       <FilterBar
         q={search.q ?? ''}
         filters={filterConditions}
-        fields={FILTER_FIELDS}
+        schema={filterSchemas.customer}
+        labels={CUSTOMER_FILTER_LABELS}
         placeholder="搜索名称/编码/电话/联系人…"
         onQChange={(q) => updateSearch({ q })}
         onFiltersChange={(conditions) =>

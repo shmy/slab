@@ -10,6 +10,7 @@ mod api_doc;
 mod cli;
 mod config;
 mod internal_jobs;
+mod meta;
 mod metrics;
 mod modules;
 mod router;

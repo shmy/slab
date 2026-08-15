@@ -79,14 +79,16 @@
 // }
 
 // ====================================================================
-// Pattern B: 列表+搜索（GET with SeaQuery）
-// 参考: features/identity/endpoint/account_search.rs
+// Pattern B: 列表+搜索（GET with SeaQuery + keyset 游标分页）
+// 参考: features/identity/endpoint/account_search.rs（快路径）
+//       features/audit/endpoint/audit_search.rs（LEFT JOIN + 映射闭包）
+// 分页由 shared_contract::query::cursor_page 深模块接管：keyset 条件 / ORDER BY id
+// DESC / LIMIT limit+1 / has_more / next_cursor 全部在接缝后，端点只声明列与业务筛选。
 // ====================================================================
 // -- 取消下面的注释块使用 --
-// use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-// use sea_query_sqlx::SqlxBinder as _;
+// use sea_query::{Expr, ExprTrait as _, Query};
 // use serde_with::{NoneAsEmptyString, serde_as};
-// use shared_contract::query::cursor_page::finalize_cursor_page;
+// use shared_contract::query::cursor_page::paginate;
 // use shared_contract::query::paging_query::CursorPagingQuery;
 // use shared_contract::query::paging_result::CursorPagingResult;
 // #[serde_as]
@@ -129,27 +131,24 @@
 //     -> rootcause::Result<CursorPagingResult<SearchItem>>
 // {
 //     let q = query.q.filter(|s| !s.is_empty());
-//     let page_limit = query.paging.limit();
-//     let fetch_limit = page_limit + 1;
-//     let (sql, values) = {
-//         Query::select()
-//             .from("resources")  // 替换表名
-//             .columns([/* 列名 */])
-//             .and_where_option(q.map(|q| {
-//              Expr::col("name")
-//                  .ilike(format!("%{q}%"))
-//                  .or(Expr::col("phone").ilike(format!("%{q}%")))
-//        }))
-//             .and_where_option(query.paging.next_cursor().map(|c| Expr::col("id").lt(c)))
-//             .order_by("id", Order::Desc)
-//             .limit(fetch_limit)
-//             .build_sqlx(PostgresQueryBuilder)
-//     };
+//
+//     let select = Query::select()
+//         .from("resources")  // 替换表名
+//         .columns([/* 列名 */])
+//         .and_where_option(q.map(|q| {
+//             Expr::col("name")
+//                 .ilike(format!("%{q}%"))
+//                 .or(Expr::col("phone").ilike(format!("%{q}%")))
+//         }))
+//         .to_owned();
+//
 //     let mut conn = pg_pool.acquire().await?;
-//     let items: Vec<SearchItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-//         .fetch_all(&mut *conn).await?;
-//     Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+//     paginate(&mut *conn, select, &query.paging, "id").await
 // }
+//
+// // LEFT JOIN / 派生字段（如变更历史 diff）用 paginate_with，游标列须限定：
+// //   paginate_with(&mut *conn, select, &query.paging, ("t", "id"), |row: (i64, ...)| Ok((item, ID::from(row.0))))
+
 
 // ====================================================================
 // Pattern C: 读单条（GET by ID，通过 Port）

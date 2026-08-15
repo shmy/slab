@@ -62,6 +62,12 @@ pub fn build(state: AppCtx, request_timeout: Duration, scalar_ui_enabled: bool) 
         }),
     );
 
+    // 筛选协议元数据（前端 gen:api 拉取 → 生成 src/lib/filter-schema.ts）
+    router = router.route(
+        "/api/v1/meta/filter-schemas",
+        axum::routing::get(|| async { crate::meta::handler() }),
+    );
+
     if scalar_ui_enabled {
         router = router
             .merge(utoipa_scalar::Scalar::with_url("/scalar", open_api).custom_html(CUSTOM_HTML));

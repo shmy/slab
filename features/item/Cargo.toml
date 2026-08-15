@@ -17,7 +17,6 @@ item_contract = { workspace = true }
 module = { workspace = true }
 rootcause = { workspace = true }
 sea-query = { workspace = true }
-sea-query-sqlx = { workspace = true }
 serde = { workspace = true }
 serde_with = { workspace = true }
 shared_contract = { workspace = true }

@@ -29,31 +29,19 @@ pub struct CursorPagingQuery {
 impl CursorPagingQuery {
     const DEFAULT_LIMIT: i64 = 10;
 
-    /// 数字游标（id 分页）
-    pub fn cursor_id(&self) -> Option<ID> {
+    /// 数字游标（id 分页）；仅分页模块内部消费（keyset 子句由 [`super::cursor_page`] 追加）
+    pub(crate) fn cursor_id(&self) -> Option<ID> {
         self.cursor
     }
 
-    pub fn limit(&self) -> u64 {
+    pub(crate) fn limit(&self) -> u64 {
         self.limit.unwrap_or(Self::DEFAULT_LIMIT).clamp(1, 100) as u64
-    }
-
-    /// 每页实际取 limit+1 条：多取一条判定 has_more（[`finalize_cursor_page`] 弹掉多余行）
-    pub fn fetch_limit(&self) -> u64 {
-        self.limit() + 1
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fetch_limit_is_limit_plus_one() {
-        let q: CursorPagingQuery = serde_json::from_str(r#"{"limit":"12"}"#).unwrap();
-        assert_eq!(q.limit(), 12);
-        assert_eq!(q.fetch_limit(), 13);
-    }
 
     #[test]
     fn cursor_paging_empty_limit_string() {

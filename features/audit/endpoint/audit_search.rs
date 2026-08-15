@@ -4,10 +4,9 @@ use crate::diff::{ChangeField, json_diff};
 use axum::extract::State;
 use chrono::{DateTime, Utc};
 use db::PgPool;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder as _;
+use sea_query::{Expr, ExprTrait as _, Query};
 use serde::{Deserialize, Serialize};
-use shared_contract::query::cursor_page::finalize_cursor_page;
+use shared_contract::query::cursor_page::paginate_with;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -76,9 +75,7 @@ async fn execute(
     pg_pool: &PgPool,
     query: SearchAuditQuery,
 ) -> rootcause::Result<CursorPagingResult<AuditLogItem>> {
-    let page_limit = query.paging.limit();
-
-    let (sql, values) = Query::select()
+    let select = Query::select()
         .column(("audit_logs", "id"))
         .column(("audit_logs", "before"))
         .column(("audit_logs", "after"))
@@ -92,27 +89,18 @@ async fn execute(
         )
         .and_where(Expr::col(("audit_logs", "entity")).eq(&query.entity))
         .and_where(Expr::col(("audit_logs", "entity_id")).eq(*query.entity_id))
-        .and_where_option(
-            query
-                .paging
-                .cursor_id()
-                .map(|cursor| Expr::col(("audit_logs", "id")).lt(*cursor)),
-        )
-        // 单键排序：id 是应用生成的 tsid，单调递增，天然等同时序
-        .order_by(("audit_logs", "id"), Order::Desc)
-        .limit(query.paging.fetch_limit())
-        .build_sqlx(PostgresQueryBuilder);
+        .to_owned();
 
     let mut conn = pg_pool.acquire().await?;
-    let rows: Vec<AuditLogRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-        .fetch_all(&mut *conn)
-        .await?;
-
-    let items = rows
-        .into_iter()
-        .map(
-            |(id, before, after, operator_id, operator_name, created_at)| {
-                rootcause::Result::<AuditLogItem>::Ok(AuditLogItem {
+    paginate_with(
+        &mut conn,
+        select,
+        &query.paging,
+        ("audit_logs", "id"), // LEFT JOIN 后游标列必须限定
+        |row: AuditLogRow| {
+            let (id, before, after, operator_id, operator_name, created_at) = row;
+            Ok((
+                AuditLogItem {
                     id: ID::from(id),
                     change_type: match (&before, &after) {
                         (None, Some(_)) => "create",
@@ -124,12 +112,12 @@ async fn execute(
                     operator_id: ID::from(operator_id),
                     operator_name,
                     created_at,
-                })
-            },
-        )
-        .collect::<rootcause::Result<Vec<_>>>()?;
-
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+                },
+                ID::from(id),
+            ))
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

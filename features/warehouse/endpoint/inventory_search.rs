@@ -1,9 +1,8 @@
 use axum::extract::State;
 use db::PgPool;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder as _;
+use sea_query::{Expr, ExprTrait as _, Query};
 use serde::{Deserialize, Serialize};
-use shared_contract::query::cursor_page::finalize_cursor_page;
+use shared_contract::query::cursor_page::paginate;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -53,9 +52,7 @@ async fn execute(
     pg_pool: &PgPool,
     query: SearchInventoryQuery,
 ) -> rootcause::Result<CursorPagingResult<InventoryItem>> {
-    let page_limit = query.paging.limit();
-
-    let (sql, values) = Query::select()
+    let select = Query::select()
         .from("inventories")
         .column("id")
         .column("item_id")
@@ -63,13 +60,8 @@ async fn execute(
         .expr(Expr::cust("CAST(quantity AS DOUBLE PRECISION)"))
         .expr(Expr::cust("CAST(locked_qty AS DOUBLE PRECISION)"))
         .and_where_option(query.warehouse_id.map(|w| Expr::col("warehouse_id").eq(w)))
-        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
-        .order_by("id", Order::Desc)
-        .limit(query.paging.fetch_limit())
-        .build_sqlx(PostgresQueryBuilder);
+        .to_owned();
+
     let mut conn = pg_pool.acquire().await?;
-    let items: Vec<InventoryItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-        .fetch_all(&mut *conn)
-        .await?;
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+    paginate(&mut conn, select, &query.paging, "id").await
 }

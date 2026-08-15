@@ -48,7 +48,26 @@ pub enum Op {
 
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+        f.write_str(self.as_str_with_dot())
+    }
+}
+
+impl Op {
+    /// 协议名（不带前缀点）：`eq` / `ilike` 等。与 [`FILTER_OPERATORS`] 同源。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Op::Eq => "eq",
+            Op::Neq => "neq",
+            Op::Gt => "gt",
+            Op::Gte => "gte",
+            Op::Lt => "lt",
+            Op::Lte => "lte",
+            Op::Ilike => "ilike",
+        }
+    }
+
+    fn as_str_with_dot(&self) -> &'static str {
+        match self {
             Op::Eq => "eq.",
             Op::Neq => "neq.",
             Op::Gt => "gt.",
@@ -56,8 +75,7 @@ impl fmt::Display for Op {
             Op::Lt => "lt.",
             Op::Lte => "lte.",
             Op::Ilike => "ilike.",
-        };
-        f.write_str(s)
+        }
     }
 }
 
@@ -121,6 +139,16 @@ impl FilterSchema {
         }
     }
 
+    /// 字段类型名（`text` / `date` / `int`，与 [`OPERATOR_MATRIX`] 键一致），供 meta 端点导出。
+    pub fn field_kind(&self, field: &str) -> Option<&'static str> {
+        match self.col_kind(field) {
+            Some(ColKind::Text) => Some("text"),
+            Some(ColKind::Date) => Some("date"),
+            Some(ColKind::Int) => Some("int"),
+            None => None,
+        }
+    }
+
     /// 日期比较值：显式 cast，避免 `timestamptz > text` 报错
     fn date_value(&self, value: &str) -> SimpleExpr {
         Expr::val(value).cast_as(Alias::new("timestamptz"))
@@ -136,6 +164,21 @@ const FILTER_OPERATORS: [(&str, Op); 7] = [
     ("gt.", Op::Gt),
     ("lt.", Op::Lt),
     ("eq.", Op::Eq),
+];
+
+/// 操作符前缀（含尾点，从长到短）——协议事实源之一，供 meta 端点导出。
+pub fn op_prefixes() -> &'static [(&'static str, Op)] {
+    &FILTER_OPERATORS
+}
+
+/// 操作符矩阵（协议事实源）：列类型名 → 支持的操作符集。
+///
+/// 与 [`FilterSchema`] 的列类型对应（text / date / int）；to_sql 按此集生成表达式
+/// （date/int 的 ilike 不在集内 → 解析期后静默忽略，见 [`to_sql`]）。
+pub const OPERATOR_MATRIX: &[(&str, &[Op])] = &[
+    ("text", &[Op::Eq, Op::Neq, Op::Ilike]),
+    ("date", &[Op::Eq, Op::Neq, Op::Gt, Op::Gte, Op::Lt, Op::Lte]),
+    ("int", &[Op::Eq, Op::Neq, Op::Gt, Op::Gte, Op::Lt, Op::Lte]),
 ];
 
 /// 解析 PostgREST 风格筛选参数（query string 中除分页/搜索词之外的字段参数）。
@@ -452,5 +495,74 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exprs.len(), 2);
+    }
+
+    // ---- 协议矩阵（meta 端点导出的事实源）----
+
+    #[test]
+    fn operator_matrix_kind_names_match_filter_schema() {
+        // 矩阵里的类型名能被 SCHEMA 解析（text/date/int 三键与 FilterSchema 数组对应）
+        for (kind, _ops) in OPERATOR_MATRIX {
+            let field = match *kind {
+                "text" => "code",
+                "date" => "created_at",
+                "int" => "amount",
+                other => panic!("unknown matrix kind: {other}"),
+            };
+            assert_eq!(SCHEMA.field_kind(field), Some(*kind));
+        }
+        // 矩阵覆盖全部三种列类型
+        assert_eq!(OPERATOR_MATRIX.len(), 3);
+    }
+
+    #[test]
+    fn operator_matrix_matches_to_sql_support() {
+        // ilike 只出现在 text；矩阵内每个 (类型, 操作符) 组合 to_sql 都能产出表达式
+        for (kind, ops) in OPERATOR_MATRIX {
+            assert!(
+                !ops.contains(&Op::Ilike) || *kind == "text",
+                "ilike only for text, got {kind}"
+            );
+            for op in *ops {
+                // int 字段的值需为合法整数（生产路径在 parse 期校验，此处用合法值）
+                let cond = Condition {
+                    field: match *kind {
+                        "text" => "name".into(),
+                        "date" => "created_at".into(),
+                        "int" => "amount".into(),
+                        other => panic!("unknown kind {other}"),
+                    },
+                    op: *op,
+                    value: match *kind {
+                        "int" => "1".into(),
+                        _ => "x".into(),
+                    },
+                };
+                assert_eq!(to_sql(&[cond], &SCHEMA).len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn op_prefixes_are_sorted_longest_first_and_unique() {
+        let prefixes: Vec<&str> = op_prefixes().iter().map(|(p, _)| *p).collect();
+        for (i, p) in prefixes.iter().enumerate() {
+            assert!(p.ends_with('.'));
+            for (j, q) in prefixes.iter().enumerate() {
+                if i != j {
+                    assert_ne!(p, q);
+                    // 短前缀不可能是长前缀的子串前缀碰撞（ilike. 先于 eq. 等）
+                }
+            }
+        }
+        assert_eq!(prefixes.len(), 7);
+    }
+
+    #[test]
+    fn op_as_str_matches_prefixes() {
+        for (prefix, op) in op_prefixes() {
+            let name = op.as_str();
+            assert_eq!(&format!("{name}."), prefix);
+        }
     }
 }

@@ -10,7 +10,7 @@
     "format": "biome format --write",
     "gen:api": "node scripts/fetch-openapi.mjs",
     "preview": "rsbuild preview",
-    "test": "node --experimental-strip-types --test src/lib/api.test.ts",
+    "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

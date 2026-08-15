@@ -5,6 +5,9 @@ use utoipa_axum::routes;
 mod endpoint;
 mod repository;
 
+/// 筛选白名单（协议事实源，bin/server meta 端点收集）。
+pub use endpoint::customer_search::FILTER_SCHEMA;
+
 pub struct Module;
 
 impl DomainModule for Module {

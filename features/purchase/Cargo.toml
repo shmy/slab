@@ -21,7 +21,6 @@ module = { workspace = true }
 purchase_contract = { workspace = true }
 rootcause = { workspace = true }
 sea-query = { workspace = true }
-sea-query-sqlx = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 shared_contract = { workspace = true }
 sqlx = { workspace = true }

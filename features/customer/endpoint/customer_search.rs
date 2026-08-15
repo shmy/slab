@@ -1,11 +1,10 @@
 use axum::extract::State;
 use db::PgPool;
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder as _;
+use sea_query::{Expr, ExprTrait as _, Query};
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
-use shared_contract::query::cursor_page::finalize_cursor_page;
+use shared_contract::query::cursor_page::paginate;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -19,7 +18,8 @@ use web::response::json_response::{JsonResponse, JsonResponseType};
 
 /// 可筛/可排字段声明（text 支持 eq/ilike；date 支持 gt/gte/lt/lte，自动 cast）。
 /// 白名单与 SQL 生成同源（filter_kit::FilterSchema），不会不一致。
-const FILTER_SCHEMA: filter_kit::FilterSchema = filter_kit::FilterSchema {
+/// `pub` 供 bin/server meta 端点收集（筛选协议事实源，勿改可见性）。
+pub const FILTER_SCHEMA: filter_kit::FilterSchema = filter_kit::FilterSchema {
     text_fields: &["code", "name", "phone", "contact_person"],
     date_fields: &["created_at"],
     int_fields: &[],
@@ -76,7 +76,6 @@ async fn execute(
     query: SearchCustomerQuery,
 ) -> rootcause::Result<CursorPagingResult<SearchCustomerItem>> {
     let q = query.q.filter(|s| !s.is_empty());
-    let page_limit = query.paging.limit();
 
     let mut select = Query::select()
         .from("customers")
@@ -94,12 +93,8 @@ async fn execute(
                 .or(Expr::col("phone").ilike(format!("%{q}%")))
                 .or(Expr::col("contact_person").ilike(format!("%{q}%")))
         }))
-        // 游标分页：id 单调递增（tsid），默认 ORDER BY id DESC → `id < cursor` 即 keyset
-        .and_where_option(query.paging.cursor_id().map(|c| Expr::col("id").lt(*c)))
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
-        .order_by("id", Order::Desc)
-        .limit(query.paging.fetch_limit())
         .to_owned();
 
     // 筛选（PostgREST 风格，白名单校验 + 类型映射由 filter_kit 保证）
@@ -107,13 +102,8 @@ async fn execute(
         select.and_where(expr);
     }
 
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
     let mut conn = pg_pool.acquire().await?;
-    let items: Vec<SearchCustomerItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-        .fetch_all(&mut *conn)
-        .await?;
-
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+    paginate(&mut conn, select, &query.paging, "id").await
 }
 
 #[cfg(test)]

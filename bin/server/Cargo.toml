@@ -37,7 +37,9 @@ kv = { workspace = true }
 job_queue = { workspace = true }
 opentelemetry = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 db = { workspace = true }
+filter_kit = { workspace = true }
 blob = { workspace = true }
 event_bus = { workspace = true }
 axum = { workspace = true }

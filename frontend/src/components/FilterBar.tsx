@@ -1,8 +1,9 @@
 // 条件构建器（GitHub Issues 式）：主搜索框（多字段模糊）+ 「＋筛选」字段条件 chips。
 // 控件数量恒定 = 一个搜索框 + 一个下拉，任意字段组合通过 chips 累积，可单删/全清。
 // 受控组件：q / filters 由父组件持有（路由 search params），本组件只做 UI 与 debounce。
+// 可筛字段/操作符集来自生成契约（filter-schema.ts），文案来自 labels——页面只声明 label。
 import { Filter, Search, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,10 +12,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import type { FilterSchema } from '@/lib/filter-schema';
 import {
   type FilterCondition,
-  type FilterFieldConfig,
-  TYPE_OPERATORS,
+  type FilterLabel,
+  operatorOptionsFor,
 } from '@/lib/filters';
 import { cn } from '@/lib/utils';
 
@@ -22,7 +24,10 @@ interface FilterBarProps {
   /** 已生效搜索词（URL 状态）；输入框本地值 debounce 300ms 后回调 */
   q: string;
   filters: FilterCondition[];
-  fields: FilterFieldConfig[];
+  /** 可筛字段契约（filter-schema.ts，后端 FILTER_SCHEMA 导出） */
+  schema: FilterSchema;
+  /** 字段文案映射（键须覆盖 schema 全部字段，页面用 satisfies Record<XxxFilterField, ...> 强制） */
+  labels: Record<string, FilterLabel>;
   placeholder?: string;
   onQChange: (q: string) => void;
   onFiltersChange: (filters: FilterCondition[]) => void;
@@ -33,11 +38,23 @@ const DEBOUNCE_MS = 300;
 export function FilterBar({
   q,
   filters,
-  fields,
+  schema,
+  labels,
   placeholder,
   onQChange,
   onFiltersChange,
 }: FilterBarProps) {
+  // schema × labels → 字段配置（契约字段 + 前端文案的合并点，只在此处发生）
+  const fields = useMemo(
+    () =>
+      schema.fields.map((f) => ({
+        id: f.name,
+        type: f.type,
+        label: labels[f.name]?.label ?? f.name,
+        placeholder: labels[f.name]?.placeholder,
+      })),
+    [schema, labels],
+  );
   // z.record search 缺失键时为 undefined，防御兜底
   const [localQ, setLocalQ] = useState(q ?? '');
   // URL 外部变化（前进/后退、分享链接直达）时同步输入框；
@@ -53,7 +70,7 @@ export function FilterBar({
   const [pickerOpen, setPickerOpen] = useState(false);
   // draft：新增（editingIndex=null）或编辑已有条件（editingIndex=index，保存时替换）
   const [draft, setDraft] = useState<{
-    field: FilterFieldConfig;
+    field: (typeof fields)[number];
     op: string;
     value: string;
     editingIndex: number | null;
@@ -95,7 +112,7 @@ export function FilterBar({
   function opLabel(fieldId: string, opId: string) {
     const field = fields.find((f) => f.id === fieldId);
     return (
-      (field ? TYPE_OPERATORS[field.type] : []).find((o) => o.id === opId)
+      (field ? operatorOptionsFor(field.type) : []).find((o) => o.id === opId)
         ?.label ?? opId
     );
   }
@@ -166,7 +183,7 @@ export function FilterBar({
                   {draft.field.label}
                 </p>
                 <div className="flex flex-wrap gap-1 px-1.5 pb-1">
-                  {TYPE_OPERATORS[draft.field.type].map((op) => (
+                  {operatorOptionsFor(draft.field.type).map((op) => (
                     <button
                       key={op.id}
                       type="button"
@@ -232,7 +249,7 @@ export function FilterBar({
                     onClick={() =>
                       setDraft({
                         field,
-                        op: TYPE_OPERATORS[field.type][0]?.id ?? '',
+                        op: operatorOptionsFor(field.type)[0]?.id ?? '',
                         value: '',
                         editingIndex: null,
                       })

@@ -82,6 +82,8 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 - 自引用结构（`children: Vec<Self>`）→ 加 `#[schema(no_recursion)]`，否则 utoipa 栈溢出
 - 单 `routes!()` 内不能有两个相同 HTTP method 的 handler
 - 列表查询用 SeaQuery，禁止 NULL 哨兵
+- 搜索端点用 `shared_contract::query::cursor_page::paginate*`（keyset 游标分页深模块，勿再内联游标/排序/limit+1 样板；LEFT JOIN 场景用 `paginate_with` + 限定列，见 [docs/adr/0002](docs/adr/0002-cursor-pagination.md)）
+- 加可筛字段：后端 `FILTER_SCHEMA` 一处声明（`pub` 导出，供 meta 端点收集）→ 重新 `pnpm gen:api` → 前端 label 映射补一行（`satisfies Record<XxxFilterField, ...>` 缺则 tsc 报错）；加可筛实体另需 `bin/server/meta.rs` 注册一行
 - Contract Entity 不承载 created_at / updated_at
 - `#[derive(Validify)]` 文件不要写 `use rootcause::Result`
 - migration 文件应用后不可编辑，改 schema 新建下一个版本
@@ -130,9 +132,9 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `libs/authn_kit` | JWT 访问令牌提取与缓存 key 构建（auth 缓存 key 方案） |
 | `libs/authz_kit` | Cedar 授权策略评估（待接入，暂无调用方） |
 | `libs/trace_kit` | OpenTelemetry |
-| `libs/filter_kit` | PostgREST 风格筛选/排序解析（`name=ilike.*张*&created_at=gt.2024-03-15` + `order=name.asc`，复合游标分页，字段白名单防注入） |
+| `libs/filter_kit` | PostgREST 风格筛选解析（`name=ilike.*张*&created_at=gt.2024-03-15`，字段白名单防注入）；操作符矩阵为协议事实源，经 `GET /api/v1/meta/filter-schemas` 导出 → 前端 `pnpm gen:api` 生成 `src/lib/filter-schema.ts`（勿手抄，见 [docs/adr/0003](docs/adr/0003-filter-schema-contract.md)） |
 | `libs/sched_kit` | tokio-cron-scheduler |
-| `shared_contract` | ID、分页、PhoneNumber 等共享值对象 + `event::Event`（跨域事件 trait） |
+| `shared_contract` | ID、keyset 游标分页（`query::cursor_page::{paginate,paginate_with}`）、PhoneNumber 等共享值对象 + `event::Event`（跨域事件 trait） |
 
 ## 常用命令
 

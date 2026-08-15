@@ -1,11 +1,10 @@
 use axum::extract::State;
 use db::PgPool;
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Expr, ExprTrait as _, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::SqlxBinder as _;
+use sea_query::{Expr, ExprTrait as _, Query};
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
-use shared_contract::query::cursor_page::finalize_cursor_page;
+use shared_contract::query::cursor_page::paginate;
 use shared_contract::query::paging_query::CursorPagingQuery;
 use shared_contract::query::paging_result::CursorPagingResult;
 use shared_contract::value_object::id::ID;
@@ -62,10 +61,8 @@ async fn execute(
     query: SearchItemQuery,
 ) -> rootcause::Result<CursorPagingResult<SearchItemItem>> {
     let q = query.q.filter(|s| !s.is_empty());
-    let input_next_cursor = query.paging.cursor_id();
-    let page_limit = query.paging.limit();
 
-    let (sql, values) = Query::select()
+    let select = Query::select()
         .from("items")
         .column("id")
         .column("code")
@@ -78,16 +75,10 @@ async fn execute(
                 .or(Expr::col("name").ilike(format!("%{q}%")))
         }))
         .and_where_option(query.item_type.map(|t| Expr::col("item_type").eq(t)))
-        .and_where_option(input_next_cursor.map(|next_cursor| Expr::col("id").lt(*next_cursor)))
         // 软删除（delete 置 is_active=false）不出现在列表
         .and_where(Expr::col("is_active").eq(true))
-        .order_by("id", Order::Desc)
-        .limit(query.paging.fetch_limit())
-        .build_sqlx(PostgresQueryBuilder);
+        .to_owned();
 
     let mut conn = pg_pool.acquire().await?;
-    let items: Vec<SearchItemItem> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), values)
-        .fetch_all(&mut *conn)
-        .await?;
-    Ok(finalize_cursor_page(items, page_limit, |item| item.id))
+    paginate(&mut conn, select, &query.paging, "id").await
 }
