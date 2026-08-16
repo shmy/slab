@@ -21,16 +21,16 @@ export const FILTER_OPERATOR_MATRIX: Record<FilterFieldType, FilterOperator[]> =
     int: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte'],
   };
 
-/** 操作符前缀（含尾点，从长到短匹配） */
-export const FILTER_OP_PREFIXES: string[] = [
-  'ilike.',
-  'neq.',
-  'gte.',
-  'lte.',
-  'gt.',
-  'lt.',
-  'eq.',
-];
+/** RSQL 比较操作符（协议事实源：操作符名 → wire 串，如 eq → '=='） */
+export const FILTER_COMPARISON_OPS: Record<FilterOperator, string> = {
+  eq: '==',
+  neq: '!=',
+  ilike: '=ilike=',
+  gt: '=gt=',
+  gte: '=ge=',
+  lt: '=lt=',
+  lte: '=le=',
+};
 
 export interface FilterSchemaField {
   name: string;

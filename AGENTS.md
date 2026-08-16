@@ -134,7 +134,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `libs/authn_kit` | JWT 访问令牌提取与缓存 key 构建（auth 缓存 key 方案） |
 | `libs/authz_kit` | Cedar 授权策略评估（待接入，暂无调用方） |
 | `libs/trace_kit` | OpenTelemetry |
-| `libs/filter_kit` | PostgREST 风格筛选解析（`name=ilike.*张*&created_at=gt.2024-03-15`，字段白名单防注入）；操作符矩阵为协议事实源，经 `GET /api/v1/meta/filter-schemas` 导出 → 前端 `pnpm gen:api` 生成 `src/lib/filter-schema.ts`（勿手抄，见 [docs/adr/0003](docs/adr/0003-filter-schema-contract.md)） |
+| `libs/filter_kit` | RSQL 风格筛选解析（单个 `filter` 参数承载布尔树：`;`=AND/`,`=OR/括号分组；`name=ilike=*张*;created_at=gt=2024-03-15`，字段白名单防注入）；操作符矩阵 + RSQL 比较串为协议事实源，经 `GET /api/v1/meta/filter-schemas` 导出 → 前端 `pnpm gen:api` 生成 `src/lib/filter-schema.ts`（勿手抄，见 [docs/adr/0003](docs/adr/0003-filter-schema-contract.md)） |
 | `libs/sched_kit` | tokio-cron-scheduler |
 | `shared_contract` | ID、keyset 游标分页（`query::cursor_page::{paginate,paginate_with}`）、PhoneNumber 等共享值对象 + `event::Event`（跨域事件 trait） |
 

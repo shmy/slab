@@ -33,7 +33,10 @@ const matrixLines = Object.entries(meta.operatorMatrix)
     ([kind, list]) => `  ${kind}: [${list.map((o) => `'${o}'`).join(', ')}],`,
   )
   .join('\n');
-const prefixLines = meta.opPrefixes.map((p) => `  '${p}',`).join('\n');
+// RSQL 比较操作符（操作符名 → wire 串，如 eq → '=='）；前端序列化事实源
+const compLines = Object.entries(meta.comparisonOperators)
+  .map(([name, comp]) => `  ${name}: '${comp}',`)
+  .join('\n');
 const entityLines = Object.entries(meta.entities)
   .map(([name, ent]) => {
     const fields = ent.fields
@@ -66,10 +69,10 @@ export const FILTER_OPERATOR_MATRIX: Record<FilterFieldType, FilterOperator[]> =
 ${matrixLines}
 };
 
-/** 操作符前缀（含尾点，从长到短匹配） */
-export const FILTER_OP_PREFIXES: string[] = [
-${prefixLines}
-];
+/** RSQL 比较操作符（协议事实源：操作符名 → wire 串，如 eq → '=='） */
+export const FILTER_COMPARISON_OPS: Record<FilterOperator, string> = {
+${compLines}
+};
 
 export interface FilterSchemaField {
   name: string;

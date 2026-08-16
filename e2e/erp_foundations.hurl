@@ -254,8 +254,8 @@ customer_code: jsonpath "$.code"
 jsonpath "$.code" matches /^C-\d{6}$/
 
 ###############################################################################
-# 搜索客户
-GET {{base_url}}/api/v1/customers?q=上海
+# 搜索客户（filter=name 包含 上海）
+GET {{base_url}}/api/v1/customers?filter=name=ilike=*上海*
 Authorization: Bearer {{admin_token}}
 
 HTTP 200

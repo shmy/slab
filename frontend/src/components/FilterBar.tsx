@@ -1,312 +1,640 @@
-// 条件构建器（GitHub Issues 式）：主搜索框（多字段模糊）+ 「＋筛选」字段条件 chips。
-// 控件数量恒定 = 一个搜索框 + 一个下拉，任意字段组合通过 chips 累积，可单删/全清。
-// 受控组件：q / filters 由父组件持有（路由 search params），本组件只做 UI 与 debounce。
+// 条件构建器：主搜索框（多字段模糊）+ React Query Builder 布尔树（生产级筛选编辑器）。
+// 架构：RQB query 由 FilterBar 内部 state 持有（受控），URL(query) 仅作初始值；
+// 本地编辑直接更新内部 state，写 URL（触发搜索）用 debounce —— 停止输入后才落 URL，
+// 避免每个字符/每次增删都触发搜索；从不回读 URL（避免 serialize→URL→重parse 的 id 抖动）。
+// 「＋条件/＋组」/规则值都用 Popover（GitHub 筛选条风格）就地编辑，点「确定」才真正变更。
+// 同组内禁止重复字段（字段下拉禁用已用项 + onAddRule 兜底）。
 // 可筛字段/操作符集来自生成契约（filter-schema.ts），文案来自 labels——页面只声明 label。
-import { Filter, Search, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { Check, ChevronDown, Filter, Plus, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+  type ActionProps,
+  add,
+  type CombinatorSelectorProps,
+  type Field,
+  type FieldSelectorProps,
+  type OperatorSelectorProps,
+  type Path,
+  QueryBuilder,
+  type RuleGroupType,
+  type RuleType,
+  toFlatOptionArray,
+  type ValueEditorProps,
+} from 'react-querybuilder';
+import 'react-querybuilder/dist/query-builder.css';
+import './filter-bar.css';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import type { FilterSchema } from '@/lib/filter-schema';
 import {
-  type FilterCondition,
-  type FilterLabel,
-  operatorOptionsFor,
+  countConditions,
+  groupAtPath,
+  isEmptyFilters,
+  newId,
+  OPERATOR_LABELS,
+  operatorsFor,
+  serializeFilters,
+  usedFieldsIn,
 } from '@/lib/filters';
 import { cn } from '@/lib/utils';
 
 interface FilterBarProps {
-  /** 已生效搜索词（URL 状态）；输入框本地值 debounce 300ms 后回调 */
-  q: string;
-  filters: FilterCondition[];
+  /** 筛选布尔树（RQB 根组，空 = 无筛选）；URL 反序列化的初始值 */
+  query: RuleGroupType;
   /** 可筛字段契约（filter-schema.ts，后端 FILTER_SCHEMA 导出） */
   schema: FilterSchema;
   /** 字段文案映射（键须覆盖 schema 全部字段，页面用 satisfies Record<XxxFilterField, ...> 强制） */
   labels: Record<string, FilterLabel>;
+  /** 树变更回调（父组件把可序列化部分写进 URL） */
+  onQueryChange: (query: RuleGroupType) => void;
+}
+
+interface FilterLabel {
+  label: string;
   placeholder?: string;
-  onQChange: (q: string) => void;
-  onFiltersChange: (filters: FilterCondition[]) => void;
+}
+
+/** 带类型标注的字段配置（type 供定位操作符矩阵；RQB Field 会剥离 type） */
+interface FieldConfig {
+  name: string;
+  label: string;
+  placeholder?: string;
+  type: 'text' | 'date' | 'int';
+  inputType: 'text' | 'date' | 'number';
+  operators: string[];
 }
 
 const DEBOUNCE_MS = 300;
 
-export function FilterBar({
-  q,
-  filters,
-  schema,
-  labels,
-  placeholder,
-  onQChange,
-  onFiltersChange,
-}: FilterBarProps) {
-  // schema × labels → 字段配置（契约字段 + 前端文案的合并点，只在此处发生）
-  const fields = useMemo(
-    () =>
-      schema.fields.map((f) => ({
-        id: f.name,
-        type: f.type,
-        label: labels[f.name]?.label ?? f.name,
-        placeholder: labels[f.name]?.placeholder,
-      })),
-    [schema, labels],
+// ---- 弹出控件（模块级，hook 在组件顶层，RQB 按组件渲染，状态稳定不重挂载）----
+
+/** ＋条件 下拉：就地选字段/操作符/值，确定才 add() */
+interface FilterCtx {
+  fieldConfigs: FieldConfig[];
+  query: RuleGroupType;
+  onCommit: (next: RuleGroupType) => void;
+}
+
+/** 弹层底部：取消 / 确定 按钮组 */
+function EditorFooter({
+  onCancel,
+  onConfirm,
+  disabled,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rqb-editor-footer">
+      <Button size="sm" variant="ghost" onClick={onCancel}>
+        取消
+      </Button>
+      <Button size="sm" onClick={onConfirm} disabled={disabled}>
+        确定
+      </Button>
+    </div>
   );
-  // z.record search 缺失键时为 undefined，防御兜底
-  const [localQ, setLocalQ] = useState(q ?? '');
-  // URL 外部变化（前进/后退、分享链接直达）时同步输入框；
-  // 同步引发的 localQ 变化会重跑下方 debounce effect 并 cleanup 掉旧 timer，旧值不会误提交
-  useEffect(() => setLocalQ(q ?? ''), [q]);
-  // 输入防抖：停止输入 300ms 后提交；q 同步后 localQ===q 直接跳过
-  useEffect(() => {
-    if (localQ.trim() === q) return;
-    const timer = setTimeout(() => onQChange(localQ.trim()), DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [localQ, q, onQChange]);
+}
+function AddRuleDropdown({ path, context }: ActionProps) {
+  const { fieldConfigs, query, onCommit } = context as FilterCtx;
+  const [open, setOpen] = useState(false);
+  const parent = groupAtPath(query, path);
+  const used = parent ? usedFieldsIn(parent) : new Set<string>();
+  const first = fieldConfigs.find((f) => !used.has(f.name));
+  const [field, setField] = useState(first?.name ?? '');
+  const [op, setOp] = useState(first?.operators[0] ?? 'eq');
+  const [value, setValue] = useState('');
 
-  const [pickerOpen, setPickerOpen] = useState(false);
-  // draft：新增（editingIndex=null）或编辑已有条件（editingIndex=index，保存时替换）
-  const [draft, setDraft] = useState<{
-    field: (typeof fields)[number];
-    op: string;
-    value: string;
-    editingIndex: number | null;
-  } | null>(null);
+  function openDd() {
+    const f = fieldConfigs.find((x) => !used.has(x.name));
+    if (!f) {
+      toast.error('该组已使用全部可筛字段，请删除条件后再添加');
+      return;
+    }
+    setField(f.name);
+    setOp(f.operators[0] ?? 'eq');
+    setValue('');
+    setOpen(true);
+  }
 
-  function addCondition() {
-    if (!draft?.value.trim()) return;
-    const next = {
-      field: draft.field.id,
-      op: draft.op,
-      value: draft.value.trim(),
+  function onFieldChange(name: string) {
+    setField(name);
+    const cfg = fieldConfigs.find((x) => x.name === name);
+    setOp(cfg?.operators[0] ?? 'eq');
+    setValue('');
+  }
+
+  function confirm() {
+    if (used.has(field)) {
+      toast.error('该字段在组内已存在，请选择其他字段');
+      return;
+    }
+    if (!value.trim()) {
+      toast.error('请填写筛选值');
+      return;
+    }
+    const rule: RuleType = {
+      id: newId('r'),
+      field,
+      operator: op,
+      value: value.trim(),
     };
-    onFiltersChange(
-      draft.editingIndex === null
-        ? [...filters, next]
-        : filters.map((f, i) => (i === draft.editingIndex ? next : f)),
-    );
-    setDraft(null);
-    setPickerOpen(false);
+    onCommit(add(query, rule, path));
+    setOpen(false);
   }
 
-  /** 编辑已有条件：打开下拉并预填当前值 */
-  function editCondition(index: number) {
-    const f = filters[index];
-    const field = fields.find((x) => x.id === f.field);
-    if (!field) return; // URL 手改的未知字段无法编辑
-    setDraft({ field, op: f.op, value: f.value, editingIndex: index });
-    setPickerOpen(true);
-  }
+  const fieldCfg = fieldConfigs.find((f) => f.name === field);
 
-  function removeCondition(index: number) {
-    onFiltersChange(filters.filter((_, i) => i !== index));
-  }
+  return (
+    <Popover open={open} onOpenChange={(o) => (o ? openDd() : setOpen(false))}>
+      <PopoverTrigger className="rqb-action rqb-add-rule" title="添加条件">
+        <Plus className="size-3.5" />
+        条件
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 p-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor={`rqb-f-${path.join('.')}`}
+              className="text-xs text-muted-foreground"
+            >
+              字段
+            </label>
+            <RqbSelect
+              id={`rqb-f-${path.join('.')}`}
+              value={field}
+              onChange={onFieldChange}
+              options={fieldConfigs.map((f) => ({
+                value: f.name,
+                label: f.label,
+                disabled: used.has(f.name),
+              }))}
+              ariaLabel="筛选字段"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor={`rqb-o-${path.join('.')}`}
+              className="text-xs text-muted-foreground"
+            >
+              操作符
+            </label>
+            <RqbSelect
+              id={`rqb-o-${path.join('.')}`}
+              value={op}
+              onChange={(v) => setOp(v)}
+              options={(fieldCfg?.operators ?? ['eq']).map((o) => ({
+                value: o,
+                label: OPERATOR_LABELS[o] ?? o,
+              }))}
+              ariaLabel="操作符"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor={`rqb-v-${path.join('.')}`}
+              className="text-xs text-muted-foreground"
+            >
+              值
+            </label>
+            <Input
+              id={`rqb-v-${path.join('.')}`}
+              autoFocus
+              type={
+                fieldCfg?.type === 'date'
+                  ? 'date'
+                  : fieldCfg?.type === 'int'
+                    ? 'number'
+                    : 'text'
+              }
+              placeholder={fieldCfg?.placeholder}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirm();
+                if (e.key === 'Escape') setOpen(false);
+              }}
+            />
+          </div>
+          <EditorFooter
+            onCancel={() => setOpen(false)}
+            onConfirm={confirm}
+            disabled={!value.trim()}
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
-  function fieldLabel(id: string) {
-    return fields.find((f) => f.id === id)?.label ?? id;
-  }
+/** ＋组 下拉：选 并且/或者，确定才加入 */
+function AddGroupDropdown({ path, context }: ActionProps) {
+  const { query, onCommit } = context as FilterCtx;
+  const [open, setOpen] = useState(false);
+  const [connector, setConnector] = useState<'and' | 'or'>('and');
 
-  function opLabel(fieldId: string, opId: string) {
-    const field = fields.find((f) => f.id === fieldId);
-    return (
-      (field ? operatorOptionsFor(field.type) : []).find((o) => o.id === opId)
-        ?.label ?? opId
-    );
+  function confirm() {
+    const group: RuleGroupType = {
+      id: newId('g'),
+      combinator: connector,
+      rules: [],
+    };
+    onCommit(add(query, group, path));
+    setOpen(false);
   }
 
   return (
-    <div className="mt-4">
-      <div className="flex items-center gap-2">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-soft" />
-          <Input
-            value={localQ}
-            onChange={(e) => setLocalQ(e.target.value)}
-            className="pr-9 pl-9"
-            placeholder={placeholder ?? '搜索…'}
-            aria-label="搜索"
-          />
-          {/* 一键清空：立即生效（绕过 debounce），同时同步输入框 */}
-          {localQ !== '' && (
-            <button
-              type="button"
-              aria-label="清空搜索"
-              className="absolute top-1/2 right-2.5 flex size-4 -translate-y-1/2 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-muted hover:text-ink"
-              onClick={() => {
-                setLocalQ('');
-                onQChange('');
-              }}
-            >
-              <X className="size-3" />
-            </button>
-          )}
-        </div>
-        <DropdownMenu
-          open={pickerOpen}
-          onOpenChange={(open) => {
-            setPickerOpen(open);
-            // 关闭时重置编辑态：下次打开回到字段列表（避免残留 chip 编辑视图）
-            if (!open) setDraft(null);
-          }}
-        >
-          <DropdownMenuTrigger
-            render={
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger className="rqb-action rqb-add-group" title="添加分组">
+        <Plus className="size-3.5" />组
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-48 p-2">
+        <div className="flex flex-col gap-2">
+          <span className="text-xs text-muted-foreground">组内组合方式</span>
+          <div className="flex items-center gap-2">
+            {(['and', 'or'] as const).map((c) => (
               <Button
-                variant="outline"
-                className="gap-1.5"
-                title={
-                  filters.length > 0
-                    ? `已添加 ${filters.length} 个筛选条件`
-                    : '添加筛选条件'
-                }
+                key={c}
+                size="sm"
+                variant={connector === c ? 'default' : 'outline'}
+                onClick={() => setConnector(c)}
               >
-                <Filter className="size-3.5" />
-                筛选
-                {/* 条件计数徽标 */}
-                {filters.length > 0 && (
-                  <span className="flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground">
-                    {filters.length}
-                  </span>
-                )}
+                {c === 'and' ? '并且' : '或者'}
               </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-56">
-            {draft ? (
-              // 编辑态：操作符 + 值 + 确认（一行内完成，不铺控件）
-              // 标题用普通文本：DropdownMenuLabel 是 Menu.Group 的 label part，裸用会缺 GroupContext
-              <>
-                <p className="px-2 pt-1.5 pb-1 text-xs font-medium text-muted-foreground">
-                  {draft.field.label}
-                </p>
-                <div className="flex flex-wrap gap-1 px-1.5 pb-1">
-                  {operatorOptionsFor(draft.field.type).map((op) => (
-                    <button
-                      key={op.id}
-                      type="button"
-                      onClick={() => setDraft({ ...draft, op: op.id })}
-                      className={cn(
-                        'rounded-full px-2 py-0.5 text-xs transition-colors',
-                        draft.op === op.id
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-ink-soft hover:bg-muted',
-                      )}
-                    >
-                      {op.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="px-1.5 pb-1.5">
-                  <Input
-                    autoFocus
-                    type={
-                      draft.field.type === 'date'
-                        ? 'date'
-                        : draft.field.type === 'int'
-                          ? 'number'
-                          : 'text'
-                    }
-                    value={draft.value}
-                    onChange={(e) =>
-                      setDraft({ ...draft, value: e.target.value })
-                    }
-                    onKeyDown={(e) => {
-                      // 阻断冒泡：Menu 的 typeahead 会 stopEvent 所有单字符按键
-                      // （不检查焦点元素），不拦截的话英文/数字会被吞掉，只剩 IME 中文能输入
-                      e.stopPropagation();
-                      if (e.key === 'Enter') addCondition();
-                      if (e.key === 'Escape') setDraft(null);
-                    }}
-                    placeholder={draft.field.placeholder}
-                  />
-                </div>
-                <div className="flex justify-end gap-1.5 px-1.5 pb-1.5">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDraft(null)}
-                  >
-                    取消
-                  </Button>
-                  <Button size="sm" onClick={addCondition}>
-                    {draft.editingIndex === null ? '添加' : '保存'}
-                  </Button>
-                </div>
-              </>
-            ) : (
-              // 字段列表：已用字段置灰，其余可点进编辑态
-              fields.map((field) => {
-                const used = filters.some((f) => f.field === field.id);
-                return (
-                  <DropdownMenuItem
-                    key={field.id}
-                    disabled={used}
-                    // 点击字段不关闭菜单：原地切换到编辑态（base-ui 默认 closeOnClick=true）
-                    closeOnClick={false}
-                    onClick={() =>
-                      setDraft({
-                        field,
-                        op: operatorOptionsFor(field.type)[0]?.id ?? '',
-                        value: '',
-                        editingIndex: null,
-                      })
-                    }
-                  >
-                    {field.label}
-                    {used && (
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        已筛
-                      </span>
-                    )}
-                  </DropdownMenuItem>
-                );
-              })
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+            ))}
+          </div>
+          <EditorFooter onCancel={() => setOpen(false)} onConfirm={confirm} />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
-      {/* 生效条件 chips：可视化 + 单删 + 全清 */}
-      {filters.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {filters.map((f, index) => (
-            // 同字段条件禁止重复添加（下拉里已筛字段置灰），key=field 天然唯一
-            <span
-              key={f.field}
-              className="inline-flex items-center gap-0.5 rounded-full bg-muted py-0.5 pr-1 pl-1 text-xs text-ink"
+/** 规则值编辑器：值显示为胶囊按钮，点击 Popover 就地编辑，确定才 handleOnChange
+ * （配合 debounce，不在每个字符时写 URL 触发搜索 / 丢焦点） */
+function RuleValueEditor({
+  value,
+  handleOnChange,
+  inputType,
+  fieldData,
+}: ValueEditorProps) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? ''));
+  const isEmpty = value === undefined || value === null || value === '';
+  const inputKind =
+    inputType === 'number' ? 'number' : inputType === 'date' ? 'date' : 'text';
+
+  function openEdit() {
+    setDraft(String(value ?? ''));
+    setOpen(true);
+  }
+  function confirm() {
+    handleOnChange(draft.trim());
+    setOpen(false);
+  }
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => (o ? openEdit() : setOpen(false))}
+    >
+      <PopoverTrigger
+        className={cn('rqb-value-btn', isEmpty && 'rqb-value-empty')}
+        title="编辑值"
+      >
+        {isEmpty ? '未填写' : String(value)}
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 p-2">
+        <div className="flex flex-col gap-2">
+          <Input
+            autoFocus
+            type={inputKind}
+            placeholder={fieldData.placeholder ?? '筛选值'}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') confirm();
+              if (e.key === 'Escape') setOpen(false);
+            }}
+          />
+          <EditorFooter onCancel={() => setOpen(false)} onConfirm={confirm} />
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** 删除按钮：lucide × 图标（替换 RQB 默认文本 ×，更清晰） */
+function RemoveAction({ handleOnClick, className }: ActionProps) {
+  return (
+    <button
+      type="button"
+      className={className}
+      title="删除"
+      aria-label="删除"
+      onClick={() => handleOnClick()}
+    >
+      <X className="size-4" />
+    </button>
+  );
+}
+
+/** 美化下拉：native <select> + lucide 箭头（appearance:none，隐藏浏览器默认样式） */
+function RqbSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+  ariaLabel,
+  id,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string; disabled?: boolean }[];
+  disabled?: boolean;
+  className?: string;
+  ariaLabel?: string;
+  id?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = options.find((o) => o.value === value);
+  const showEmpty = options.length === 0;
+
+  function pick(option: { value: string; label: string; disabled?: boolean }) {
+    if (option.disabled) return;
+    onChange(option.value);
+    setOpen(false);
+  }
+
+  return (
+    <div id={id} className={cn('rqb-select', className)}>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          className={cn(
+            'rqb-select-trigger',
+            disabled && 'rqb-select-disabled',
+          )}
+          disabled={disabled || showEmpty}
+          title={ariaLabel}
+        >
+          <span className="rqb-select-value">
+            {showEmpty ? '—' : (current?.label ?? '—')}
+          </span>
+          <ChevronDown
+            className={cn(
+              'rqb-select-chevron',
+              open && 'rqb-select-chevron-up',
+            )}
+          />
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          sideOffset={4}
+          className="rqb-select-panel"
+        >
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              disabled={o.disabled}
+              className={cn(
+                'rqb-select-item',
+                o.value === value && 'rqb-select-item-active',
+                o.disabled && 'rqb-select-item-disabled',
+              )}
+              onClick={() => pick(o)}
             >
-              <button
-                type="button"
-                title="点击编辑条件"
-                className="rounded-full py-0.5 pl-1.5 transition-colors hover:text-ink"
-                onClick={() => editCondition(index)}
-              >
-                {fieldLabel(f.field)}：{opLabel(f.field, f.op)}{' '}
-                {/* 值高亮：扫读时一眼定位条件值 */}
-                <span className="font-semibold text-primary">{f.value}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`移除条件 ${fieldLabel(f.field)}`}
-                className="flex size-4 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-muted hover:text-ink"
-                onClick={() => removeCondition(index)}
-              >
-                <X className="size-3" />
-              </button>
-            </span>
+              {o.label}
+              {o.value === value && <Check className="rqb-select-check" />}
+            </button>
           ))}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+/** 组合器（并且/或者）下拉 */
+function CombinatorSelector({
+  value,
+  handleOnChange,
+  options,
+}: CombinatorSelectorProps) {
+  const flat = toFlatOptionArray(options) as { name: string; label: string }[];
+  const COMB_LABELS: Record<string, string> = { and: '并且', or: '或者' };
+  return (
+    <RqbSelect
+      value={(value ?? '').toString()}
+      onChange={handleOnChange}
+      options={flat.map((o) => ({
+        value: o.name,
+        label: COMB_LABELS[o.name] ?? o.label,
+      }))}
+      ariaLabel="组内组合方式"
+      className="rqb-combinator"
+    />
+  );
+}
+
+/** 规则行操作符下拉 */
+function OperatorSelector({
+  value,
+  handleOnChange,
+  options,
+}: OperatorSelectorProps) {
+  const flat = toFlatOptionArray(options) as { name: string; label: string }[];
+  return (
+    <RqbSelect
+      value={(value ?? '').toString()}
+      onChange={handleOnChange}
+      options={flat.map((o) => ({
+        value: o.name,
+        label: OPERATOR_LABELS[o.name] ?? o.name,
+      }))}
+      ariaLabel="操作符"
+    />
+  );
+}
+
+export function FilterBar({
+  query,
+  schema,
+  labels,
+  onQueryChange,
+}: FilterBarProps) {
+  // 契约字段 × 前端文案 → 字段配置
+  const fieldConfigs = useMemo<FieldConfig[]>(
+    () =>
+      schema.fields.map((f) => ({
+        name: f.name,
+        label: labels[f.name]?.label ?? f.name,
+        placeholder: labels[f.name]?.placeholder,
+        type: f.type,
+        inputType:
+          f.type === 'date' ? 'date' : f.type === 'int' ? 'number' : 'text',
+        operators: operatorsFor(f.type),
+      })),
+    [schema, labels],
+  );
+  const fields = useMemo<Field[]>(
+    () => fieldConfigs.map(({ type: _t, ...rest }) => rest as Field),
+    [fieldConfigs],
+  );
+
+  // 内部受控 state：以 URL 反序列化的 query 为初值
+  const [localQuery, setLocalQuery] = useState<RuleGroupType>(() =>
+    query && !isEmptyFilters(query)
+      ? query
+      : { id: newId('g'), combinator: 'and', rules: [] },
+  );
+
+  // URL 初值（外部变化才重置本地）
+  const externalQueryKey = useMemo(() => serializeFilters(query), [query]);
+  const initialKey = useRef(externalQueryKey);
+  useEffect(() => {
+    const currentKey = serializeFilters(localQuery);
+    if (
+      externalQueryKey !== initialKey.current &&
+      externalQueryKey !== currentKey
+    ) {
+      setLocalQuery(
+        query && !isEmptyFilters(query)
+          ? query
+          : { id: newId('g'), combinator: 'and', rules: [] },
+      );
+      initialKey.current = externalQueryKey;
+    }
+  }, [externalQueryKey, localQuery, query]);
+
+  const conditionCount = useMemo(
+    () => countConditions(localQuery),
+    [localQuery],
+  );
+  const hasFilters = !isEmptyFilters(localQuery);
+
+  /** RQB 树编辑：localQuery 即时更新（不丢焦点）；写 URL 用 debounce（避免每字符搜索） */
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function handleQueryChange(next: RuleGroupType) {
+    setLocalQuery(next);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      onQueryChange(next);
+      searchDebounceRef.current = null;
+    }, DEBOUNCE_MS);
+  }
+  useEffect(
+    () => () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    },
+    [],
+  );
+
+  /** 同组内禁止重复字段：兜底拦截 */
+  function handleAddRule(
+    rule: RuleType,
+    _parentPath: Path,
+    curQuery: RuleGroupType,
+  ): RuleType | boolean {
+    const parent = groupAtPath(curQuery, _parentPath);
+    const used = parent ? usedFieldsIn(parent) : new Set<string>();
+    if (used.has(rule.field)) {
+      const available = fieldConfigs.find((f) => !used.has(f.name));
+      if (available) {
+        return {
+          ...rule,
+          field: available.name,
+          operator: available.operators[0] ?? 'eq',
+        };
+      }
+      return false;
+    }
+    return rule;
+  }
+
+  /** 字段下拉：禁用同组已用字段（当前规则自身所选字段除外） */
+  const fieldSelector = function FilterFieldSelector({
+    value,
+    options,
+    handleOnChange,
+    path,
+    disabled,
+  }: FieldSelectorProps) {
+    const parent = groupAtPath(localQuery, path.slice(0, -1));
+    const used = parent ? usedFieldsIn(parent) : new Set<string>();
+    used.delete(value ?? '');
+    const flat = toFlatOptionArray(options).filter((o) => 'name' in o) as {
+      name: string;
+      label: string;
+    }[];
+    return (
+      <RqbSelect
+        value={(value ?? '').toString()}
+        onChange={(v) => handleOnChange(v)}
+        options={flat.map((o) => ({
+          value: o.name,
+          label: o.label,
+          disabled: used.has(o.name),
+        }))}
+        disabled={disabled || flat.length === 0}
+        ariaLabel="筛选字段"
+        className="rqb-field"
+      />
+    );
+  };
+
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        {hasFilters && (
           <button
             type="button"
-            className="text-xs text-ink-soft transition-colors hover:text-ink"
-            onClick={() => onFiltersChange([])}
+            className="inline-flex items-center gap-1.5 text-xs text-ink-soft transition-colors hover:text-ink"
+            title={`已添加 ${conditionCount} 个条件`}
           >
-            清除全部
+            <Filter className="size-3.5" />
+            {conditionCount}
+            <span>条条件</span>
           </button>
-        </div>
-      )}
+        )}
+      </div>
+
+      <div className="rqb-wrap rounded-xl border border-line bg-surface p-3">
+        <QueryBuilder
+          fields={fields}
+          query={localQuery}
+          onQueryChange={handleQueryChange}
+          onAddRule={handleAddRule}
+          showCombinatorsBetweenRules
+          context={{
+            fieldConfigs,
+            query: localQuery,
+            onCommit: handleQueryChange,
+          }}
+          controlElements={{
+            fieldSelector,
+            combinatorSelector: CombinatorSelector,
+            operatorSelector: OperatorSelector,
+            valueEditor: RuleValueEditor,
+            addRuleAction: AddRuleDropdown,
+            addGroupAction: AddGroupDropdown,
+            removeRuleAction: RemoveAction,
+            removeGroupAction: RemoveAction,
+          }}
+        />
+        {!hasFilters && (
+          <p className="mt-2 text-xs text-ink-soft">
+            点「＋条件」添加筛选，或「＋组」组合分组（并且 / 或者）。
+          </p>
+        )}
+      </div>
     </div>
   );
 }

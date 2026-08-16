@@ -2,10 +2,10 @@
 //!
 //! 事实源 = `libs/filter_kit` 操作符矩阵（[`filter_kit::OPERATOR_MATRIX`]）+ 各域端点声明的
 //! `FILTER_SCHEMA` 白名单（见 [`FILTER_SCHEMAS`]）。前端 `pnpm gen:api` 拉取本端点 →
-//! 生成 `src/lib/filter-schema.ts`，操作符矩阵 / 字段白名单不再双端手抄。
+//! 生成 `src/lib/filter-schema.ts`，操作符矩阵 / RSQL 比较串 / 字段白名单不再双端手抄。
 //!
 //! 新增可筛实体：域内声明并导出 `FILTER_SCHEMA` → 此处加一行 → 前端补 label 映射。
-
+//!
 use axum::Json;
 use filter_kit::FilterSchema;
 use serde_json::{Map, Value, json};
@@ -17,7 +17,8 @@ pub(crate) const FILTER_SCHEMAS: &[(&str, FilterSchema)] = &[("customer", custom
 /// ```json
 /// {
 ///   "operatorMatrix": { "text": ["eq","neq","ilike"], "date": [...], "int": [...] },
-///   "opPrefixes": ["ilike.","neq.","gte.","lte.","gt.","lt.","eq."],
+///   "comparisonOperators": { "eq": "==", "neq": "!=", "gt": "=gt=", "gte": "=ge=",
+///                            "lt": "=lt=", "lte": "=le=", "ilike": "=ilike=" },
 ///   "entities": { "customer": { "fields": [ { "name":"code","type":"text" }, ... ] } }
 /// }
 /// ```
@@ -29,7 +30,10 @@ pub(crate) fn handler() -> Json<Value> {
             json!(ops.iter().map(|op| op.as_str()).collect::<Vec<_>>()),
         );
     }
-    let op_prefixes: Vec<&str> = filter_kit::op_prefixes().iter().map(|(p, _)| *p).collect();
+    let mut comparison_operators = Map::new();
+    for (name, wire) in filter_kit::comparison_ops() {
+        comparison_operators.insert(name.to_string(), json!(wire));
+    }
 
     let mut entities = Map::new();
     for (name, schema) in FILTER_SCHEMAS {
@@ -43,7 +47,7 @@ pub(crate) fn handler() -> Json<Value> {
 
     Json(json!({
         "operatorMatrix": operator_matrix,
-        "opPrefixes": op_prefixes,
+        "comparisonOperators": comparison_operators,
         "entities": entities,
     }))
 }
@@ -60,9 +64,14 @@ mod tests {
         assert!(matrix["text"].as_array().unwrap().contains(&json!("ilike")));
         assert!(!matrix["date"].as_array().unwrap().contains(&json!("ilike")));
         assert!(!matrix["int"].as_array().unwrap().contains(&json!("ilike")));
-        // 前缀从长到短
-        let prefixes = value["opPrefixes"].as_array().unwrap();
-        assert_eq!(prefixes.first().unwrap(), &json!("ilike."));
+        // RSQL 比较串映射齐全且与矩阵操作符对应
+        let comparison = value["comparisonOperators"]
+            .as_object()
+            .expect("comparison");
+        assert_eq!(comparison.len(), 7);
+        assert_eq!(comparison["eq"], json!("=="));
+        assert_eq!(comparison["gte"], json!("=ge="));
+        assert_eq!(comparison["ilike"], json!("=ilike="));
         // 实体字段白名单
         let entities = value["entities"].as_object().expect("entities");
         assert!(entities.contains_key("customer"));

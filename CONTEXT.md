@@ -107,7 +107,7 @@ async fn execute(
         .and_where(Expr::col("is_active").eq(true))
         .to_owned();
 
-    for expr in filter_kit::filter_where(&query.filters, &FILTER_SCHEMA)? {
+    if let Some(expr) = filter_kit::filter_where(query.filter.as_deref(), &FILTER_SCHEMA)? {
         select.and_where(expr);
     }
 

@@ -1,5 +1,5 @@
 // 客户管理：TanStack Query 无限滚动 + DataTable + 表单 Dialog（范式见 docs/architecture.md §4.6/4.7）
-// 筛选状态在 URL（validateSearch）：q（多字段模糊）+ filters（RSQL 子集串），刷新/分享/回退保留
+// 筛选状态在 URL（validateSearch）：filter（RSQL 串），刷新/分享/回退保留
 import { useForm } from '@tanstack/react-form';
 import {
   useInfiniteQuery,
@@ -54,10 +54,9 @@ import {
 } from '@/lib/filters';
 import { cn, maskPhone } from '@/lib/utils';
 
-// 路由 search 校验：筛选状态唯一事实源（URL）。PostgREST 风格——每个字段独立参数
-// （name=ilike.*张*&created_at=gt.2024-03-15），q 为多字段搜索词，页面内转 FilterBar 条件数组
+// 路由 search 校验：筛选状态唯一事实源（URL）。RSQL 风格——单个 `filter` 参数承载整棵
+// 布尔树（name=ilike=*张*;created_at=gt=2024-03-15），URL 反序列化转 FilterBar 布尔树
 const customerSearchSchema = z.record(z.string(), z.string());
-
 export const Route = createFileRoute('/_app/customers/')({
   staticData: { keepAlive: true },
   validateSearch: customerSearchSchema,
@@ -86,7 +85,7 @@ const CUSTOMERS_KEY = ['customers'] as const;
 
 function CustomersPage() {
   const queryClient = useQueryClient();
-  // 筛选状态来自 URL（validateSearch）：q + filters；变更即导航，queryKey 自动联动
+  // 筛选状态来自 URL（validateSearch）：filter（RSQL 串）；变更即导航，queryKey 自动联动
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -96,14 +95,14 @@ function CustomersPage() {
   const [historyTarget, setHistoryTarget] = useState<CustomerItem | null>(null);
 
   // 更新 URL 筛选状态（前进/后退/分享链接均可还原）
-  // 更新 URL 筛选：patch 为字段参数（q / 筛选字段）；旧筛选字段不在 patch 中的删除（保持 URL 干净）
+  // 更新 URL 筛选：patch 为 `filter` 串；旧的 filter 不在 patch 中则删除（保持 URL 干净）
   const updateSearch = useCallback(
     (patch: Record<string, string>) => {
       navigate({
         search: (prev: CustomerSearch) => {
           const next: CustomerSearch = { ...prev };
           for (const key of Object.keys(prev)) {
-            if (key !== 'q' && !(key in patch)) delete next[key];
+            if (!(key in patch)) delete next[key];
           }
           return { ...next, ...patch };
         },
@@ -112,21 +111,19 @@ function CustomersPage() {
     [navigate],
   );
 
-  // URL 动态字段 → FilterBar 条件数组（排除 q）；筛选参数 = 除 q 外的全部字段
-  const filterConditions = useMemo(() => parseFilters(search), [search]);
-  const filterParams = useMemo(() => {
-    const { q: _q, ...rest } = search;
-    return rest;
-  }, [search]);
+  // URL 的 `filter` 参数 → RQB 布尔树（FilterBar 可视化编辑；RQB 自带基于 query 的重解析）
+  const filterTree = useMemo(() => parseFilters(search), [search]);
+  // 序列化后的 RSQL 串透传给后端
+  const filterParam =
+    typeof search.filter === 'string' ? search.filter : undefined;
 
   // 游标分页 → 无限滚动：每页一个 pageParam（next_cursor），pages 累积追加；
-  // queryKey 含 q + 筛选字段：任一变化即换一批数据
+  // queryKey 含 filter 串：任一变化即换一批数据
   const customersQuery = useInfiniteQuery({
     queryKey: [...CUSTOMERS_KEY, search],
     queryFn: ({ pageParam }) =>
       apiSearchCustomers({
-        q: search.q || undefined,
-        filters: filterParams,
+        filter: filterParam,
         limit: PAGE_SIZE,
         nextCursor: pageParam,
       }),
@@ -273,16 +270,13 @@ function CustomersPage() {
         </Button>
       </div>
 
-      {/* 条件构建器：搜索框（多字段模糊，debounce 即时查询）+ ＋筛选 chips；状态在 URL（PostgREST 风格字段参数） */}
+      {/* 条件构建器：React Query Builder 布尔树；状态在 URL（RSQL `filter` 参数） */}
       <FilterBar
-        q={search.q ?? ''}
-        filters={filterConditions}
+        query={filterTree}
         schema={filterSchemas.customer}
         labels={CUSTOMER_FILTER_LABELS}
-        placeholder="搜索名称/编码/电话/联系人…"
-        onQChange={(q) => updateSearch({ q })}
-        onFiltersChange={(conditions) =>
-          updateSearch(serializeFilters(conditions))
+        onQueryChange={(tree) =>
+          updateSearch({ filter: serializeFilters(tree) })
         }
       />
 
