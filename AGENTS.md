@@ -26,6 +26,8 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 | 文本字面搜索 | `search_code` (graph-augmented grep) |
 | 建立索引 | `index_repository` |
 
+> 上表工具来自 `codebase-memory-mcp`（MCP 网关），调用名带前缀，如 `mcp({ tool: "codebase-memory-mcp_search_graph", args: {...} })`；服务器未连接时先 `mcp({ connect: "codebase-memory-mcp" })`。批量调用可用 `mcpScript`。
+
 ## 依赖规则
 
 ```
