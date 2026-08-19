@@ -6,7 +6,8 @@
 
 | 谁 | 读什么 |
 |----|--------|
-| AI（每轮） | 根目录 [AGENTS.md](../AGENTS.md)（摘要）；不要开场读本目录全文 |
+| AI（每轮） | 根目录 [AGENTS.md](../AGENTS.md)（导航 / 打开集）；不要开场读本目录全文 |
+| AI（打开后端文件） | `.cursor/rules/backend.mdc` 自动注入编码 / 测试摘要 |
 | AI（新建域 / 端点 / Job） | [ai/backend.md](ai/backend.md) 对应小节 |
 | AI（错误 key / HTTP / 陷阱） | [ai/conventions.md](ai/conventions.md) |
 | AI（术语） | 根目录 [CONTEXT.md](../CONTEXT.md) |

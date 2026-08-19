@@ -58,17 +58,20 @@ build_linux_x86_64_gnu_ci:
 sqlx_up:
     cargo run --package migrator
 
+who-uses symbol:
+    @rg -l --type rust '{{symbol}}' features cross_domain bin libs infrastructure | sort
+
 ai-check crate:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "=== Architecture test ==="
-    cargo test -p server arch_test 2>&1 | tail -3
+    cargo test -p server arch_test --quiet 2>&1 | tail -3
     echo "=== Format check ===
     cargo fmt --all -- --check 2>&1 | tail -3
     echo "=== Check {{crate}} ==="
-    cargo check -p {{crate}} 2>&1 | tail -5
+    cargo check -p {{crate}} --message-format=short 2>&1 | tail -5
     echo "=== Test {{crate}} ==="
-    cargo test -p {{crate}} 2>&1 | tail -10
+    cargo test -p {{crate}} --quiet 2>&1 | tail -10
     echo "--- Done ---"
 
 pre_commit:

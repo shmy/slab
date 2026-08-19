@@ -57,7 +57,7 @@
 
 | 你的状态 | 用这个 |
 |---------|--------|
-| 改已有端点 / 加断言 | 不读 skill，直接改 |
+| 改已有端点 / 加断言 | 不读 skill，直接改（打开该文件即可） |
 | 新建域或新 endpoint 文件 | `rust-backend` → `docs/ai/backend.md` |
 | 第一次给某端点补测试 / 写 Hurl | `rust-tests` |
 | 用户要求 TDD | `tdd` |

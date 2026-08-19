@@ -1,0 +1,24 @@
+---
+description: Rust 切片编码与测试摘要。仅当打开后端文件时注入。
+globs: features/**,cross_domain/**,infrastructure/**,libs/**,bin/**
+alwaysApply: false
+---
+
+# 后端编码 / 测试摘要
+
+导航、打开集、依赖规则以根目录 `AGENTS.md` 为准。本文件不要在改 `frontend/` 时读取。
+
+## 编码
+
+- **Endpoint**：`features/{domain}/endpoint/{resource}_{action}.rs`（DTO + utoipa + handler + execute + tests）；新文件对照 `features/identity/endpoint/account_create.rs`（写）/ `account_search.rs`（列表），**只 Read 到 `mod tests` 之前**；禁止 `endpoint/{action}/` 子目录
+- **handler / execute**：`#[tracing::instrument]`；execute 另加 `#[inline]`；有 `pg_pool` 则 `skip(pg_pool)`
+- **Port** 名词（`by_id`）/ **Repository** 动词（`create`）；`conn` 第一参数；Port 单文件 `{domain}_contract/port.rs`；Repository 仅当 ≥2 个写端点共用才抽
+- **错误**：`rootcause::Result` + thiserror；`#[error("snake_case_key")]`；key 必须有 en-US/zh-CN 翻译；共享 key 只放 `shared.ftl`；禁止参数化 Display、禁止 `report!()` / `from_msg()`
+- **列表**：SeaQuery，禁止 NULL 哨兵；搜索用 `paginate*`（LEFT JOIN 用 `paginate_with` + 限定列；方向固定 DESC；tuple 列序 = select 列序）
+- **可筛字段**：后端 `FILTER_SCHEMA`（RSQL 单参数 `filter`）→ `pnpm gen:api` → 前端 label；加实体另要 `bin/server/meta.rs` 一行
+- **枚举**：`#[repr(i16)]` 必须 `serde_repr`；Contract Entity 不承载 created_at/updated_at；migration 应用后不可编辑
+- **领域**：完成 / 检验结论 / 批准 不同；审批流状态 / 生命周期状态 两条时间线。术语以 `CONTEXT.md` 为准，不要每次先读
+
+## 测试
+
+端点同文件 `mod tests`；`#[sqlx::test]` → `migration::run_migrations` → `appctx::testing::build`；先测 execute。Hurl：`just e2e`，jsonpath 用 `$.id`。
