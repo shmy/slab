@@ -33,7 +33,7 @@ Look for the originating spec, in this order:
 
 ### 3. Identify the standards sources
 
-Anything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`.
+Anything in the repo that documents how code should be written, such as `CODING_STANDARDS.md` or `CONTRIBUTING.md`。本仓：Rust 看 `.cursor/rules/backend.mdc`（及按需 `docs/ai/conventions.md`）；前端看 `frontend/AGENTS.md` 与 `.cursor/rules/frontend-*.mdc`。
 
 On top of whatever the repo documents, the Standards axis always carries the **smell baseline** below — a fixed set of Fowler code smells (_Refactoring_, ch.3) that applies even when a repo documents nothing. Two rules bind it:
 

@@ -1,0 +1,12 @@
+---
+description: 前端鉴权与 API 客户端。打开 api/token/auth 时注入。
+globs: frontend/src/lib/api.ts,frontend/src/lib/token.ts,frontend/src/store/auth.ts,frontend/src/routes/login.tsx
+alwaysApply: false
+---
+
+# Auth / API
+
+- xior：自动附 Bearer；401 同/跨标签页单飞刷新；旧 access token 防重复刷新；Problem Details 归一化。
+- 登录 / 页面加载先 `GET /profile/current` 再存用户（不解码 JWT）。刷新成功只重试原请求，不额外拉 profile。
+- 令牌在 `src/lib/token.ts`（localStorage）；UI 状态在 `src/store/auth.ts`。
+- 契约：Grep `api-schema.d.ts` 或 `jq` 单 path；禁止整份 Read。刷新 `pnpm gen:api`。

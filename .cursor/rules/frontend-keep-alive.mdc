@@ -1,0 +1,13 @@
+---
+description: 多标签与 keep-alive。打开相关组件时注入。
+globs: frontend/src/components/keep-alive.tsx,frontend/src/components/PageTabs.tsx,frontend/src/store/tabs.ts,frontend/src/routes/_app.tsx,frontend/src/routes/__root.tsx
+alwaysApply: false
+---
+
+# Keep-alive / Tabs
+
+- `KeepAliveProvider` 在根；布局用 `KeepAliveOutlet` 替代 `<Outlet />`。页面 `staticData: { keepAlive: true }` 才保活。
+- Home `/` 钉住：不可关、无右键菜单。
+- 冻结用 Suspense（throw 未 resolve 的 promise）。禁止改回 `<Activity>`：`mode="hidden"` 仍会渲染，缓存页会被当前路由覆盖。
+- 是否当前页用 `useMatches` 叶子 pathname，不用 `useLocation`（transition 时 location 先于 matches 更新）。
+- PageTabs 关 / 刷新标签时调 `useKeepAlive()` 的 `destroy` / `refresh`。

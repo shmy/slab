@@ -1,28 +1,30 @@
 # Skills 参考手册
 
-日常自动加载的 skill 只在 `.agents/skills/`（6 个，description 进系统提示）。
-流程 / 设计 / 调研类在 `.agents/optional-skills/`，**不进系统提示**，用户点名再读。
+**没有 always-on skill。** `.agents/skills/` 为空；description 不进系统提示。
 
-来源：mattpocock 工程技能集。optional 路径：`optional-skills/<name>/`。
-
----
-
-## 日常（always-on）
-
-| skill | 何时读全文 |
-|-------|------------|
-| `rust-backend` | 新建域、新加 endpoint 文件、架构落位不确定 → 实际打开 `docs/ai/backend.md` 对应小节 |
-| `rust-tests` | 新增测试模块、某端点第一次补集成测试、写 Hurl |
-| `tdd` | 用户明确要求 TDD / red-green-refactor |
-| `code-review` | 用户要求审查分支 / PR / 自某点以来的改动 |
-| `diagnosing-bugs` | 用户说 diagnose / debug this，或报告难复现故障 |
-| `resolving-merge-conflicts` | 正在解决 merge/rebase 冲突 |
+全部 skill 在 `.agents/optional-skills/`，**用户点名再读**。来源：mattpocock 工程技能集。路径：`optional-skills/<name>/`。
 
 改已有 endpoint 的 `execute` / 在已有 `mod tests` 里加断言：**不要**先读 skill。
 
 ---
 
-## 点名再开（optional）
+## 点名再开
+
+### 本仓编码（读文档，不是 skill）
+
+| 你的状态 | 打开 |
+|---------|------|
+| 改已有端点 / 加断言 | 该文件（`backend.mdc` 已注入） |
+| 新建域或新 endpoint 文件 | `docs/ai/backend.md` 对应小节 |
+| 第一次补测试 / 写 Hurl | identity 同文件 `mod tests` + `docs/E2E_HURL.md` |
+| 错误 key / HTTP / 陷阱 | `docs/ai/conventions.md` |
+
+### 审查 / 调试 / TDD
+
+- `tdd` — 用户明确要求 TDD / red-green-refactor
+- `code-review` — 审查分支 / PR / 自某点以来的改动
+- `diagnosing-bugs` — 用户说 diagnose / debug this，或难复现故障
+- `resolving-merge-conflicts` — 正在解决 merge/rebase 冲突
 
 ### 主流程（idea → ship）
 
@@ -57,9 +59,9 @@
 
 | 你的状态 | 用这个 |
 |---------|--------|
-| 改已有端点 / 加断言 | 不读 skill，直接改（打开该文件即可） |
-| 新建域或新 endpoint 文件 | `rust-backend` → `docs/ai/backend.md` |
-| 第一次给某端点补测试 / 写 Hurl | `rust-tests` |
+| 改已有端点 / 加断言 | 不读 skill，直接改 |
+| 新建域或新 endpoint 文件 | `docs/ai/backend.md` |
+| 第一次给某端点补测试 / 写 Hurl | identity `mod tests` + `docs/E2E_HURL.md` |
 | 用户要求 TDD | `tdd` |
 | 有个模糊想法 | `grill-with-docs` |
 | 讨论清楚了要做 | `to-spec` → `to-tickets` → `implement` |

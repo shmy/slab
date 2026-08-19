@@ -1,24 +1,48 @@
 ---
-description: Rust 切片编码与测试摘要。仅当打开后端文件时注入。
-globs: features/**,cross_domain/**,infrastructure/**,libs/**,bin/**
+description: Rust 切片导航、编码与测试。仅当打开后端文件时注入。
+globs: features/**,cross_domain/**,infrastructure/**,libs/**,bin/**,e2e/**
 alwaysApply: false
 ---
 
-# 后端编码 / 测试摘要
+# 后端
 
-导航、打开集、依赖规则以根目录 `AGENTS.md` 为准。本文件不要在改 `frontend/` 时读取。
+跨域：只读 Port、Outbox/Inbox、模块内领域事件；例外——同事务 `audit_contract::AuditService`（`record_create` / `record_updated` / `record_deleted`）。
+
+## 打开集
+
+| 任务 | 打开 | 到此停止 |
+|------|------|----------|
+| 改已有 execute / handler | 该 endpoint，Read 到 `mod tests` 之前 | conventions、CONTEXT、邻域 endpoint |
+| 同文件加断言 | 同文件 `mod tests` | conventions |
+| 新错误 key | 该 `error.rs` + `en-US`/`zh-CN` 各一行 | 全文 conventions |
+| 对照蓝本新建端点 | identity 蓝本只到 `mod tests` + `docs/ai/backend.md`「新增功能」 | 别的域的 endpoint |
+| 改 contract / 事件 / DTO | `just who-uses <符号>`，只 Read 命中处 | ≥3 个 crate 先问 |
 
 ## 编码
 
-- **Endpoint**：`features/{domain}/endpoint/{resource}_{action}.rs`（DTO + utoipa + handler + execute + tests）；新文件对照 `features/identity/endpoint/account_create.rs`（写）/ `account_search.rs`（列表），**只 Read 到 `mod tests` 之前**；禁止 `endpoint/{action}/` 子目录
+- **Endpoint**：`features/{domain}/endpoint/{resource}_{action}.rs`（DTO + utoipa + handler + execute + tests）；新文件对照 `account_create.rs`（写）/ `account_search.rs`（列表）；禁止 `endpoint/{action}/` 子目录
 - **handler / execute**：`#[tracing::instrument]`；execute 另加 `#[inline]`；有 `pg_pool` 则 `skip(pg_pool)`
 - **Port** 名词（`by_id`）/ **Repository** 动词（`create`）；`conn` 第一参数；Port 单文件 `{domain}_contract/port.rs`；Repository 仅当 ≥2 个写端点共用才抽
-- **错误**：`rootcause::Result` + thiserror；`#[error("snake_case_key")]`；key 必须有 en-US/zh-CN 翻译；共享 key 只放 `shared.ftl`；禁止参数化 Display、禁止 `report!()` / `from_msg()`
+- **错误**：`rootcause::Result` + thiserror；`#[error("snake_case_key")]`；key 必须有 en-US/zh-CN；共享 key 只放 `shared.ftl`；禁止参数化 Display、禁止 `report!()` / `from_msg()`
 - **列表**：SeaQuery，禁止 NULL 哨兵；搜索用 `paginate*`（LEFT JOIN 用 `paginate_with` + 限定列；方向固定 DESC；tuple 列序 = select 列序）
-- **可筛字段**：后端 `FILTER_SCHEMA`（RSQL 单参数 `filter`）→ `pnpm gen:api` → 前端 label；加实体另要 `bin/server/meta.rs` 一行
+- **可筛字段**：`FILTER_SCHEMA` → `pnpm gen:api` → 前端 label；加实体另要 `bin/server/meta.rs` 一行
 - **枚举**：`#[repr(i16)]` 必须 `serde_repr`；Contract Entity 不承载 created_at/updated_at；migration 应用后不可编辑
 - **领域**：完成 / 检验结论 / 批准 不同；审批流状态 / 生命周期状态 两条时间线。术语以 `CONTEXT.md` 为准，不要每次先读
 
 ## 测试
 
-端点同文件 `mod tests`；`#[sqlx::test]` → `migration::run_migrations` → `appctx::testing::build`；先测 execute。Hurl：`just e2e`，jsonpath 用 `$.id`。
+端点同文件 `mod tests`；`#[sqlx::test]` → `migration::run_migrations` → `appctx::testing::build`；先测 execute。第一次补测试对照 identity。Hurl：`just e2e`，`e2e/env`，jsonpath `$.id`，细节 `docs/E2E_HURL.md`。
+
+## 按需
+
+- 新建域 / 新 endpoint 文件 / Job / 流程 / 事件 → `docs/ai/backend.md` 对应小节
+- 错误 key / HTTP / 可筛字段 / 陷阱 → `docs/ai/conventions.md` 对应小节
+- 术语争议 → `CONTEXT.md`
+
+## 依赖
+
+`features/{domain}` → 自己的 `{domain}_contract` + 其他 `*_contract`（只读 Port）。`cross_domain/` 只放被 ≥2 feature 依赖的业务规则（approval / doc_numbering / costing / inventory_ledger）。禁止 contract 互依、切片依赖其他 `features/{other}` runtime、往 `cross_domain/` 塞技术件（归 `infrastructure/`）。验证：`cargo test -p server arch_test`。
+
+## 命令
+
+`cargo check -p <crate> --message-format=short` / `cargo test -p <crate> --quiet`；`just who-uses <符号>`；`just e2e` / `just sqlx_up`。

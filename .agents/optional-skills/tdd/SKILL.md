@@ -7,7 +7,7 @@ description: Test-driven development. Use only when the user explicitly asks for
 
 TDD is the red → green loop. This skill is the reference that makes that loop produce tests worth keeping: what a good test is, where tests go, the anti-patterns, and the rules of the loop. Every section applies on every cycle — consult them before and during the loop, not after.
 
-If a test name or assertion involves domain terminology (审批流 / 生命周期、完成 vs 检验结论 vs 批准), read `CONTEXT.md`. Do not open it for ordinary mechanical assertions. 编码约定以 `AGENTS.md` 为准，细则在 `docs/ai/`。
+If a test name or assertion involves domain terminology (审批流 / 生命周期、完成 vs 检验结论 vs 批准), read `CONTEXT.md`. Do not open it for ordinary mechanical assertions. 编码约定以 `.cursor/rules/backend.mdc` 为准，细则在 `docs/ai/`。
 
 ## What a good test is
 

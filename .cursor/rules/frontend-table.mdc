@@ -1,0 +1,12 @@
+---
+description: VirtualTable 与 React Compiler 豁免。打开表格相关文件时注入。
+globs: frontend/src/components/VirtualTable.tsx,frontend/src/components/DataTable.tsx,frontend/src/routes/_app/settings/users.tsx
+alwaysApply: false
+---
+
+# Table
+
+- TanStack Table v9：`useTable` + `tableFeatures`，不是 `useReactTable`。
+- `VirtualTable.tsx` / `users.tsx` 必须保留 `'use no memo'`（React Compiler 全局开启）。
+- `location.search` 是对象，拼 URL 用 `location.searchStr`。
+- 测输入不要用 native setter + `dispatchEvent('input')`（React 19 会重置）；聚焦可见输入后用 CDP `Input.insertText`。

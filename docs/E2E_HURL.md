@@ -149,7 +149,7 @@ hurl --test --variables-file e2e/env --variable base_url=http://127.0.0.1:3000 e
 | 依赖 | 真实 server + DB                | 可连接的 PostgreSQL（通常 `DATABASE_URL`）     |
 | 侧重 | HTTP 契约、中间件、整条用户路径 | `execute`、表数据、`_pg_events` / `caches` 等 |
 
-写测清单与 crate 约定见 `.agents/skills/rust-tests`。
+写测清单与 crate 约定见 identity 同文件 `mod tests`，以及 `docs/ai/conventions.md`「测试」。
 
 ## 运行前置
 

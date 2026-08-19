@@ -1,6 +1,6 @@
 # 后端按需参考（AI）
 
-根目录 `AGENTS.md` 是 always-on 导航。**本文件不要每轮先读**——只在新建域、新 endpoint 文件、加 Job/流程/事件、或动基础设施时打开对应小节。
+根 `AGENTS.md` 是路口；打开后端文件后看 `.cursor/rules/backend.mdc`。**本文件不要每轮先读**——只在新建域、新 endpoint 文件、加 Job/流程/事件、或动基础设施时打开对应小节。
 
 切片边界、错误 key、Port/Repository 动词名词：打开后端文件时以 `.cursor/rules/backend.mdc` 为准，细则 [conventions.md](conventions.md)，这里不重复。
 

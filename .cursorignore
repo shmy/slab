@@ -1,3 +1,8 @@
 frontend/openapi.json
 frontend/src/lib/api-schema.d.ts
 frontend/src/routeTree.gen.ts
+target/
+frontend/dist/
+frontend/node_modules/
+Cargo.lock
+frontend/pnpm-lock.yaml
