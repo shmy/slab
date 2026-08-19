@@ -1,7 +1,10 @@
 # Skills 参考手册
 
-> 项目 `.agents/skills/` 下的 22 个 skills，来源：mattpocock 工程技能集
-> 更新时间：2026-07-27
+日常自动加载的 skill 在 `.agents/skills/`（约 11 个）。
+grill / wayfinder / to-spec 等流程在 `.agents/optional-skills/`，**不进系统提示**，用户点名再读。
+
+来源：mattpocock 工程技能集。下表路径：optional 的在 `optional-skills/<name>/`。
+
 
 ---
 

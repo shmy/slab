@@ -48,7 +48,7 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 
 | 场景 | 才读 |
 |------|------|
-| 新建域、新加 endpoint 文件、架构落位不确定 | `.agents/skills/rust-backend/SKILL.md` |
+| 新建域、新加 endpoint 文件、加 Job/流程/事件 | `docs/ai/backend.md`（对应小节） |
 | 新增测试模块、某端点第一次补集成测试、写 Hurl | `.agents/skills/rust-tests/SKILL.md` |
 | 用户明确要求 TDD | `.agents/skills/tdd/SKILL.md` |
 | 不熟的流程怎么走 | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
@@ -59,6 +59,22 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 | 引入或争议领域术语 | `CONTEXT.md` |
 
 改已有 endpoint 的局部实现、在已有 `mod tests` 里加断言：不要先读 skill。
+
+grill / wayfinder / to-spec 等流程 skill 在 `.agents/optional-skills/`，**不自动加载**；用户点名时再读。
+
+## 读文件（省 token）
+
+- 改 endpoint 实现：Read 到 `mod tests` 之前，不要整文件（测试块大约占一半）
+- **禁止**整份 Read `frontend/openapi.json`（234KB）或 `frontend/src/lib/api-schema.d.ts`（130KB）。Grep 类型名 / `jq` 单 path；刷新契约用 `pnpm gen:api`
+- 大基础设施文件（如 `infrastructure/job_queue/lib.rs`）用 GitNexus `context({name})`，不要整文件
+- 加 Job / 流程 / 事件 / 新域：再读 [docs/ai/backend.md](docs/ai/backend.md) 对应小节
+
+## 命令输出
+
+- `cargo check -p <crate>`、`cargo test -p <crate> --quiet`；**禁止**无 `-p` 的 workspace test / clippy
+- `just pre_commit` 只在提交前
+- 前端日常：`tsc --noEmit` + `pnpm run check`；`pnpm run build` 只在提交前
+- postgres-mcp / fff-mcp：用户没在查库就不要 `GetMcpTools`
 
 ## 依赖规则
 
@@ -134,50 +150,14 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 - `just e2e` → 分文件顺序执行，间隔 2s 防 429
 - 变量文件 `e2e/env`，调试验证用 `--test --variables-file`
 
-## 新增功能
-
-```
-├── 已有域加端点 → 复制 docs/templates/endpoint_template.rs → 改 DTO/execute/SQL → 注册 mod
-├── 新建域 → contract（实体/Port/事件/错误）→ runtime（端点/仓储/lib.rs）→ workspace + modules.rs
-├── 跨域读 → import {other}_contract::port::{Domain}Port（禁止 import features/{other}/*）
-├── 写端点接入变更历史 → 同事务调 `audit_contract::AuditService`（`record_create` / `record_updated` / `record_deleted`，传 `txn` + `&Operator` + before/after 实体；漏接不报编译错，端点测试断言 `audit_logs` 兜底；identity 三端点作示范）
-├── 加事件 → contract/events.rs 实现 `shared_contract::event::Event` + subscriber/ + Module::register + publish
-├── 加流程 → infrastructure/flow 定义 `#[task]` + `workflow!`，AppCtx.flow.run/resume（见 [docs/FLOW.md](docs/FLOW.md)）
-├── 加 Job → 域内定义 `Job` trait 实现（payload 即类型）+ handler `async fn(T, &AppCtx)`，
-│   在 `DomainModule::register` 里 `r.jobs.register::<T, _>(|job, ctx| Box::pin(handler(job, ctx)))`，
-│   端点入队 `state.jobs.enqueue(T { .. }).await?`（见 [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md)）
-├── 加周期任务 → 同加 Job 定义 `Job` + handler，再在 `register` 里一行 `r.scheduled("0 0 3 * * *", T { .. })`
-│   （cron 到点 enqueue，执行语义归 job_queue；触发 master-only，执行多进程竞争）
-├── 改 DB → infrastructure/migration/versions/ 新 .sql
-```
-
-## 关键基础设施
-
-| Crate | 用途 |
-|-------|------|
-| `infrastructure/db` | PgPool |
-| `infrastructure/event_bus` | 事件总线（广播事件投递；Pg Outbox 默认 / NATS JetStream，feature 切换）→ [docs/EVENT_BUS.md](docs/EVENT_BUS.md) |
-| `infrastructure/flow` | sayiir 持久化工作流（长流程/信号/超时编排）→ [docs/FLOW.md](docs/FLOW.md) |
-| `infrastructure/kv` | 可插拔 KV 缓存后端（Pg UNLOGGED 默认 / redb / redis，feature 切换）→ [docs/KV.md](docs/KV.md) |
-| `infrastructure/job_queue` | 后台任务队列（点对点命令式 Job：入队/延迟/重试退避/超时/终态；pg 默认 / sqlite 单机，feature 切换；自研 sqlx 0.9，无 Apalis）→ [docs/JOB_QUEUE.md](docs/JOB_QUEUE.md) |
-| `infrastructure/web` | ValidJson / ValidQuery / ValidPath + Problem Details |
-| `infrastructure/http_auth` | Bearer JWT 鉴权中间件 |
-| `infrastructure/locale` | Fluent 本地化中间件 |
-| `libs/authn_kit` | JWT 访问令牌提取与缓存 key 构建（auth 缓存 key 方案） |
-| `libs/authz_kit` | Cedar 授权策略评估（待接入，暂无调用方） |
-| `libs/trace_kit` | OpenTelemetry |
-| `libs/filter_kit` | RSQL 风格筛选解析（单个 `filter` 参数承载布尔树：`;`=AND/`,`=OR/括号分组；`name=ilike=*张*;created_at=gt=2024-03-15`，字段白名单防注入）；操作符矩阵 + RSQL 比较串为协议事实源，经 `GET /api/v1/meta/filter-schemas` 导出 → 前端 `pnpm gen:api` 生成 `src/lib/filter-schema.ts`（勿手抄，见 [docs/adr/0003](docs/adr/0003-filter-schema-contract.md)） |
-| `libs/sched_kit` | tokio-cron-scheduler |
-| `shared_contract` | ID、keyset 游标分页（`query::cursor_page::{paginate,paginate_with}`）、PhoneNumber 等共享值对象 + `event::Event`（跨域事件 trait） |
-
 ## 常用命令
 
 | 命令 | 用途 |
 |------|------|
-| `cargo check -p <crate>` | 单 crate 编译（日常开发首选） |
-| `cargo test -p <crate>` | 单 crate 测试 |
+| `cargo check -p <crate>` | 单 crate 编译 |
+| `cargo test -p <crate> --quiet` | 单 crate 测试（不要去掉 `-p` / `--quiet`） |
 | `cargo test -p server arch_test` | 架构边界检查（无需 DB） |
-| `just pre_commit` | machete → cargo-sort → fmt → clippy |
+| `just pre_commit` | 提交前：machete → cargo-sort → fmt → clippy |
 | `just e2e` | Hurl E2E |
 | `just sqlx_up` | 迁移数据库 |
 | `cd frontend && pnpm run dev` | 前端开发服务器（端口 3000） |

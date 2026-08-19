@@ -253,10 +253,10 @@ Biome 的 CSS parser 不识别 `@theme` → `index.css` 在 biome `files.include
 
 ```bash
 pnpm run dev        # 开发服务器（http://localhost:3000）
-pnpm run build      # 生产构建
+pnpm run typecheck  # tsc --noEmit 类型检查（日常改完必跑）
+pnpm run check      # biome check --write（日常改完必跑）
+pnpm run build      # 生产构建（提交前，不要每次改完都跑）
 pnpm run preview    # 预览生产构建
-pnpm run typecheck  # tsc --noEmit 类型检查
-pnpm run check      # biome check --write（lint + format）
 pnpm run format     # biome format --write
 ```
 
@@ -270,10 +270,10 @@ pnpm run format     # biome format --write
 
 ## 8. 对接后端契约（省 token 工作流）
 
-后端（Rust + utoipa）的 OpenAPI 契约可从运行中的服务直接提取，**不要为拿契约逐个读后端源码**：
+后端（Rust + utoipa）的 OpenAPI 契约可从运行中的服务直接提取，**不要为拿契约逐个读后端源码**，也**不要把快照整文件读进上下文**：
 
-1. **`openapi.json`**（仓库内契约快照）：`pnpm gen:api` → 直拉后端原生 `GET /openapi.json`（运行时序列化 `ApiDoc::openapi()`，与运行二进制永远一致）。
-2. **`src/lib/api-schema.d.ts`**：由 spec 生成的类型，`api.ts` 已引用 `components['schemas'][...]`；对接新端点时优先用生成类型而非手写接口。重新生成（当前 TS7 与生成器不兼容，需临时 TS5 环境）：
+1. **按名查类型**：Grep `src/lib/api-schema.d.ts` 的 schema 名（该文件约 130KB，禁止整份 Read）。`api.ts` 已引用 `components['schemas'][...]`。
+2. **按 path 查 spec**：对 `openapi.json` 用 `jq` 取单条 path / schema（该文件约 234KB，禁止整份 Read）。刷新快照：`pnpm gen:api` → 直拉后端原生 `GET /openapi.json`。重新生成类型（当前 TS7 与生成器不兼容，需临时 TS5 环境）：
    ```bash
    cd /tmp && npm i typescript@5 openapi-typescript \
    && npx openapi-typescript <frontend>/openapi.json -o <frontend>/src/lib/api-schema.d.ts

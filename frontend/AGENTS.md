@@ -21,7 +21,7 @@ Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (
 - `pnpm run check` - `biome check --write` (lint + format)
 - `pnpm run format` - `biome format --write`
 
-**After every change**: run `pnpm exec tsc --noEmit && pnpm run check && pnpm run build` (all three must pass).
+**After a change**: `pnpm exec tsc --noEmit && pnpm run check`（必须过）。`pnpm run build` 只在提交前跑，不要每次改完都 build。
 
 ## Architecture essentials
 
@@ -31,10 +31,9 @@ Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (
 - **Keep-alive**: `src/components/keep-alive.tsx` — `KeepAliveProvider` (root) + `KeepAliveOutlet` (replaces `<Outlet />` in layout). A page opts in with `staticData: { keepAlive: true }` in its route options. PageTabs calls `useKeepAlive()`'s `destroy`/`refresh` when closing/refreshing tabs.
 - **Auth**: `src/lib/api.ts`（xior，自动附 Bearer，401 同/跨标签页单飞刷新、旧 access token 防重复刷新，Problem Details 归一化）+ `src/lib/token.ts`（localStorage 令牌/用户）+ `src/store/auth.ts`（react-store）。登录/页面加载时先 fetch `GET /profile/current` 再存用户（不解码 JWT）；刷新成功只重试原请求，不额外请求 profile。dev 代理 `/api` → `http://127.0.0.1:8081`（rsbuild.config.ts `server.proxy`）。
 - **Backend contract**（对接后端时按此顺序，避免逐个读 Rust 源码；细节见 `docs/architecture.md` §8）：
-  1. `openapi.json`（契约快照，`pnpm gen:api` 直拉后端原生 `/openapi.json`）
-  2. `src/lib/api-schema.d.ts`（由 spec 生成的类型，api.ts 已引用 `components['schemas'][...]`；重新生成命令见 §8）
-  3. `e2e/*.hurl`（真实请求/响应样本，含错误断言）
-  4. curl 实测运行中的后端；最后才读后端源码（只看契约面 DTO/错误，不看 SQL/实现）
+  1. Grep `src/lib/api-schema.d.ts` 里的 schema 名，或 `jq` 取 `openapi.json` 的单条 path——**禁止整份 Read** 这两个文件（合计 ~360KB）
+  2. `e2e/*.hurl`（真实请求/响应样本，含错误断言）
+  3. curl 实测运行中的后端；最后才读后端源码（只看契约面 DTO/错误，不看 SQL/实现）。刷新快照：`pnpm gen:api`
 - **State**: `@tanstack/react-store` (`createStore` + `useSelector`); stores in `src/store/` (auth/theme/fontSize/sidebar/tabs).
 - **Tables**: `src/components/VirtualTable.tsx` (TanStack Table v9 + virtual scrolling). Files using it (`VirtualTable.tsx`, `users.tsx`) carry `'use no memo'` — do not remove.
 - **Theme**: semantic CSS variables (`canvas/surface/line/ink/accent/...`) in `index.css` for light/dark; components use semantic classes, **no `dark:` variants**. Sidebar is always dark regardless of theme.
@@ -44,7 +43,7 @@ Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (
 - Sidebar always dark; prefer semantic color classes over `dark:`.
 - New pages: `src/routes/_app/xxx.tsx`; page root uses `flex min-h-0 flex-1 flex-col` to fill remaining height. Add `staticData: { keepAlive: true }` to opt into tab state retention.
 - Sidebar nav items: `navItems` in `src/components/SidebarNav.tsx` (grouped submenus supported); breadcrumbs derive from it.
-- Keep code tidy: extract shared components/logic, no leftover debug code. Verify final state with the three checks above.
+- Keep code tidy: extract shared components/logic, no leftover debug code. Verify with `tsc` + `pnpm run check`；提交前再 `pnpm run build`。
 
 ## Known pitfalls (details in docs/architecture.md §5)
 
