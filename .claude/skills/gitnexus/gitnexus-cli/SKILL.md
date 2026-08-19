@@ -17,7 +17,7 @@ Commands below use `node .gitnexus/run.cjs <command>` — the project-local runn
 node .gitnexus/run.cjs analyze
 ```
 
-Run from the project root. This parses all source files, builds the knowledge graph, writes it to `.gitnexus/`, and generates CLAUDE.md / AGENTS.md context files.
+Run from the project root. This parses all source files and writes the graph to `.gitnexus/`. This repo's `.gitnexusrc` sets `skipContextFiles` + `skipSkills`, so analyze **must not** rewrite `AGENTS.md` / `CLAUDE.md` / GitNexus skill files.
 
 | Flag           | Effect                                                           |
 | -------------- | ---------------------------------------------------------------- |
@@ -75,8 +75,7 @@ Lists all repositories registered in `~/.gitnexus/registry.json`. The MCP `list_
 
 ## After Indexing
 
-1. **Read `gitnexus://repo/{name}/context`** to verify the index loaded
-2. Use the other GitNexus skills (`exploring`, `debugging`, `impact-analysis`, `refactoring`) for your task
+索引写好即可继续工作。不要为了「走完仪式」再读一遍 exploring / guide / impact skill。需要工具细节时再打开对应文件。
 
 ## Troubleshooting
 

@@ -5,28 +5,60 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 
 ## 前端（`frontend/`）
 
-管理后台 SPA：**React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui（base-nova，@base-ui/react）+ Tailwind 4（Nord 语义变量主题）**。独立于后端 workspace（pnpm 管理，开发端口 3000）。
+独立 SPA。约定只看 `frontend/AGENTS.md`，不要在本文件展开。
 
-- 前端上下文以 `frontend/AGENTS.md` 为准；改表格 / keep-alive / 主题前必读 `frontend/docs/architecture.md`（§5 踩坑记录）
-- 文件式路由 `frontend/src/routes/`，`routeTree.gen.ts` 自动生成（禁手改）；布局 `_app.tsx` = 登录守卫 + 侧边栏 + 顶栏 + PageTabs + KeepAliveOutlet
-- 多标签页 / keep-alive：`components/PageTabs.tsx` + `components/keep-alive.tsx`（Suspense 挂起冻结，**勿换回 `<Activity>`**）；页面用 `staticData: { keepAlive: true }` 参与缓存
-- 表格：`components/VirtualTable.tsx`（TanStack Table v9 `useTable` + 虚拟滚动）；`VirtualTable.tsx` / `users.tsx` 顶部 `'use no memo'` 豁免（React Compiler 冲突）**不可删**
-- 状态：`@tanstack/react-store`，`store/`（auth/theme/fontSize/sidebar/tabs）；登录已接后端 `identity`（xior，Bearer JWT + 401 单飞刷新；dev 走 rsbuild proxy `/api` → `127.0.0.1:8081`）
-- 命令：`pnpm run dev` / `typecheck` / `check` / `build`；改完跑 `pnpm exec tsc --noEmit && pnpm run check && pnpm run build`
+## 代码导航（只用 GitNexus）
 
-## 代码导航
+默认：GitNexus MCP（`query` / `context` / `impact` / `detect_changes` / `rename`）。
+**禁止**再用 `codebase-memory-mcp`（`search_graph` / `trace_path` / `query_graph` 等）做同一件事。字面搜索用 Grep。
 
 | 想做什么 | 用什么 |
 |---------|--------|
-| 自然语言搜符号/函数 | `search_graph` query="xxx" |
-| 追踪调用链（谁调了它/它调了谁） | `trace_path` |
-| 模块架构/热点概览 | `get_architecture` |
-| 按限定名读源码 | `get_code_snippet` |
-| 复杂图查询 | `query_graph` (Cypher) |
-| 文本字面搜索 | `search_code` (graph-augmented grep) |
-| 建立索引 | `index_repository` |
+| 不熟的概念 / 流程 | `query({query: "..."})` |
+| 某符号的调用方 / 被调方 | `context({name: "..."})` |
+| 公开面改动的 blast radius | `impact`（见下，不要每个符号都跑） |
+| 重命名公开符号 | `rename`（禁止 find-and-replace） |
+| 提交前范围核对 | `detect_changes()` 一次即可 |
 
-> 上表工具来自 `codebase-memory-mcp`（MCP 网关），调用名带前缀，如 `mcp({ tool: "codebase-memory-mcp_search_graph", args: {...} })`；服务器未连接时先 `mcp({ connect: "codebase-memory-mcp" })`。批量调用可用 `mcpScript`。
+索引过期：`node .gitnexus/run.cjs analyze`。本仓库 `.gitnexusrc` 禁止 analyze 回写 AGENTS.md / skills。
+
+若 GitNexus skill 正文仍写「改任何符号前 MUST impact」，**以本节分级为准**。
+
+### Impact 分级
+
+**要跑** `impact({target, direction: "upstream"})`，HIGH / CRITICAL 时先警告用户再改：
+
+- `*_contract` 公共表面（Port / Entity / Event / 领域错误）
+- 跨域写 Port（如 `AuditService`）
+- `cross_domain/` 或被 ≥2 个 feature 依赖的 `pub` API
+- 重命名、移动、拆分已有符号
+- `FILTER_SCHEMA`、事件 payload、OpenAPI / DTO 契约形状
+
+**不要跑 impact：**
+
+- 单文件 endpoint 内私有 `execute` / handler / 测试，且不改公开签名、不改 contract
+- 注释、文案、locale、纯样式、文档、配置
+- 复制 template 新建端点（不改已有公开符号）
+
+提交前仍跑一次 `detect_changes()`。忽略 HIGH / CRITICAL 警告、用 find-and-replace 重命名公开符号：禁止。
+
+## Skills（按需读全文）
+
+编码约定已经在本文件。系统提示里的 skill **description** 够用来决定要不要打开；**禁止**开场把多份 skill / `CONTEXT.md` / architecture 全文读进上下文。
+
+| 场景 | 才读 |
+|------|------|
+| 新建域、新加 endpoint 文件、架构落位不确定 | `.agents/skills/rust-backend/SKILL.md` |
+| 新增测试模块、某端点第一次补集成测试、写 Hurl | `.agents/skills/rust-tests/SKILL.md` |
+| 用户明确要求 TDD | `.agents/skills/tdd/SKILL.md` |
+| 不熟的流程怎么走 | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| 公开面 impact 的工具细节 | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| 重命名 / 拆分 | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| 跑 analyze / 索引 | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| 改表格 / keep-alive / 主题，且 `frontend/AGENTS.md` 陷阱不够 | `frontend/docs/architecture.md` §5 |
+| 引入或争议领域术语 | `CONTEXT.md` |
+
+改已有 endpoint 的局部实现、在已有 `mod tests` 里加断言：不要先读 skill。
 
 ## 依赖规则
 
@@ -76,7 +108,7 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 - **禁止 `#[allow(clippy::expect_used)]` / `#[allow(clippy::unwrap_used)]` 等 lint 豁免注解**：用构造期校验（`Result` 上下文）、无 Option 的 API、或字段缓存替代
 
 ### 领域语言
-- 领域术语以根目录 `CONTEXT.md` 为准（统一语言词汇表）：**完成 / 检验结论 / 批准** 是三个不同概念；**审批流状态 / 生命周期状态** 是两条独立时间线；新术语定案时更新 `CONTEXT.md`
+- 领域术语以根目录 `CONTEXT.md` 为准；**不要每次先读**，只在引入或争议术语时打开。**完成 / 检验结论 / 批准** 是三个不同概念；**审批流状态 / 生命周期状态** 是两条独立时间线；新术语定案时更新 `CONTEXT.md`
 - 架构讨论用深模块词汇：模块 / 接口 / 深度 / 接缝 / 适配器 / 杠杆 / 局部性（见 `.agents/skills/codebase-design`）
 
 ### 常见陷阱
@@ -149,47 +181,3 @@ cross_domain/（共享业务件，跨域通道的例外栖息地）
 | `just e2e` | Hurl E2E |
 | `just sqlx_up` | 迁移数据库 |
 | `cd frontend && pnpm run dev` | 前端开发服务器（端口 3000） |
-
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **slab** (5435 symbols, 11117 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/slab/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/slab/clusters` | All functional areas |
-| `gitnexus://repo/slab/processes` | All execution flows |
-| `gitnexus://repo/slab/process/{name}` | Step-by-step execution trace |
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->

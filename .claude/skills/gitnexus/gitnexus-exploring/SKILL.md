@@ -1,6 +1,6 @@
 ---
 name: gitnexus-exploring
-description: "Use when the user asks how code works, wants to understand architecture, trace execution flows, or explore unfamiliar parts of the codebase. Examples: \"How does X work?\", \"What calls this function?\", \"Show me the auth flow\""
+description: "Use when the user asks how unfamiliar code or an execution flow works. Do not load for ordinary edits to a file already in context."
 ---
 
 # Exploring Codebases with GitNexus
@@ -15,24 +15,23 @@ description: "Use when the user asks how code works, wants to understand archite
 
 ## Workflow
 
+本仓库索引名是 `slab`。不要每次先读 `context` / `repos`；直接 `query`，需要调用关系再用 `context`。
+
 ```
-1. READ gitnexus://repos                          → Discover indexed repos
-2. READ gitnexus://repo/{name}/context             → Codebase overview, check staleness
-3. query({query: "<what you want to understand>"})  → Find related execution flows
-4. context({name: "<symbol>"})            → Deep dive on specific symbol
-5. READ gitnexus://repo/{name}/process/{name}      → Trace full execution flow
+1. query({query: "<what you want to understand>"})  → Find related execution flows
+2. context({name: "<symbol>"})            → Deep dive on specific symbol
+3. READ gitnexus://repo/slab/process/{name}      → Trace full execution flow（仅当需要逐步轨迹）
 ```
 
-> If step 2 says "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
+> Index stale? `node .gitnexus/run.cjs analyze`。不要为了检查新鲜度先读 `context` 资源。
 
 ## Checklist
 
 ```
-- [ ] READ gitnexus://repo/{name}/context
 - [ ] query for the concept you want to understand
 - [ ] Review returned processes (execution flows)
 - [ ] context on key symbols for callers/callees
-- [ ] READ process resource for full execution traces
+- [ ] READ process resource only if you need the step trace
 - [ ] Read source files for implementation details
 ```
 
@@ -67,12 +66,11 @@ context({name: "validateUser"})
 ## Example: "How does payment processing work?"
 
 ```
-1. READ gitnexus://repo/my-app/context       → 918 symbols, 45 processes
-2. query({query: "payment processing"})
+1. query({query: "payment processing"})
    → CheckoutFlow: processPayment → validateCard → chargeStripe
    → RefundFlow: initiateRefund → calculateRefund → processRefund
-3. context({name: "processPayment"})
+2. context({name: "processPayment"})
    → Incoming: checkoutHandler, webhookHandler
    → Outgoing: validateCard, chargeStripe, saveTransaction
-4. Read src/payments/processor.ts for implementation details
+3. Read src/payments/processor.ts for implementation details
 ```

@@ -1,11 +1,11 @@
 ---
 name: rust-tests
-description: Slab Rust 后端测试编写规范（集成测试 + Hurl E2E）
+description: "Slab 集成测试 / Hurl 规范。仅当新增测试模块、某端点第一次补测试、或写 Hurl E2E 时读取；在已有 mod tests 里加断言不要加载。"
 ---
 
 # rust-tests
 
-**Trigger**: 当用户要求为 Slab（slab）Rust 后端的端点、队列消费、pg_queue/pg_cache 新增或补充测试时加载本 skill。也适用于编写 Hurl E2E、增加覆盖率、回归测试或验证 execute/handler 行为。
+**Trigger**: 新增测试模块、某端点第一次补集成测试、写 Hurl E2E。已有 `mod tests` 里加一个断言：不要读本文件。
 
 ## 前置条件
 

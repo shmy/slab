@@ -1,6 +1,6 @@
 ---
 name: gitnexus-refactoring
-description: "Use when the user wants to rename, extract, split, move, or restructure code safely. Examples: \"Rename this function\", \"Extract this into a module\", \"Refactor this class\", \"Move this to a separate file\""
+description: "Use when renaming, extracting, splitting, or moving symbols. Follow AGENTS.md impact grading; do not treat every local edit as a refactor."
 ---
 
 # Refactoring with GitNexus

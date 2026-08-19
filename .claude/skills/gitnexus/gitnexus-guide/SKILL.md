@@ -1,23 +1,17 @@
 ---
 name: gitnexus-guide
-description: "Use when the user asks about GitNexus itself — available tools, how to query the knowledge graph, MCP resources, graph schema, or workflow reference. Examples: \"What GitNexus tools are available?\", \"How do I use GitNexus?\""
+description: "Use only when you need GitNexus tool/schema details. Task routing and impact grading live in AGENTS.md — do not read this file (or other gitnexus skills) as an opening ritual."
 ---
 
 # GitNexus Guide
 
-Quick reference for all GitNexus MCP tools, resources, and the knowledge graph schema.
+工具/schema 速查。日常改代码先看根目录 `AGENTS.md`（导航 + Impact 分级），不要开场读完所有 gitnexus skill。
 
-## Always Start Here
-
-For any task involving code understanding, debugging, impact analysis, or refactoring:
-
-1. **Read `gitnexus://repo/{name}/context`** — codebase overview + check index freshness
-2. **Match your task to a skill below** and **read that skill file**
-3. **Follow the skill's workflow and checklist**
-
-> If step 1 warns the index is stale, run `node .gitnexus/run.cjs analyze` in the terminal first.
+索引过期：`node .gitnexus/run.cjs analyze`。本仓库 `.gitnexusrc` 禁止回写 AGENTS.md / skills。
 
 ## Skills
+
+任务路由在 `AGENTS.md`。下表只在需要对应 workflow 时才打开，不要当作开场必读清单。
 
 | Task                                         | Skill to read       |
 | -------------------------------------------- | ------------------- |

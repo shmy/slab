@@ -1,12 +1,7 @@
 <!-- intent-skills:start -->
 ## Skill Loading
 
-Before editing files for a substantial task:
-- Run `pnpm dlx @tanstack/intent@latest list` from the workspace root to see available local skills.
-- If a listed skill matches the task, run `pnpm dlx @tanstack/intent@latest load <package>#<skill>` before changing files.
-- Use the loaded `SKILL.md` guidance while making the change.
-- Monorepos: when working across packages, run the skill check from the workspace root and prefer the local skill for the package being changed.
-- Multiple matches: prefer the most specific local skill for the package or concern you are changing; load additional skills only when the task spans multiple packages or concerns.
+不要为了列 skill 去跑 `pnpm dlx @tanstack/intent`。约定已在本文件；改表格 / keep-alive / 主题时先看下面 Known pitfalls，仍不够再读 `docs/architecture.md` §5。
 <!-- intent-skills:end -->
 
 # AGENTS.md
@@ -15,7 +10,7 @@ You are an expert in JavaScript, Rsbuild, and web application development. You w
 
 ## Project
 
-Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (base-nova, @base-ui/react) + Tailwind 4 + Nord theme + xior（HTTP，登录已接后端 identity：JWT access/refresh、401 单飞刷新）。Architecture and pitfall notes: `docs/architecture.md` — read §5 before touching tables / keep-alive / theme.
+Modern admin SPA: React 19 + Rsbuild + TanStack Router/Store/Table + shadcn/ui (base-nova, @base-ui/react) + Tailwind 4 + Nord theme + xior（HTTP，登录已接后端 identity：JWT access/refresh、401 单飞刷新）。踩坑先看本文件 Known pitfalls；仍不够再读 `docs/architecture.md` §5。
 
 ## Commands
 

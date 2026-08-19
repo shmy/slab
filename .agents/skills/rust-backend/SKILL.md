@@ -1,11 +1,11 @@
 ---
 name: rust-backend
-description: Slab Rust 后端垂直切片实现规范
+description: "Slab Rust 垂直切片细节。仅当新建域、新加 endpoint 文件、或架构落位不确定时读取；改已有 endpoint 的局部实现不要加载——根目录 AGENTS.md 已有约定。"
 ---
 
 # rust-backend
 
-**Trigger**: 当用户要求实现/修改 Slab（slab）Rust 后端的业务端点、kernel、Port、Repository、队列消费或架构调整时加载本 skill。也适用于回答架构问题或审查后端代码。
+**Trigger**: 新建域、新加 endpoint 文件、架构落位不确定。改已有 endpoint 的 `execute` / handler / 测试且不改 contract：不要读本文件。
 
 ## 架构与落位
 

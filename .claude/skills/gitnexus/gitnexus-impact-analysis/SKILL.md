@@ -1,26 +1,28 @@
 ---
 name: gitnexus-impact-analysis
-description: "Use when the user wants to know what will break if they change something, or needs safety analysis before editing code. Examples: \"Is it safe to change X?\", \"What depends on this?\", \"What will break?\""
+description: "Use when changing a public contract/Port/event/shared API, renaming/splitting symbols, or the user asks what will break. Do not use for private execute/handler edits that keep the same signature."
 ---
 
 # Impact Analysis with GitNexus
 
+本仓库以根目录 `AGENTS.md` 的 Impact 分级为准，不要对每个符号都跑 `impact`。
+
 ## When to Use
 
-- "Is it safe to change this function?"
-- "What will break if I modify X?"
-- "Show me the blast radius"
-- "Who uses this code?"
-- Before making non-trivial code changes
-- Before committing — to understand what your changes affect
+- 改 `*_contract` / Port / Event / 跨域 `pub` API / FILTER_SCHEMA / OpenAPI DTO
+- 重命名、移动、拆分已有符号
+- 用户问 "改 X 会炸什么"
+- 提交前用 `detect_changes()`（一次），不是每个符号先 `impact`
+
+不要用于：单文件私有 `execute` / handler / 测试（签名不变）、注释、locale、样式、文档
 
 ## Workflow
 
 ```
 1. impact({target: "X", direction: "upstream"})  → What depends on this
-2. READ gitnexus://repo/{name}/processes                   → Check affected execution flows
-3. detect_changes()                               → Map current git changes to affected flows
-4. Assess risk and report to user
+2. 看返回里的 d=1 callers 和 affected processes；不要把 `gitnexus://repo/slab/processes` 全量读进上下文
+3. 提交前 detect_changes() 一次
+4. HIGH / CRITICAL 先警告用户
 ```
 
 > If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
@@ -31,9 +33,9 @@ description: "Use when the user wants to know what will break if they change som
 - [ ] impact({target, direction: "upstream"}) to find dependents
 - [ ] Review d=1 items first (these WILL BREAK)
 - [ ] Check high-confidence (>0.8) dependencies
-- [ ] READ processes to check affected execution flows
-- [ ] detect_changes() for pre-commit check
-- [ ] Assess risk level and report to user
+- [ ] Use affected processes from the impact result (do not dump all processes)
+- [ ] detect_changes() once before commit
+- [ ] Warn the user on HIGH / CRITICAL
 ```
 
 ## Understanding Output
@@ -90,8 +92,8 @@ detect_changes({scope: "staged"})
    → d=1: loginHandler, apiMiddleware (WILL BREAK)
    → d=2: authRouter, sessionManager (LIKELY AFFECTED)
 
-2. READ gitnexus://repo/my-app/processes
-   → LoginFlow and TokenRefresh touch validateUser
+2. 从 impact 返回里看 affected processes（LoginFlow, TokenRefresh）
+   → 不要全量读取 processes 资源
 
 3. Risk: 2 direct callers, 2 processes = MEDIUM
 ```
