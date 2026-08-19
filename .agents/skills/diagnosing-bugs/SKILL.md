@@ -7,7 +7,7 @@ description: Diagnosis loop for hard bugs and performance regressions. Use when 
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
-When exploring the codebase, read `CONTEXT.md` (if it exists) to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.
+If the bug involves domain terms (status timelines, 完成 / 检验结论 / 批准), read `CONTEXT.md`. Do not open it for ordinary mechanical failures. 编码约定以 `AGENTS.md` 为准，细则在 `docs/ai/`。
 
 ## Phase 1 — Build a feedback loop
 

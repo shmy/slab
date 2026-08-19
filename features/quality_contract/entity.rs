@@ -62,6 +62,6 @@ pub struct NonConformance {
     pub quantity: i64,
     pub severity: i16,
     pub disposition: Option<i16>,
-    pub status: i16, // TODO(P0): 待枚举化
+    pub status: i16, // NonConformanceStatus（生命周期状态）
     pub remark: Option<String>,
 }

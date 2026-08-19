@@ -16,3 +16,16 @@ pub enum BomStatus {
     /// 已废弃：不再纳入计算。
     Obsolete = 2,
 }
+
+/// 模具生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum MoldStatus {
+    /// 在用。
+    Active = 0,
+    /// 保养中。
+    Maintenance = 1,
+    /// 已报废。
+    Retired = 2,
+}

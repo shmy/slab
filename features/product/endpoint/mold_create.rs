@@ -78,6 +78,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use product_contract::value_object::MoldStatus;
 
     #[sqlx::test]
     async fn test_mold_create_success(pool: sqlx::PgPool) {
@@ -106,7 +107,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.cavity_count, 1);
-        assert_eq!(row.status, 0);
+        assert_eq!(row.status, MoldStatus::Active as i16);
         assert_eq!(row.life_used.unwrap_or(-1), 0);
 
         // 变更历史：create 类型

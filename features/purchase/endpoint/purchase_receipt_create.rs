@@ -7,7 +7,7 @@ use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use purchase_contract::entity::PurchaseReceipt;
 use purchase_contract::error::PurchaseError;
-use purchase_contract::value_object::PurchaseOrderStatus;
+use purchase_contract::value_object::{PurchaseOrderStatus, PurchaseReceiptStatus};
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -93,11 +93,12 @@ async fn execute(
     let receipt_id = ID::new();
     sqlx::query!(
         r#"INSERT INTO purchase_receipts (id, code, order_id, supplier_id, status, receipt_date, remark)
-           VALUES ($1, $2, $3, $4, 1, $5, $6)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         &*receipt_id,
         code,
         &*request.order_id,
         &*ID::new_unchecked(order.supplier_id),
+        PurchaseReceiptStatus::Posted as i16,
         receipt_date,
         request.remark,
     )

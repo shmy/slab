@@ -73,9 +73,10 @@ impl InventoryCheckRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::insert_test_warehouse;
-    use migration::run_migrations;
-    use sqlx::Acquire;
+use crate::tests::insert_test_warehouse;
+use migration::run_migrations;
+use sqlx::Acquire;
+use warehouse_contract::value_object::InventoryCheckStatus;
 
     async fn seed_check(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
         let wh = insert_test_warehouse(pool, &format!("W-{code}")).await;
@@ -97,7 +98,7 @@ mod tests {
     #[sqlx::test]
     async fn test_submit_draft_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_check(&pool, "CH-T1", 0).await;
+        let id = seed_check(&pool, "CH-T1", InventoryCheckStatus::Draft as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -110,13 +111,13 @@ mod tests {
             .fetch_one(&mut *pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 1);
+        assert_eq!(status, InventoryCheckStatus::Submitted as i16);
     }
 
     #[sqlx::test]
     async fn test_submit_already_submitted_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_check(&pool, "CH-T2", 1).await;
+        let id = seed_check(&pool, "CH-T2", InventoryCheckStatus::Submitted as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -129,7 +130,7 @@ mod tests {
     #[sqlx::test]
     async fn test_approve_pending_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_check(&pool, "CH-T3", 1).await;
+        let id = seed_check(&pool, "CH-T3", InventoryCheckStatus::Submitted as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -145,7 +146,7 @@ mod tests {
         .fetch_one(&mut *pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 3);
+        assert_eq!(row.status, InventoryCheckStatus::Approved as i16);
         assert!(row.approved_at.is_some());
         assert!(locked.warehouse_id > 0);
     }
@@ -153,7 +154,7 @@ mod tests {
     #[sqlx::test]
     async fn test_approve_draft_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_check(&pool, "CH-T4", 0).await;
+        let id = seed_check(&pool, "CH-T4", InventoryCheckStatus::Draft as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();

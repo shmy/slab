@@ -27,6 +27,7 @@ impl DomainModule for Module {
 pub(crate) mod tests {
     use db::PgPool;
     use http_auth::extract::operator::OperatorContext;
+    use quality_contract::value_object::InspectionOrderStatus;
     use shared_contract::value_object::id::ID;
     use shared_contract::value_object::operator::Operator;
 
@@ -83,7 +84,7 @@ pub(crate) mod tests {
         id
     }
 
-    /// 插入检验单（status=0），返回 id。
+    /// 插入检验单（待检），返回 id。
     pub async fn insert_test_inspection_order(
         pg_pool: &PgPool,
         code: &str,
@@ -93,11 +94,12 @@ pub(crate) mod tests {
         let id = ID::new();
         let mut conn = pg_pool.acquire().await.unwrap();
         sqlx::query!(
-            "INSERT INTO inspection_orders (id, code, template_id, source_type, source_id, item_id, lot_qty, sample_qty, status) VALUES ($1, $2, $3, 'purchase_receipt', 0, $4, 100, 10, 0)",
+            "INSERT INTO inspection_orders (id, code, template_id, source_type, source_id, item_id, lot_qty, sample_qty, status) VALUES ($1, $2, $3, 'purchase_receipt', 0, $4, 100, 10, $5)",
             &*id,
             code,
             template_id as _,
             item_id as _,
+            InspectionOrderStatus::Pending as i16,
         )
         .execute(&mut *conn)
         .await

@@ -39,7 +39,7 @@ pub struct SalesDelivery {
     pub order_id: ID,
     pub customer_id: ID,
     pub delivery_date: chrono::NaiveDate,
-    pub status: i16, // TODO(P0): 待枚举化（生命周期状态）
+    pub status: i16, // SalesDeliveryStatus（生命周期状态）
     pub remark: Option<String>,
 }
 
@@ -63,7 +63,7 @@ pub struct SalesReturn {
     pub order_id: ID,
     pub customer_id: ID,
     pub return_date: chrono::NaiveDate,
-    pub status: i16, // TODO(P0): 待枚举化
+    pub status: i16, // SalesReturnStatus（生命周期状态）
     pub reason: Option<String>,
     pub remark: Option<String>,
 }
@@ -91,6 +91,6 @@ pub struct SalesInvoice {
     pub amount: i64,
     pub tax_amount: i64,
     pub total_amount: i64,
-    pub status: i16, // TODO(P0): 待枚举化
+    pub status: i16, // SalesInvoiceStatus（生命周期状态）
     pub remark: Option<String>,
 }

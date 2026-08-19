@@ -18,7 +18,7 @@ description: "Slab 集成测试 / Hurl 规范。仅当新增测试模块、某�
 
 1. 在 `features/{domain}/endpoint/{action}.rs` 末尾使用 `#[cfg(test)] mod tests { ... }`
 2. 使用 `#[sqlx::test]` 注入 `PgPool`，测试开头调用 `migration::run_migrations(&pool)`
-3. 用 `shared_contract::testing::app_state::build(pool).await` 构建 `AppState`
+3. 用 `appctx::testing::build(pool).await` 构建 `AppCtx`
 4. 优先直接测 `execute`（与 handler 逻辑一致时），必要时再测 handler
 5. **准备数据**：小函数 `seed_*` 或用域内共享 `#[cfg(test)] pub(crate) mod tests`（如 `identity` 的 `insert_test_account`）
 6. **断言**：
@@ -48,8 +48,8 @@ description: "Slab 集成测试 / Hurl 规范。仅当新增测试模块、某�
 
 | 命令 | 用途 |
 |------|------|
-| `cargo test -p <crate_name>` | 单个 crate 测试 |
-| `cargo test -p <crate> -- <test_name>` | 单个测试 |
+| `cargo test -p <crate> --quiet` | 单个 crate 测试 |
+| `cargo test -p <crate> --quiet -- <test_name>` | 单个测试 |
 | `just e2e` | HTTP E2E（需先启动 server） |
 | `hurl --test --variables-file e2e/env e2e/identity.hurl` | 单文件 Hurl |
 

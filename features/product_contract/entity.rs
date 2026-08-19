@@ -37,7 +37,7 @@ pub struct Mold {
     pub cavity_count: i32,
     pub life_expectancy: Option<i64>,
     pub life_used: Option<i64>,
-    pub status: i16, // TODO(P0): 待枚举化（0=active 1=maintenance 2=retired）
+    pub status: i16, // MoldStatus（生命周期状态）
     pub maintenance_cycle: Option<i32>,
     pub remark: Option<String>,
 }

@@ -1,147 +1,70 @@
 # Slab
 
-**Rust 模块化单体框架。** 垂直切片、Contract 接缝、拆开即微服务。
-
-每个业务域是一块预制板——独立成型、统一规格、同一套接缝。今天拼在一起跑，明天拎出来部署。
+**Rust 模块化单体。** 垂直切片、Contract 接缝；今天拼在一起跑，明天可以拎出来部署。
 
 ```rust
-use slab::Module;
-
-impl Module for identity::Module {
+impl DomainModule for identity::Module {
     fn name(&self) -> &'static str { "identity" }
 
-    fn protected_routing(&self) -> OpenApiRouter<AppState> { ... }
-    fn unprotected_routing(&self) -> OpenApiRouter<AppState> { ... }
-    fn register(&self, registrar: &mut Registrar) {
-        registrar.bus.register(AccountCreatedSubscriber);
-        registrar.scheduler.add(MyCronJob);
+    fn protected_routing(&self) -> OpenApiRouter<AppCtx> { ... }
+    fn unprotected_routing(&self) -> OpenApiRouter<AppCtx> { ... }
+    fn register(&self, r: &mut ModuleRegistrar) {
+        r.events.register(AccountCreatedSubscriber);
+        r.scheduled("0 0 3 * * *", MyJob { .. });
     }
 }
 ```
 
-## 架构
+## 结构
 
 ```
-features/
-├── audit_contract/       ← 变更历史公共表面：AuditEvent + record（跨域写 Port）
-├── audit/                ← 变更历史查询切片：GET /api/v1/audit-logs（读时算 diff）
-├── identity_contract/     ← 公共表面：实体、事件、端口、错误
-├── identity/              ← 垂直切片：端点、仓储、订阅
-├── file_contract/
-├── file/
-├── shared_contract/       ← 共享内核：ID、分页、值对象
-└── health/                ← 基础设施，无需 contract
-
-infrastructure/
-├── db/                    ← PgPool
-├── event_bus/             ← 事件总线（广播）：Pg Outbox（默认）/ NATS JetStream
-├── cache/                 ← 可插拔缓存后端：Pg（默认）/ Redb / Redis
-├── flow/                  ← sayiir 持久化工作流引擎
-├── web/                   ← 提取器、响应封装、Problem Details
-├── http_auth/             ← JWT 鉴权中间件
-├── locale/                ← Fluent 本地化
-├── migration/             ← SQL 版本迁移
-├── appctx/                ← 应用上下文（AppCtx 组装）
-└── ...                    ← approval / blob / jwt / costing 等领域基础设施
-
-bin/server/                ← 组装点：路由、中间件、任务编排
-
-frontend/                  ← 管理后台 SPA（React 19 + Rsbuild + TanStack + shadcn/ui，独立 workspace）
+features/{domain} + {domain}_contract   垂直切片 + 公共表面
+cross_domain/                            跨域业务规则（approval / 单号 / 成本 / 库存账）
+infrastructure/                          技术适配（db / event_bus / kv / flow / job_queue / …）
+bin/server/                              组装：路由、中间件、模块列表
+frontend/                                管理后台 SPA（独立 workspace）
 ```
 
-## 核心原则
-
-**Contract 独立。** `identity_contract` 不依赖 `file_contract`。每个 contract 是完全自治的公共 API 表面。
-
-**Port 只读，Repository 写库。** 跨域读走 `{Domain}Port`（放在 contract），本域写走 `{Aggregate}Repository`（放在切片 crate）。`cargo test -p server arch_test` 强制检查。
-
-**单文件端点。** 一个动作一个文件：DTO + `#[utoipa::path]` + `handler` + `execute` + 测试。复制 `account_create.rs` 就是新端点模板。
-
-**Outbox 模式。** 领域事件和业务写在同一个事务里发布（Outbox 语义）。消费通过 `infrastructure/event_bus` dispatcher，将来拆微服务可以无缝切到 Kafka/Debezium。
+**Contract 互不依赖。** 跨域读走 `{Domain}Port`，本域写走 `{Aggregate}Repository`；变更历史是例外的同事务写 Port。`cargo test -p server arch_test` 强制检查。
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|------|
-| 运行时 | Tokio multi-thread |
+| 运行时 | Tokio |
 | HTTP | Axum 0.8 |
-| 数据库 | PostgreSQL + sqlx 0.9 |
-| 事件总线（广播） | Pg Outbox（默认）/ NATS JetStream（`infrastructure/event_bus`） |
-| 流程编排 | sayiir 持久化工作流（`infrastructure/flow`） |
-| 缓存 | 可插拔后端：Pg UNLOGGED 表（默认）/ redb 嵌入式 / Redis（`infrastructure/kv`） |
-| 鉴权 | JWT（access + refresh，双 realm） |
-| 定时任务 | tokio-cron-scheduler（`sched_kit`） |
-| 对象存储 | 可插拔后端：腾讯云 COS（默认）/ 本地文件系统（`infrastructure/blob`） |
-| 可观测性 | OpenTelemetry（OTLP） |
-| API 文档 | OpenAPI + Scalar UI |
-| 内存分配器 | mimalloc |
-| 前端 | React 19 + Rsbuild + TanStack Router/Store/Table v9 + shadcn/ui + Tailwind 4 + xior（`frontend/`，端口 3000，已接登录/刷新/登出 API，dev 代理 127.0.0.1:8081） |
+| 数据库 | PostgreSQL + sqlx |
+| 事件总线 | Pg Outbox（默认）/ NATS JetStream |
+| 流程 | sayiir（`infrastructure/flow`） |
+| KV | Pg UNLOGGED（默认）/ redb / Redis（`infrastructure/kv`） |
+| Job | `infrastructure/job_queue` |
+| 鉴权 | JWT（access + refresh） |
+| 对象存储 | 腾讯云 COS（默认）/ 本地文件系统 |
+| 可观测性 | OpenTelemetry |
+| 前端 | React 19 + Rsbuild + TanStack + shadcn/ui（`frontend/`，端口 3000，dev 代理 `:8081`） |
 
 ## 快速开始
 
 ```bash
-# 环境准备
 rustup toolchain install stable
 brew install just hurl
-
-# 启动数据库
 docker compose up -d
-
-# 配置文件
 cp .env.example .env
-
-# 迁移 + 启动
 cargo run -p server
 
-# 前端（另开终端）
-cd frontend && pnpm install
-pnpm run dev              # http://localhost:3000
+# 另开终端
+cd frontend && pnpm install && pnpm run dev   # http://localhost:3000
 
-# 测试
-cargo test -p server arch_test     # 架构边界检查
-cargo test -p identity             # 集成测试
-just e2e                           # Hurl 端到端
-```
-
-## 新增业务域
-
-```bash
-# 1. 创建 contract 和切片 crate
-mkdir -p features/inventory_contract/{entity,port,value_object}
-mkdir -p features/inventory/{endpoint,repository}
-
-# 2. 实现 Module trait
-# features/inventory/lib.rs
-
-# 3. 注册
-# bin/server/modules.rs — MODULES 数组里加一行
-
-# 4. 验证边界
 cargo test -p server arch_test
+cargo test -p identity --quiet
+just e2e
 ```
 
 ## 文档
 
-- `docs/ARCHITECTURE.md` — 完整架构说明
-- `docs/FLOW.md` — 流程引擎（sayiir 工作流）设计
-- `docs/EVENT_BUS.md` — 事件总线（广播）设计
-- `docs/KV.md` — KV 缓存设计
-- `docs/E2E_HURL.md` — E2E 测试约定
-- `AGENTS.md` — AI 助手上下文
-- `frontend/AGENTS.md` — 前端 AI 助手上下文（React/Rsbuild/TanStack 约定）
-- `frontend/docs/architecture.md` — 前端架构与踩坑记录（多标签/keep-alive/虚拟表格/React Compiler）
-
-Event:
-Pg/NATS
-
-Workflow:
-sayiir / Temporal
-
-Job:
-Apalis / Faktory / Redis Queue
-
-State:
-Postgres + Redis
+- [AGENTS.md](AGENTS.md) — AI 协作摘要
+- [docs/README.md](docs/README.md) — 按场景索引
+- [frontend/AGENTS.md](frontend/AGENTS.md) — 前端约定
 
 ## License
 

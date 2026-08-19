@@ -15,6 +15,7 @@ http_auth = { workspace = true }
 inventory_ledger = { workspace = true }
 migration = { workspace = true }
 module = { workspace = true }
+product_contract = { workspace = true }
 production_contract = { workspace = true }
 rootcause = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

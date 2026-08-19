@@ -233,7 +233,7 @@ mod arch_test {
             "update_password",
             "reset_password",
         ];
-        // 设计豁免：blob 写无 DB 资源行；会话写按 ADR-0001 不记请求级审计。
+        // 设计豁免：blob 写无 DB 资源行；会话写不记请求级审计（无变更即无历史）。
         const EXEMPT: &[&str] = &[
             "file_upload_image",
             "account_login",
@@ -284,34 +284,25 @@ mod arch_test {
         }
     }
 
-    /// 检测行中是否存在 `status != <数字>` 或 `status == <数字>` 模式。
-    /// 枚举常量（字母开头）不匹配；SQL 单等号 `status = $1` 不在检测范围。
-    fn status_compares_with_magic_number(line: &str) -> bool {
-        for op in ["!=", "=="] {
-            let needle = format!("status {op} ");
-            if let Some(pos) = line.find(&needle) {
-                let rest = line[pos + needle.len()..].trim_start();
-                if rest.starts_with('-') || rest.chars().next().is_some_and(|c| c.is_ascii_digit())
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// 端点不得用裸数字比较 status 字段（必须用领域状态枚举常量）。
+    /// 库存变动端点必须走 `InventoryLedger`（漏接不报编译错，本规则兜底）。
     ///
-    /// 启发式：扫描 `endpoint/*.rs` 业务代码行（排除注释与 `assert_eq!`/`assert_ne!` 测试断言），
-    /// 检测 `<...>.status != <数字>` / `<...>.status == <数字>` 模式。
-    /// 枚举常量比较（`status != PurchaseOrderStatus::Approved as i16`）以字母开头，不误报。
-    /// SQL 的 `status = $1`（单等号）不在检测范围。
+    /// 清单是物料移动语义的事实源：新增库存变动端点时同步加 stem，并接线 `InventoryLedger::*`。
+    /// 已接线但不在清单 → 红（清单与实现脱节）；在清单但没接线 → 红（漏接）。
     #[test]
-    fn endpoints_should_not_compare_status_with_magic_number() {
-        // 欠账白名单：全部域已完成状态枚举化（P0-1~P0-4），列表清空。
-        // 新增端点默认不得用裸数字比较 status，否则本规则红。
-        const STATUS_TODO: &[&str] = &[];
+    fn inventory_mutating_endpoints_must_wire_ledger() {
+        const MUST_WIRE: &[&str] = &[
+            "purchase_receipt_create",
+            "purchase_return_approve",
+            "sales_delivery_create",
+            "work_order_material_pick",
+            "production_receipt_create",
+            "inventory_initial",
+            "inventory_check_approve",
+            "stock_transfer_approve",
+        ];
+
         let features_dir = workspace_root().join("features");
+        let mut seen = HashSet::<String>::new();
         for entry in std::fs::read_dir(&features_dir).unwrap() {
             let entry = entry.unwrap();
             let domain = entry.file_name().to_string_lossy().to_string();
@@ -329,26 +320,102 @@ mod arch_test {
                     .to_string_lossy()
                     .trim_end_matches(".rs")
                     .to_string();
-                if STATUS_TODO.contains(&stem.as_str()) {
+                let content = std::fs::read_to_string(file.path()).unwrap();
+                let wired = content.contains("InventoryLedger");
+                if wired {
+                    seen.insert(stem.clone());
+                    assert!(
+                        MUST_WIRE.contains(&stem.as_str()),
+                        "endpoint `{stem}` wires `InventoryLedger` but is not in MUST_WIRE — \
+                         add it to the inventory-mutating list"
+                    );
+                } else if MUST_WIRE.contains(&stem.as_str()) {
+                    panic!(
+                        "inventory-mutating endpoint `{stem}` does not wire `InventoryLedger` — \
+                         call InventoryLedger::receive/issue/transfer/adjust/force_issue \
+                         (or remove it from MUST_WIRE if it no longer moves stock)"
+                    );
+                }
+            }
+        }
+        for stem in MUST_WIRE {
+            assert!(
+                seen.contains(*stem),
+                "MUST_WIRE lists `{stem}` but no such endpoint file was found"
+            );
+        }
+    }
+
+    /// 检测行中是否存在 `status != <数字>` 或 `status == <数字>` 模式。
+    /// 枚举常量（字母开头）不匹配；SQL 单等号 `status = $1` 不在检测范围。
+    fn status_compares_with_magic_number(line: &str) -> bool {
+        for op in ["!=", "==", "<=", ">=", "<", ">"] {
+            let needle = format!("status {op} ");
+            if let Some(pos) = line.find(&needle) {
+                let rest = line[pos + needle.len()..].trim_start();
+                if rest.starts_with('-') || rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// 端点不得用裸数字比较 status 字段（必须用领域状态枚举常量）。
+    ///
+    /// 启发式：扫描 `endpoint/*.rs` 与 `repository/*.rs` 业务代码行（排除注释与 `assert_eq!`/`assert_ne!` 测试断言），
+    /// 检测 `<...>.status != / == / < / > / <= / >= <数字>` 模式。
+    /// 枚举常量比较（`status != PurchaseOrderStatus::Approved as i16`）以字母开头，不误报。
+    /// SQL 的 `status = $1`（单等号）不在检测范围。
+    #[test]
+    fn endpoints_should_not_compare_status_with_magic_number() {
+        // 欠账白名单：全部域已完成状态枚举化（P0-1~P0-4），列表清空。
+        // 新增端点默认不得用裸数字比较 status，否则本规则红。
+        const STATUS_TODO: &[&str] = &[];
+        let features_dir = workspace_root().join("features");
+        for entry in std::fs::read_dir(&features_dir).unwrap() {
+            let entry = entry.unwrap();
+            let domain = entry.file_name().to_string_lossy().to_string();
+            if !entry.file_type().unwrap().is_dir() || domain.ends_with("_contract") {
+                continue;
+            }
+            for subdir in ["endpoint", "repository"] {
+                let dir = features_dir.join(&domain).join(subdir);
+                if !dir.exists() {
                     continue;
                 }
-                let path = file.path();
-                let content = std::fs::read_to_string(&path).unwrap();
-                for (lineno, line) in content.lines().enumerate() {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("//")
-                        || trimmed.contains("assert_eq!")
-                        || trimmed.contains("assert_ne!")
-                    {
+                for file in std::fs::read_dir(&dir).unwrap() {
+                    let file = file.unwrap();
+                    let stem = file
+                        .file_name()
+                        .to_string_lossy()
+                        .trim_end_matches(".rs")
+                        .to_string();
+                    if STATUS_TODO.contains(&stem.as_str()) {
                         continue;
                     }
-                    assert!(
-                        !status_compares_with_magic_number(line),
-                        "magic-number status comparison in {}:{lineno}: {line:?} — \
-                         use a domain status enum constant (e.g. \
-                         `PurchaseOrderStatus::Approved as i16`) instead of a bare integer",
-                        path.display()
-                    );
+                    let path = file.path();
+                    if path.extension().is_none_or(|e| e != "rs") {
+                        continue;
+                    }
+                    let content = std::fs::read_to_string(&path).unwrap();
+                    for (lineno, line) in content.lines().enumerate() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("//")
+                            || trimmed.contains("assert_eq!")
+                            || trimmed.contains("assert_ne!")
+                        {
+                            continue;
+                        }
+                        assert!(
+                            !status_compares_with_magic_number(line),
+                            "magic-number status comparison in {}:{lineno}: {line:?} — \
+                             use a domain status enum constant (e.g. \
+                             `PurchaseOrderStatus::Approved as i16`) instead of a bare integer",
+                            path.display()
+                        );
+                    }
                 }
             }
         }

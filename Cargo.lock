@@ -4385,6 +4385,7 @@ dependencies = [
  "inventory_ledger",
  "migration",
  "module",
+ "product_contract",
  "production_contract",
  "rootcause",
  "serde",

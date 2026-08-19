@@ -75,9 +75,10 @@ impl StockTransferRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::insert_test_warehouse;
-    use migration::run_migrations;
-    use sqlx::Acquire;
+use crate::tests::insert_test_warehouse;
+use migration::run_migrations;
+use sqlx::Acquire;
+use warehouse_contract::value_object::StockTransferStatus;
 
     async fn seed_transfer(pool: &sqlx::PgPool, code: &str, status: i16) -> ID {
         let from_wh = insert_test_warehouse(pool, &format!("W-{code}-A")).await;
@@ -101,7 +102,7 @@ mod tests {
     #[sqlx::test]
     async fn test_submit_draft_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_transfer(&pool, "TR-T1", 0).await;
+        let id = seed_transfer(&pool, "TR-T1", StockTransferStatus::Draft as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -114,13 +115,13 @@ mod tests {
             .fetch_one(&mut *pool.acquire().await.unwrap())
             .await
             .unwrap();
-        assert_eq!(status, 1);
+        assert_eq!(status, StockTransferStatus::Submitted as i16);
     }
 
     #[sqlx::test]
     async fn test_submit_already_submitted_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_transfer(&pool, "TR-T2", 1).await;
+        let id = seed_transfer(&pool, "TR-T2", StockTransferStatus::Submitted as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -133,7 +134,7 @@ mod tests {
     #[sqlx::test]
     async fn test_approve_pending_success(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_transfer(&pool, "TR-T3", 1).await;
+        let id = seed_transfer(&pool, "TR-T3", StockTransferStatus::Submitted as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();
@@ -149,7 +150,7 @@ mod tests {
         .fetch_one(&mut *pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 3);
+        assert_eq!(row.status, StockTransferStatus::Approved as i16);
         assert!(row.approved_at.is_some());
         assert!(locked.from_warehouse_id != locked.to_warehouse_id);
     }
@@ -157,7 +158,7 @@ mod tests {
     #[sqlx::test]
     async fn test_approve_draft_rejected(pool: sqlx::PgPool) {
         run_migrations(&pool).await.expect("run migrations");
-        let id = seed_transfer(&pool, "TR-T4", 0).await;
+        let id = seed_transfer(&pool, "TR-T4", StockTransferStatus::Draft as i16).await;
 
         let mut conn = pool.acquire().await.unwrap();
         let mut txn = conn.begin().await.unwrap();

@@ -4,6 +4,7 @@ use db::PgPool;
 use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use product_contract::entity::Bom;
+use product_contract::value_object::BomStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -65,13 +66,14 @@ async fn execute(
 
     sqlx::query!(
         r#"INSERT INTO boms (id, code, name, item_id, total_qty, remark, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 0)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         &*id,
         code,
         request.name,
         &*request.item_id,
         request.total_qty.unwrap_or(1),
         request.remark,
+        BomStatus::Draft as i16,
     )
     .execute(&mut *txn)
     .await?;

@@ -12,6 +12,7 @@ use sqlx::Acquire;
 use utoipa::ToSchema;
 use validify::Validify;
 use warehouse_contract::error::WarehouseError;
+use warehouse_contract::value_object::StockTransferStatus;
 use web::extract::valid_json::ValidJson;
 use web::response::json_response::{JsonResponse, JsonResponseType};
 
@@ -65,9 +66,10 @@ async fn execute(
     let id = ID::new();
     sqlx::query!(
         r#"INSERT INTO stock_transfers (id, code, from_warehouse_id, to_warehouse_id, transfer_date, remark, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 0)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         &*id, code, &*request.from_warehouse_id, &*request.to_warehouse_id,
         request.transfer_date.unwrap_or_else(|| chrono::Utc::now().date_naive()), request.remark,
+        StockTransferStatus::Draft as i16,
     ).execute(&mut *txn).await?;
     for item in &request.items {
         let line_id = ID::new();

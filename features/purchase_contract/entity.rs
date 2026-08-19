@@ -41,7 +41,7 @@ pub struct PurchaseReceipt {
     pub order_id: ID,
     pub supplier_id: ID,
     pub receipt_date: chrono::NaiveDate,
-    pub status: i16, // TODO(P0): 待枚举化（生命周期状态，语义待定）
+    pub status: i16, // PurchaseReceiptStatus（生命周期状态）
     pub remark: Option<String>,
 }
 
@@ -94,6 +94,6 @@ pub struct PurchaseInvoice {
     pub amount: i64,
     pub tax_amount: i64,
     pub total_amount: i64,
-    pub status: i16, // TODO(P0): 待枚举化
+    pub status: i16, // PurchaseInvoiceStatus（生命周期状态）
     pub remark: Option<String>,
 }

@@ -4,6 +4,7 @@ use db::PgPool;
 use http_auth::extract::operator::OperatorContext;
 use production_contract::entity::WorkOrder;
 use production_contract::error::ProductionError;
+use production_contract::value_object::WorkOrderOperationStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use utoipa::{IntoParams, ToSchema};
@@ -79,10 +80,11 @@ async fn execute(
 
     sqlx::query!(
         r#"UPDATE work_order_operations
-           SET completed_qty = completed_qty + $1, scrap_qty = scrap_qty + $2, status = 2
-           WHERE id = $3 AND work_order_id = $4"#,
+           SET completed_qty = completed_qty + $1, scrap_qty = scrap_qty + $2, status = $3
+           WHERE id = $4 AND work_order_id = $5"#,
         request.completed_qty,
         request.scrap_qty.unwrap_or(0),
+        WorkOrderOperationStatus::Completed as i16,
         &*path.operation_id,
         &*path.work_order_id,
     )
@@ -160,9 +162,10 @@ mod tests {
         .unwrap();
         sqlx::query!(
             r#"INSERT INTO work_order_operations (id, work_order_id, name, sequence, planned_qty, status)
-               VALUES ($1, $2, 'OP10', 10, 10, 0)"#,
+               VALUES ($1, $2, 'OP10', 10, 10, $3)"#,
             &*op_id,
             &*wo_id,
+            WorkOrderOperationStatus::Pending as i16,
         )
         .execute(&mut *conn)
         .await

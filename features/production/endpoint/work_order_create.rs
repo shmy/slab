@@ -4,6 +4,7 @@ use db::PgPool;
 use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use production_contract::entity::WorkOrder;
+use production_contract::value_object::{WorkOrderOperationStatus, WorkOrderStatus};
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -64,17 +65,19 @@ async fn execute(
 
     sqlx::query!(
         r#"INSERT INTO work_orders (id, code, bom_id, item_id, planned_qty, due_date, remark, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 0)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
         &*id, code, &*request.bom_id, &*request.item_id,
         request.planned_qty, request.due_date, request.remark,
+        WorkOrderStatus::Draft as i16,
     ).execute(&mut *txn).await?;
 
     for op in &request.operations {
         let op_id = ID::new();
         sqlx::query!(
             r#"INSERT INTO work_order_operations (id, work_order_id, name, sequence, planned_qty, status)
-               VALUES ($1, $2, $3, $4, $5, 0)"#,
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
             &*op_id, &*id, op.name, op.sequence, request.planned_qty,
+            WorkOrderOperationStatus::Pending as i16,
         ).execute(&mut *txn).await?;
     }
 

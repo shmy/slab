@@ -6,7 +6,7 @@ use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use sales_contract::entity::SalesDelivery;
 use sales_contract::error::SalesError;
-use sales_contract::value_object::SalesOrderStatus;
+use sales_contract::value_object::{SalesDeliveryStatus, SalesOrderStatus};
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -78,12 +78,13 @@ async fn execute(
 
     sqlx::query!(
         r#"INSERT INTO sales_deliveries (id, code, order_id, customer_id, remark, status)
-           VALUES ($1, $2, $3, $4, $5, 1)"#,
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
         &*delivery_id,
         code,
         &*request.order_id,
         &*ID::new_unchecked(order.customer_id),
         request.remark,
+        SalesDeliveryStatus::Posted as i16,
     )
     .execute(&mut *txn)
     .await?;
@@ -156,13 +157,19 @@ mod tests {
     use appctx::testing;
     use migration::run_migrations;
 
-    /// 造一个已审批订单（status=3）+ 一行 100kg 明细 + 1000kg 库存。
+    /// 造一个已审批订单 + 一行 100kg 明细 + 1000kg 库存。
     async fn seed_approved_order(state: &appctx::AppCtx, code: &str) -> (ID, ID, ID, ID) {
         let customer_id = tests::insert_test_customer(&state.pg_pool, "C-DLV-1").await;
         let item_id = tests::insert_test_item(&state.pg_pool, "I-DLV-1").await;
         let warehouse_id = tests::insert_test_warehouse(&state.pg_pool, "WH-DLV-1").await;
         tests::insert_test_inventory(&state.pg_pool, &item_id, &warehouse_id, 1000).await;
-        let order_id = tests::insert_test_sales_order(&state.pg_pool, code, &customer_id, 3).await;
+        let order_id = tests::insert_test_sales_order(
+            &state.pg_pool,
+            code,
+            &customer_id,
+            SalesOrderStatus::Approved as i16,
+        )
+        .await;
         let line_id =
             tests::insert_test_sales_order_line(&state.pg_pool, &order_id, &item_id, 100, 0).await;
         (order_id, line_id, item_id, warehouse_id)

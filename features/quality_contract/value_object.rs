@@ -30,3 +30,12 @@ pub enum Verdict {
     /// 有条件通过。
     Conditional = 3,
 }
+
+/// 不合格处理单状态（CONTEXT.md「生命周期状态」时间线）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum NonConformanceStatus {
+    /// 开放：已创建，待处置。
+    Open = 0,
+}

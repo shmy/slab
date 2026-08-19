@@ -41,3 +41,25 @@ pub enum PurchaseReturnStatus {
     /// 已批准：审批通过，退货生效。
     Approved = 3,
 }
+
+/// 采购收货生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+///
+/// 收货单创建即过账（入库已发生），无草稿。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum PurchaseReceiptStatus {
+    /// 已过账：收货生效，库存已入账。
+    Posted = 1,
+}
+
+/// 采购发票生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+///
+/// 付款进度由 `paid_amount` 跟踪，本枚举只区分发票自身是否仍开放。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum PurchaseInvoiceStatus {
+    /// 开放：已开票，款项未结清（表默认值）。
+    Open = 0,
+}

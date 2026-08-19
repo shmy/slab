@@ -33,7 +33,7 @@ pub struct WorkOrderOperation {
     pub planned_qty: i64,
     pub completed_qty: i64,
     pub scrap_qty: i64,
-    pub status: i16, // TODO(P0): 待枚举化（工序状态 0=pending 1=in_progress 2=completed）
+    pub status: i16, // WorkOrderOperationStatus（生命周期状态）
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow, utoipa::ToSchema)]

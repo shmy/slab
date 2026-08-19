@@ -60,6 +60,7 @@ mod tests {
     use crate::tests;
     use appctx::testing;
     use migration::run_migrations;
+    use product_contract::value_object::MoldStatus;
 
     #[sqlx::test]
     async fn test_mold_get_success(pool: sqlx::PgPool) {
@@ -70,9 +71,10 @@ mod tests {
         let mold_id = ID::new();
         let mut conn = state.pg_pool.acquire().await.unwrap();
         sqlx::query!(
-            "INSERT INTO molds (id, code, name, item_id, cavity_count, status) VALUES ($1, 'MOLD-GET-1', 'Mold', $2, 4, 0)",
+            "INSERT INTO molds (id, code, name, item_id, cavity_count, status) VALUES ($1, 'MOLD-GET-1', 'Mold', $2, 4, $3)",
             &*mold_id,
             &*item_id,
+            MoldStatus::Active as i16,
         )
         .execute(&mut *conn)
         .await

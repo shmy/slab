@@ -1,2 +1,3 @@
 frontend/openapi.json
-docs/reverse-prd.md
+frontend/src/lib/api-schema.d.ts
+frontend/src/routeTree.gen.ts

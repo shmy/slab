@@ -4,6 +4,7 @@ use db::PgPool;
 use doc_numbering::DocNumberer;
 use http_auth::extract::operator::OperatorContext;
 use quality_contract::entity::NonConformance;
+use quality_contract::value_object::NonConformanceStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use utoipa::ToSchema;
@@ -60,7 +61,7 @@ async fn execute(
     sqlx::query!(
         r#"INSERT INTO non_conformances
                (id, code, inspection_id, item_id, quantity, severity, disposition, status, remark)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         &*id,
         code,
         request.inspection_id as _,
@@ -68,6 +69,7 @@ async fn execute(
         request.quantity,
         request.severity,
         request.disposition,
+        NonConformanceStatus::Open as i16,
         request.remark,
     )
     .execute(&mut *conn)
@@ -121,7 +123,7 @@ mod tests {
         .fetch_one(&mut *state.pg_pool.acquire().await.unwrap())
         .await
         .unwrap();
-        assert_eq!(row.status, 0);
+        assert_eq!(row.status, NonConformanceStatus::Open as i16);
         assert_eq!(row.severity, 2);
 
         // 变更历史：create 类型

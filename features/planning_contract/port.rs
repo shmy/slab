@@ -41,6 +41,11 @@ pub struct MrpItem {
 pub struct PlanningPort;
 
 impl PlanningPort {
+    /// `purchase_contract::PurchaseOrderStatus::Approved`。
+    /// contract 不得互依，故内联判别值；PO 审批终态变更时同步。
+    const PURCHASE_ORDER_APPROVED: i16 = 3;
+    /// `product_contract::BomStatus::Released`。
+    const BOM_RELEASED: i16 = 1;
     /// 全部活跃物料的库存与在途聚合。
     ///
     /// 返回全部活跃物料（不做业务过滤），由调用方按 item_type / safety_stock /
@@ -53,7 +58,7 @@ impl PlanningPort {
                           (SELECT SUM(pol.quantity - pol.received_qty)
                            FROM purchase_order_lines pol
                            JOIN purchase_orders po ON po.id = pol.order_id
-                           WHERE po.status >= 3 AND pol.item_id = i.id
+                           WHERE po.status = $1 AND pol.item_id = i.id
                              AND pol.quantity > pol.received_qty),
                       0)::BIGINT AS in_transit_qty
                FROM items i
@@ -61,6 +66,7 @@ impl PlanningPort {
                WHERE i.is_active = true
                GROUP BY i.id, i.code, i.name, i.item_type, i.safety_stock, i.reorder_point"#,
         )
+        .bind(Self::PURCHASE_ORDER_APPROVED)
         .fetch_all(conn)
         .await?;
 
@@ -96,7 +102,7 @@ impl PlanningPort {
                    JOIN boms b ON b.item_id = sol.item_id
                    JOIN bom_items bi ON bi.bom_id = b.id
                    WHERE sol.closed = FALSE
-                     AND b.status = 1
+                     AND b.status = $1
                    GROUP BY bi.item_id
                ),
                stock AS (
@@ -110,7 +116,7 @@ impl PlanningPort {
                           COALESCE(SUM(pol.quantity - pol.received_qty), 0)::BIGINT AS in_transit_qty
                    FROM purchase_order_lines pol
                    JOIN purchase_orders po ON po.id = pol.order_id
-                   WHERE po.status >= 3
+                   WHERE po.status = $2
                      AND pol.quantity > pol.received_qty
                    GROUP BY pol.item_id
                )
@@ -131,6 +137,8 @@ impl PlanningPort {
                   OR i.safety_stock > COALESCE(s.current_stock, 0) + COALESCE(t.in_transit_qty, 0)
                ORDER BY net_demand DESC"#,
         )
+        .bind(Self::BOM_RELEASED)
+        .bind(Self::PURCHASE_ORDER_APPROVED)
         .fetch_all(conn)
         .await?;
 

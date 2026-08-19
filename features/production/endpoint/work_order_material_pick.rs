@@ -5,6 +5,7 @@ use http_auth::extract::operator::OperatorContext;
 use inventory_ledger::{InventoryLedger, LedgerCommand, TransactionType};
 use production_contract::entity::WorkOrder;
 use production_contract::error::ProductionError;
+use production_contract::value_object::WorkOrderStatus;
 use serde::{Deserialize, Serialize};
 use shared_contract::value_object::id::ID;
 use sqlx::Acquire;
@@ -86,7 +87,7 @@ async fn execute(
     .fetch_optional(&mut *txn)
     .await?
     .ok_or(ProductionError::NotFound)?;
-    if before.status < 1 {
+    if before.status < WorkOrderStatus::Released as i16 {
         return Err(ProductionError::InvalidStatus.into());
     }
 

@@ -23,3 +23,16 @@ pub enum WorkOrderStatus {
     /// 已关闭：生命周期终态。
     Closed = 4,
 }
+
+/// 工单工序生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum WorkOrderOperationStatus {
+    /// 待报工。
+    Pending = 0,
+    /// 进行中。
+    InProgress = 1,
+    /// 已完成。
+    Completed = 2,
+}

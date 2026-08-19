@@ -20,3 +20,34 @@ pub enum SalesOrderStatus {
     /// 已批准：审批流终态，可发货。
     Approved = 3,
 }
+
+/// 销售发货生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+///
+/// 发货单创建即过账（出库已发生），无草稿。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum SalesDeliveryStatus {
+    /// 已过账：发货生效，库存已出账。
+    Posted = 1,
+}
+
+/// 销售退货生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum SalesReturnStatus {
+    /// 开放：已创建（表默认值）。
+    Open = 0,
+}
+
+/// 销售发票生命周期状态（CONTEXT.md「生命周期状态」时间线）。
+///
+/// 收款进度由 `paid_amount` 跟踪，本枚举只区分发票自身是否仍开放。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "SMALLINT")]
+#[repr(i16)]
+pub enum SalesInvoiceStatus {
+    /// 开放：已开票，款项未结清（表默认值）。
+    Open = 0,
+}

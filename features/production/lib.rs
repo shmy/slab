@@ -28,6 +28,7 @@ impl DomainModule for Module {
 pub(crate) mod tests {
     use db::PgPool;
     use http_auth::extract::operator::OperatorContext;
+    use product_contract::value_object::BomStatus;
     use shared_contract::value_object::id::ID;
     use shared_contract::value_object::operator::Operator;
 
@@ -55,15 +56,16 @@ pub(crate) mod tests {
         id
     }
 
-    /// 插入一个测试 BOM（status=1 已发布），返回 BOM ID。
+    /// 插入一个测试 BOM（已发布），返回 BOM ID。
     pub async fn insert_test_bom(pg_pool: &PgPool, code: &str, item_id: &ID) -> ID {
         let id = ID::new();
         let mut conn = pg_pool.acquire().await.unwrap();
         sqlx::query!(
-            "INSERT INTO boms (id, code, name, item_id, status) VALUES ($1, $2, 'TestBOM', $3, 1)",
+            "INSERT INTO boms (id, code, name, item_id, status) VALUES ($1, $2, 'TestBOM', $3, $4)",
             &*id,
             code,
             item_id as _,
+            BomStatus::Released as i16,
         )
         .execute(&mut *conn)
         .await
