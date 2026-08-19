@@ -7,40 +7,15 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 
 独立 SPA。约定只看 `frontend/AGENTS.md`，不要在本文件展开。
 
-## 代码导航（只用 GitNexus）
+## 代码导航
 
-默认：GitNexus MCP（`query` / `context` / `impact` / `detect_changes` / `rename`）。
-**禁止**再用 `codebase-memory-mcp`（`search_graph` / `trace_path` / `query_graph` 等）做同一件事。字面搜索用 Grep。
+Grep 符号 / 字面量，Read 局部。用户已给路径则直接 Read，不要先搜。
 
-| 想做什么 | 用什么 |
-|---------|--------|
-| 不熟的概念 / 流程 | `query({query: "..."})` |
-| 某符号的调用方 / 被调方 | `context({name: "..."})` |
-| 公开面改动的 blast radius | `impact`（见下，不要每个符号都跑） |
-| 重命名公开符号 | `rename`（禁止 find-and-replace） |
-| 提交前范围核对 | `detect_changes()` 一次即可 |
+**禁止** GitNexus：不要调用 `user-gitnexus` MCP，不要加载 `gitnexus-*` skill。同样不要用 `codebase-memory-mcp`。
 
-索引过期：`node .gitnexus/run.cjs analyze`。本仓库 `.gitnexusrc` 禁止 analyze 回写 AGENTS.md / skills。
+公开面改动前 Grep 符号名确认调用方，调用面大时先警告再改：`*_contract`（Port / Entity / Event / 领域错误）、跨域写 Port、`cross_domain/` 或被 ≥2 个 feature 依赖的 `pub` API、重命名/移动/拆分、`FILTER_SCHEMA` / 事件 payload / OpenAPI / DTO 形状。禁止 find-and-replace 重命名公开符号。
 
-若 GitNexus skill 正文仍写「改任何符号前 MUST impact」，**以本节分级为准**。
-
-### Impact 分级
-
-**要跑** `impact({target, direction: "upstream"})`，HIGH / CRITICAL 时先警告用户再改：
-
-- `*_contract` 公共表面（Port / Entity / Event / 领域错误）
-- 跨域写 Port（如 `AuditService`）
-- `cross_domain/` 或被 ≥2 个 feature 依赖的 `pub` API
-- 重命名、移动、拆分已有符号
-- `FILTER_SCHEMA`、事件 payload、OpenAPI / DTO 契约形状
-
-**不要跑 impact：**
-
-- 单文件 endpoint 内私有 `execute` / handler / 测试，且不改公开签名、不改 contract
-- 注释、文案、locale、纯样式、文档、配置
-- 复制 template 新建端点（不改已有公开符号）
-
-提交前仍跑一次 `detect_changes()`。忽略 HIGH / CRITICAL 警告、用 find-and-replace 重命名公开符号：禁止。
+私有 `execute` / handler / 测试（不改公开签名）、注释/文案/locale/样式/文档/配置、复制 template 新建端点：不用先扫调用方。
 
 ## Skills（按需读全文）
 
@@ -51,10 +26,6 @@ DDD + 垂直切片（endpoint + repository）+ contract 公共表面。
 | 新建域、新加 endpoint 文件、加 Job/流程/事件 | `docs/ai/backend.md`（对应小节） |
 | 新增测试模块、某端点第一次补集成测试、写 Hurl | `.agents/skills/rust-tests/SKILL.md` |
 | 用户明确要求 TDD | `.agents/skills/tdd/SKILL.md` |
-| 不熟的流程怎么走 | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| 公开面 impact 的工具细节 | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| 重命名 / 拆分 | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| 跑 analyze / 索引 | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 | 改表格 / keep-alive / 主题，且 `frontend/AGENTS.md` 陷阱不够 | `frontend/docs/architecture.md` §5 |
 | 引入或争议领域术语 | `CONTEXT.md` |
 
@@ -66,7 +37,7 @@ grill / wayfinder / to-spec 等流程 skill 在 `.agents/optional-skills/`，**�
 
 - 改 endpoint 实现：Read 到 `mod tests` 之前，不要整文件（测试块大约占一半）
 - **禁止**整份 Read `frontend/openapi.json`（234KB）或 `frontend/src/lib/api-schema.d.ts`（130KB）。Grep 类型名 / `jq` 单 path；刷新契约用 `pnpm gen:api`
-- 大基础设施文件（如 `infrastructure/job_queue/lib.rs`）用 GitNexus `context({name})`，不要整文件
+- 大文件（如 `infrastructure/job_queue/lib.rs`）：Grep 符号后 Read `offset`/`limit`，不要整份
 - 加 Job / 流程 / 事件 / 新域：再读 [docs/ai/backend.md](docs/ai/backend.md) 对应小节
 
 ## 命令输出
@@ -80,13 +51,13 @@ grill / wayfinder / to-spec 等流程 skill 在 `.agents/optional-skills/`，**�
 
 ```
 features/{domain} (切片)
-    ├──→ {domain}_contract           ← 自己的公共表面
-    └──→ 其他 *_contract（只读 Port）
+ ├──→ {domain}_contract ← 自己的公共表面
+ └──→ 其他 *_contract（只读 Port）
 
 cross_domain/（共享业务件，跨域通道的例外栖息地）
-    ├──→ 被 ≥2 个 feature 依赖的**业务规则**（非技术件）
-    ├──→ 不走 contract 只读 Port / 事件（等同事务写 Port 例外，如 inventory_ledger 被 4 域直写）
-    └──→ 现状：approval / doc_numbering / costing / inventory_ledger
+ ├──→ 被 ≥2 个 feature 依赖的**业务规则**（非技术件）
+ ├──→ 不走 contract 只读 Port / 事件（等同事务写 Port 例外，如 inventory_ledger 被 4 域直写）
+ └──→ 现状：approval / doc_numbering / costing / inventory_ledger
 
 禁止：
 ✗ contract 之间互相依赖

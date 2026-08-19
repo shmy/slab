@@ -40,7 +40,7 @@
 | `libs/sched_kit` | cron | |
 | `shared_contract` | ID、cursor 分页、PhoneNumber、`event::Event` | |
 
-动这些 crate 的 `pub` API 前按 `AGENTS.md` 跑 `impact`。不要把 `infrastructure/job_queue/lib.rs` 等大文件整份 Read 进上下文，用 GitNexus `context({name})`。
+动这些 crate 的 `pub` API 前 Grep 符号名确认调用方。大文件（如 `infrastructure/job_queue/lib.rs`）Grep 后 Read 局部，不要整份读进上下文。
 
 ## 切片落位（新建域 / 新文件时）
 
