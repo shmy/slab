@@ -7,5 +7,4 @@
 node_modules
 .worktrees/
 .mcp.json
-.pi-subagents
-.gitnexus/
+.cursor/mcp.json
